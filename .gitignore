@@ -1,0 +1,6 @@
+# Claude
+.omc/
+.temp/
+
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
