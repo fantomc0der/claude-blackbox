@@ -343,9 +343,16 @@ test("replay layout controls preserve reading and navigation", async ({ page }) 
   await page.getByRole("button", { name: "Show overview" }).click();
   await page.locator(".replay-raw > summary").first().click();
   const focus = page.getByRole("button", { name: "Focused reading" });
+  const unfocusedWidth = await timelineWidth();
   await focus.click();
   await expect(focus).toHaveAttribute("aria-pressed", "true");
-  expect(await timelineWidth()).toBeLessThanOrEqual(960);
+  expect(await timelineWidth()).toBe(unfocusedWidth);
+  await page.getByRole("button", { name: "Hide overview" }).click();
+  expect(await timelineWidth()).toBeGreaterThan(unfocusedWidth + 200);
+  await page.getByRole("button", { name: "Hide library" }).click();
+  expect(await timelineWidth()).toBeGreaterThan(unfocusedWidth + 600);
+  await page.getByRole("button", { name: "Show library" }).click();
+  await page.getByRole("button", { name: "Show overview" }).click();
   await focus.click();
   expect(await timelineWidth()).toBeGreaterThan(2000);
   await expect(page.locator(".replay-raw").first()).toHaveAttribute("open", "");
@@ -358,6 +365,37 @@ test("replay layout controls preserve reading and navigation", async ({ page }) 
   await page.getByRole("button", { name: "Hide library" }).click();
   await page.getByRole("button", { name: "Close replay" }).click();
   await expect(library).toBeVisible();
+});
+
+test("focused reading preserves full-width conversation and code across viewports", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await expect(page.locator(".replay-event").first()).toBeVisible();
+  const focus = page.getByRole("button", { name: "Focused reading" });
+  const widthOf = (selector: string) => page.locator(selector).first().evaluate(element => element.getBoundingClientRect().width);
+  for (const [width, height] of [[3440, 1440], [1920, 1080], [1366, 768], [390, 844], [320, 640]]) {
+    await page.setViewportSize({ width, height });
+    const timelineWidth = await widthOf(".replay-timeline");
+    const eventWidth = await widthOf(".replay-event");
+    const codeWidth = await widthOf(".md-content pre");
+    const proseWidth = await widthOf(".md-content p");
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await focus.click();
+    await expect(focus).toHaveAttribute("aria-pressed", "true");
+    await page.setViewportSize({ width, height });
+    expect(await widthOf(".replay-timeline")).toBe(timelineWidth);
+    expect(await widthOf(".replay-event")).toBe(eventWidth);
+    expect(await widthOf(".md-content pre")).toBe(codeWidth);
+    expect(await page.locator(".replay-scroll").evaluate(element => element.clientWidth)).toBeCloseTo(timelineWidth, 0);
+    if (width >= 1920) expect(await widthOf(".md-content p")).toBeLessThan(proseWidth);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await focus.click();
+    await expect(focus).toHaveAttribute("aria-pressed", "false");
+    await page.setViewportSize({ width, height });
+    expect(await widthOf(".replay-timeline")).toBe(timelineWidth);
+    expect(await widthOf(".md-content p")).toBe(proseWidth);
+  }
 });
 
 test("session library divider supports pointer keyboard and responsive bounds", async ({ page }) => {

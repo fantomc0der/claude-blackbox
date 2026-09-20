@@ -1,5 +1,5 @@
 :root { color-scheme: dark; }
-.md-content :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-inline-size: 72ch; }
+.md-content :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-inline-size: var(--replay-prose-width, 72ch); }
 .replay-event-user { border-left: 2px solid #90a56e !important; }
 .replay-event-system .replay-role { color: #aca392; }
 .replay-event-link:hover { color: #c7ee79; text-decoration: underline; }

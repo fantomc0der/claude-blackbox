@@ -423,10 +423,10 @@
 }
 
 @layer responsive {
-  .replay-panel { --reading-width: 960px; container: replay / inline-size; }
+  .replay-panel { container: replay / inline-size; }
   .replay-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
   .replay-inspector { display: none; }
-  .replay-focused .replay-timeline { max-width: var(--reading-width); }
+  .replay-focused { --replay-prose-width: 65ch; }
   @container replay (min-width: 640px) {
     .replay-controls { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 24px; }
     .replay-find { border-top: 0; }
