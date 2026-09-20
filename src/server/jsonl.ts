@@ -5,6 +5,7 @@ export interface JsonLine {
   offset: number;
   nextOffset: number;
   value: Record<string, unknown> | null;
+  malformed: boolean;
 }
 
 export async function* readJsonLines(path: string, start: number, end: number): AsyncGenerator<JsonLine> {
@@ -30,7 +31,7 @@ export async function* readJsonLines(path: string, start: number, end: number): 
             if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) value = object(parsed);
           } catch {}
         }
-        yield { offset: lineOffset, nextOffset, value };
+        yield { offset: lineOffset, nextOffset, value, malformed: Boolean(line) && value === null };
         pending = pending.subarray(newline + 1);
         lineOffset = nextOffset;
         newline = pending.indexOf(10);
@@ -40,7 +41,7 @@ export async function* readJsonLines(path: string, start: number, end: number): 
       try {
         const parsed = JSON.parse(pending.toString("utf8"));
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          yield { offset: lineOffset, nextOffset: position, value: object(parsed) };
+          yield { offset: lineOffset, nextOffset: position, value: object(parsed), malformed: false };
         }
       } catch {}
     }

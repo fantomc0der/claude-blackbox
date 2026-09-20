@@ -11,7 +11,7 @@ interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
   started: string; updated: string; events: number; messages: number; tools: number; errors: number;
   edits: number; agent: number; size: number; mtime: number; cursor: number; fingerprint: string;
-  warnings: number; named: number; group_id?: string; group_name?: string; bookmarked?: number;
+  warnings: number; named: number; identity: string; tailprint: string; group_id?: string; group_name?: string; bookmarked?: number;
 }
 
 interface StoredEvent { raw: string; event_id: string; sequence: number; offset: number; text: string }
@@ -26,7 +26,8 @@ const schema = `
     events INTEGER NOT NULL DEFAULT 0, messages INTEGER NOT NULL DEFAULT 0, tools INTEGER NOT NULL DEFAULT 0,
     errors INTEGER NOT NULL DEFAULT 0, edits INTEGER NOT NULL DEFAULT 0, agent INTEGER NOT NULL DEFAULT 0,
     size INTEGER NOT NULL DEFAULT 0, mtime REAL NOT NULL DEFAULT 0, cursor INTEGER NOT NULL DEFAULT 0,
-    fingerprint TEXT NOT NULL DEFAULT '', warnings INTEGER NOT NULL DEFAULT 0, named INTEGER NOT NULL DEFAULT 0
+    fingerprint TEXT NOT NULL DEFAULT '', warnings INTEGER NOT NULL DEFAULT 0, named INTEGER NOT NULL DEFAULT 0,
+    identity TEXT NOT NULL DEFAULT '', tailprint TEXT NOT NULL DEFAULT ''
   );
   CREATE TABLE IF NOT EXISTS events (
     rowid INTEGER PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -34,6 +35,12 @@ const schema = `
     error INTEGER NOT NULL, tools TEXT NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS events_session ON events(session_id, sequence);
+  CREATE TABLE IF NOT EXISTS tool_results (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    tool_id TEXT NOT NULL, raw TEXT NOT NULL,
+    event_row INTEGER NOT NULL REFERENCES events(rowid) ON DELETE CASCADE,
+    PRIMARY KEY(session_id, tool_id)
+  );
   CREATE INDEX IF NOT EXISTS sessions_cwd ON sessions(cwd);
   CREATE INDEX IF NOT EXISTS sessions_updated ON sessions(updated DESC);
   CREATE VIRTUAL TABLE IF NOT EXISTS event_fts USING fts5(text, content='events', content_rowid='rowid', tokenize='unicode61');
@@ -67,7 +74,16 @@ export class Recorder {
     this.dataDir = resolve(dataDir);
     this.stateDir = resolve(stateDir);
     this.db = db;
+    const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+    if (version > 2) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     db.exec(schema);
+    const fields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all().map(row => row.name));
+    if (!fields.has("identity")) db.exec("ALTER TABLE sessions ADD COLUMN identity TEXT NOT NULL DEFAULT ''");
+    if (!fields.has("tailprint")) db.exec("ALTER TABLE sessions ADD COLUMN tailprint TEXT NOT NULL DEFAULT ''");
+    if (!hasResults || version < 2) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=2;");
+    const interrupted = db.query<{ id: string }, []>("SELECT id FROM sessions WHERE events != (SELECT count(*) FROM events WHERE session_id=sessions.id)").all();
+    for (const row of interrupted) db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(row.id);
   }
 
   static async open(dataDir: string, stateDir: string): Promise<Recorder> {
@@ -118,11 +134,11 @@ export class Recorder {
     }
   }
 
-  private async fingerprint(path: string, size: number): Promise<string> {
+  private async fingerprint(path: string, size: number, tail = false): Promise<string> {
     const file = await open(path, "r");
     try {
       const buffer = Buffer.alloc(Math.min(size, 256));
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, tail ? Math.max(0, size - buffer.length) : 0);
       return createHash("sha256").update(buffer.subarray(0, bytesRead)).digest("hex");
     } finally { await file.close(); }
   }
@@ -138,10 +154,11 @@ export class Recorder {
       known.delete(path);
       try {
         const info = await stat(path);
-        if (previous && previous.size === info.size && previous.mtime === info.mtimeMs && previous.cursor === info.size) continue;
-        if (previous && previous.size === info.size && previous.mtime === info.mtimeMs) continue;
+        const identity = `${info.dev}:${info.ino}`;
+        if (previous && previous.size === info.size && previous.mtime === info.mtimeMs && previous.identity === identity) continue;
         const id = previous?.id || createHash("sha256").update(relative(this.dataDir, path)).digest("hex").slice(0, 24);
-        const reset = previous && (info.size <= previous.size || previous.fingerprint !== await this.fingerprint(path, previous.size));
+        const reset = previous && (info.size <= previous.size || previous.identity !== identity ||
+          previous.fingerprint !== await this.fingerprint(path, previous.size) || previous.tailprint !== await this.fingerprint(path, previous.size, true));
         if (!previous) this.db.query("INSERT INTO sessions(id, session_id, source, agent) VALUES (?, ?, ?, ?)")
           .run(id, basename(path, ".jsonl"), path, Number(path.includes(`${sep}subagents${sep}`) || basename(path).startsWith("agent-")));
         if (reset) this.db.transaction(() => {
@@ -154,12 +171,18 @@ export class Recorder {
         const write = this.db.transaction((events: ReplayEvent[]) => {
           const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text)
             VALUES (?,?,?,?,?,?,?,?,?,?)`);
-          for (const event of events) insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
-            Number(event.error), event.toolNames.join("\n"), JSON.stringify(event.raw), event.text);
+          const insertResult = this.db.query("INSERT OR REPLACE INTO tool_results(session_id,tool_id,raw,event_row) VALUES (?,?,?,?)");
+          for (const event of events) {
+            const inserted = insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
+              Number(event.error), event.toolNames.join("\n"), JSON.stringify(event.raw), event.text);
+            if (inserted.changes) for (const block of event.blocks) {
+              if (block.type === "tool_result" && typeof block.tool_use_id === "string") insertResult.run(id, block.tool_use_id, JSON.stringify(block), inserted.lastInsertRowid);
+            }
+          }
         });
         for await (const line of readJsonLines(path, row.cursor, info.size)) {
           row.cursor = line.nextOffset;
-          if (!line.value) { row.warnings++; continue; }
+          if (!line.value) { row.warnings += Number(line.malformed); continue; }
           const event = normalize(line.value, id, line.offset, row.events);
           row.events++;
           row.messages += Number(event.category === "message");
@@ -167,11 +190,13 @@ export class Recorder {
           row.errors += Number(event.error);
           row.edits ||= Number(event.toolNames.some(name => /^(edit|write|multiedit|notebookedit)$/i.test(name)));
           row.cwd ||= event.cwd || "";
+          row.session_id = string(line.value.sessionId) || string(line.value.session_id) || row.session_id;
           row.branch = string(line.value.gitBranch) || row.branch;
-          row.model = string(object(line.value.message).model) || row.model;
-          const explicit = string(line.value.customTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
+          const model = string(object(line.value.message).model);
+          if (model && model !== "<synthetic>") row.model = model;
+          const explicit = string(line.value.customTitle) || string(line.value.aiTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
           if (explicit) { row.title = explicit.slice(0, 240); row.named = 1; }
-          else if (!row.title) row.title = promptTitle(event);
+          else if (!row.title || (!row.named && row.title.startsWith("Session "))) row.title = promptTitle(event) || row.title;
           if (event.timestamp) {
             if (!row.started || event.timestamp < row.started) row.started = event.timestamp;
             if (!row.updated || event.timestamp > row.updated) row.updated = event.timestamp;
@@ -182,10 +207,10 @@ export class Recorder {
         write(batch);
         const stamp = new Date(info.mtimeMs).toISOString();
         this.db.query(`UPDATE sessions SET cwd=?,title=?,branch=?,model=?,started=?,updated=?,events=?,messages=?,tools=?,errors=?,
-          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=? WHERE id=?`).run(
+          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=? WHERE id=?`).run(
           row.cwd, row.title || `Session ${row.session_id.slice(0, 8)}`, row.branch, row.model, row.started || stamp, row.updated || stamp,
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
-          await this.fingerprint(path, info.size), row.warnings, row.named, id);
+          await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true), id);
         changed.push(id);
       } catch (error) {
         this.scanWarnings++;
@@ -235,7 +260,7 @@ export class Recorder {
     }
     const workspace = params.get("workspace");
     if (workspace) {
-      conditions.push("(g.id=? OR s.cwd=?)"); bindings.push(workspace, workspace);
+      conditions.push("(g.id=? OR s.cwd=?)"); bindings.push(workspace, workspace === "unknown" ? "" : workspace);
     }
     for (const [key, column] of [["cwd", "s.cwd"], ["model", "s.model"], ["branch", "s.branch"]]) {
       if (params.get(key)) { conditions.push(`${column}=?`); bindings.push(params.get(key)!); }
@@ -304,16 +329,12 @@ export class Recorder {
   }
 
   results(id: string, toolIds: string[]): Record<string, import("../shared/types").ContentBlock> {
-    const found: Record<string, import("../shared/types").ContentBlock> = {};
+    const found: Record<string, import("../shared/types").ContentBlock> = Object.create(null);
     if (!toolIds.length) return found;
-    const wanted = new Set(toolIds);
-    const rows = this.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? AND type='user'").iterate(id);
-    for (const row of rows) {
-      const content = object(JSON.parse(row.raw).message).content;
-      if (!Array.isArray(content)) continue;
-      for (const block of content) {
-        if (block?.type === "tool_result" && wanted.has(block.tool_use_id)) found[block.tool_use_id] = block;
-      }
+    const lookup = this.db.query<{ raw: string }, [string, string]>("SELECT raw FROM tool_results WHERE session_id=? AND tool_id=?");
+    for (const toolId of new Set(toolIds)) {
+      const row = lookup.get(id, toolId);
+      if (row) found[toolId] = JSON.parse(row.raw);
     }
     return found;
   }

@@ -13,15 +13,16 @@ export function searchable(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return value.map(searchable).join("\n");
-  return Object.entries(object(value))
-    .filter(([key]) => !["data", "signature", "encrypted_content"].includes(key))
+  const record = object(value);
+  return Object.entries(record)
+    .filter(([key]) => !["signature", "encrypted_content"].includes(key) && !(key === "data" && record.type === "base64"))
     .map(([key, entry]) => `${key}: ${searchable(entry)}`).join("\n");
 }
 
 export function normalize(raw: Record<string, unknown>, sourceId: string, offset: number, sequence: number): ReplayEvent {
   const message = object(raw.message);
   const type = string(raw.type) || "unknown";
-  const role = type === "user" || type === "assistant" ? type : "system";
+  const role = (type === "user" || type === "assistant") && raw.isMeta !== true && raw.isCompactSummary !== true ? type : "system";
   const content = message.content ?? raw.content;
   let blocks: ContentBlock[] = [];
   if (typeof content === "string") blocks = [{ type: "text", text: content }];
@@ -59,7 +60,8 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
 export function promptTitle(event: ReplayEvent): string {
   if (event.role !== "user") return "";
   return event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" ")
-    .replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, " ")
+    .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
 }
 
 export function pathName(path: string): string {

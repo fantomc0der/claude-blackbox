@@ -114,6 +114,61 @@ describe("recording index", () => {
     const fixtureData = await fixture();
     await expect(Recorder.open(fixtureData.data, join(fixtureData.data, "cache"))).rejects.toThrow("outside");
   });
+
+  test("uses recorded session IDs and generated titles, not injected context", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Internal skill instructions", { isMeta: true }),
+      fixtureData.record("Real user intent", { sessionId: "actual-session-id" }),
+      JSON.stringify({ type: "ai-title", aiTitle: "Generated session title", sessionId: "actual-session-id" }),
+      "", "",
+    ].join("\n"));
+    const recorder = await fixtureData.open();
+    const session = recorder.list(new URLSearchParams()).items[0];
+    expect(session.title).toBe("Generated session title");
+    expect(session.sessionId).toBe("actual-session-id");
+    expect(session.messageCount).toBe(1);
+    expect((await recorder.catalog()).warnings).toBe(0);
+    expect(recorder.events(session.id, new URLSearchParams({ kind: "conversation" })).total).toBe(1);
+  });
+
+  test("indexes legitimate data fields and pairs results outside the visible page", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record([{ type: "tool_use", name: "Custom", id: "call", input: { data: "payloadNeedle" } }], { type: "assistant" }),
+      fixtureData.record("Another event"),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "call", content: "Finished" }]),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const session = recorder.list(new URLSearchParams({ q: "payloadNeedle" })).items[0];
+    expect(session).toBeDefined();
+    expect(recorder.events(session.id, new URLSearchParams({ limit: "1" })).items).toHaveLength(1);
+    expect(recorder.results(session.id, ["call"]).call.content).toBe("Finished");
+  });
+
+  test("recovers an interrupted import from stored records without duplicates", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("Recorded once") + "\n");
+    const first = await fixtureData.open();
+    const session = first.list(new URLSearchParams()).items[0];
+    first.db.query("UPDATE sessions SET events=0, cursor=0 WHERE id=?").run(session.id);
+    await first.close();
+    const recovered = await fixtureData.open();
+    expect(recovered.getSession(session.id)?.eventCount).toBe(1);
+    expect(recovered.events(session.id, new URLSearchParams()).total).toBe(1);
+  });
+
+  test("reindexes a larger replacement that shares the old prefix", async () => {
+    const fixtureData = await fixture();
+    const beginning = fixtureData.record("Unchanged prefix " + "a".repeat(350)) + "\n";
+    await writeFile(fixtureData.file, beginning + fixtureData.record("RemoveThisRecord") + "\n");
+    const recorder = await fixtureData.open();
+    await writeFile(fixtureData.file, beginning + fixtureData.record("Replacement record with a significantly longer body") + "\n");
+    await recorder.scan();
+    expect(recorder.list(new URLSearchParams({ q: "RemoveThisRecord" })).total).toBe(0);
+    expect(recorder.list(new URLSearchParams({ q: "Replacement" })).total).toBe(1);
+    expect(recorder.list(new URLSearchParams()).items[0].eventCount).toBe(2);
+  });
 });
 
 test("search parser treats phrases and exclusions as data", () => {
