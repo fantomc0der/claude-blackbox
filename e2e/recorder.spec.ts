@@ -163,9 +163,9 @@ test("session and event pagination remain bounded and navigable", async ({ page 
   await expect(page.locator(".session-row")).toHaveCount(50);
   await page.getByRole("button", { name: "Next recordings" }).click();
   await expect(page).toHaveURL(/offset=50/);
-  await expect(page.locator(".session-row")).toHaveCount(24);
+  await expect(page.locator(".session-row")).toHaveCount(25);
   await page.reload();
-  await expect(page.locator(".session-row")).toHaveCount(24);
+  await expect(page.locator(".session-row")).toHaveCount(25);
   await page.waitForTimeout(300);
   await expect(page).toHaveURL(/offset=50/);
   await page.getByRole("button", { name: "Previous recordings" }).click();
@@ -205,6 +205,39 @@ test("transcript HTML cannot execute scripts, spoof app styles, or load remote i
   expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).blackboxXss)).toBeUndefined();
   await expect(page.locator('.md-content script, .md-content img, .md-content [href^="javascript:"], .md-content .nav-scrim')).toHaveCount(0);
   expect(remoteRequests).toEqual([]);
+});
+
+test("Markdown soft newlines wrap naturally while explicit structure stays intact", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/?q=Markdown+wrapping+verification");
+  await page.locator(".session-row").first().click();
+  const markdown = page.locator(".md-content").filter({ has: page.getByRole("heading", { name: "Natural wrapping" }) });
+  await expect(markdown).toBeVisible();
+  const prose = markdown.locator(":scope > p").first();
+  await expect(prose).toHaveText("Soft-wrapped prose stays on one line when there is room.");
+  await expect(prose.locator("br")).toHaveCount(0);
+  const lineCount = () => prose.evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return new Set(Array.from(range.getClientRects(), rectangle => rectangle.top)).size;
+  });
+  expect(await lineCount()).toBe(1);
+  await expect(markdown.locator(":scope > p")).toHaveCount(7);
+  await expect(markdown.locator(":scope > p").nth(1)).toHaveText("A separate paragraph stays separate.");
+  for (const label of ["Two-space hard break.", "Backslash hard break.", "HTML hard break."]) {
+    await expect(markdown.locator("p").filter({ hasText: label }).locator("br")).toHaveCount(1);
+  }
+  await expect(markdown.locator("li")).toHaveCount(2);
+  await expect(markdown.locator("li").first()).toHaveText("A list item with a soft newline continues naturally.");
+  await expect(markdown.locator("li br, blockquote br")).toHaveCount(0);
+  await expect(markdown.locator("blockquote p")).toHaveText("A quote with a soft newline continues naturally.");
+  expect(await markdown.locator("pre code").textContent()).toBe("const first = 1;\nconst second = 2;\n");
+  for (const [width, height] of [[3440, 1440], [1920, 1080], [1366, 768], [390, 844], [320, 640]]) {
+    await page.setViewportSize({ width, height });
+    expect(await markdown.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width <= 390) expect(await lineCount()).toBeGreaterThan(1);
+  }
 });
 
 test("demo Markdown separates sections consistently across viewports and text sizes", async ({ page }) => {
@@ -364,15 +397,15 @@ test("desktop layouts adapt from compact laptops through 4K and ultrawide monito
       const paragraph = element.querySelector("p")!;
       return {
         prose: paragraph.getBoundingClientRect().width,
-        measure: parseFloat(getComputedStyle(paragraph).maxInlineSize),
+        available: element.getBoundingClientRect().width,
         code: element.querySelector("pre")!.getBoundingClientRect().width,
       };
     });
-    expect(content.prose).toBeLessThanOrEqual(content.measure + 1);
+    expect(content.prose).toBe(content.available);
+    expect(content.code).toBe(content.available);
     if (size.width >= 2560) {
       expect(widths.timeline).toBeGreaterThan(1400);
       expect(content.code).toBeGreaterThan(1400);
-      expect(content.code).toBeGreaterThan(content.prose * 2);
     }
     expect(await page.locator(".replay-scroll").evaluate(element => element.clientHeight)).toBeGreaterThan(180);
     if (size.width >= 2000) await expect(page.getByRole("complementary", { name: "Recording overview" })).toBeVisible();
@@ -406,18 +439,13 @@ test("replay layout controls preserve reading and navigation", async ({ page }) 
   await expect(overview).toBeHidden();
   await page.getByRole("button", { name: "Show overview" }).click();
   await page.locator(".replay-raw > summary").first().click();
-  const focus = page.getByRole("button", { name: "Focused reading" });
-  const unfocusedWidth = await timelineWidth();
-  await focus.click();
-  await expect(focus).toHaveAttribute("aria-pressed", "true");
-  expect(await timelineWidth()).toBe(unfocusedWidth);
+  const expandedWidth = await timelineWidth();
   await page.getByRole("button", { name: "Hide overview" }).click();
-  expect(await timelineWidth()).toBeGreaterThan(unfocusedWidth + 200);
+  expect(await timelineWidth()).toBeGreaterThan(expandedWidth + 200);
   await page.getByRole("button", { name: "Hide library" }).click();
-  expect(await timelineWidth()).toBeGreaterThan(unfocusedWidth + 600);
+  expect(await timelineWidth()).toBeGreaterThan(expandedWidth + 600);
   await page.getByRole("button", { name: "Show library" }).click();
   await page.getByRole("button", { name: "Show overview" }).click();
-  await focus.click();
   expect(await timelineWidth()).toBeGreaterThan(2000);
   await expect(page.locator(".replay-raw").first()).toHaveAttribute("open", "");
   await page.setViewportSize({ width: 390, height: 844 });
@@ -431,34 +459,21 @@ test("replay layout controls preserve reading and navigation", async ({ page }) 
   await expect(library).toBeVisible();
 });
 
-test("focused reading preserves full-width conversation and code across viewports", async ({ page }) => {
+test("replay prose and code use the available width across viewports", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.locator(".replay-event").first()).toBeVisible();
-  const focus = page.getByRole("button", { name: "Focused reading" });
+  await expect(page.getByRole("button", { name: "Focused reading" })).toHaveCount(0);
   const widthOf = (selector: string) => page.locator(selector).first().evaluate(element => element.getBoundingClientRect().width);
   for (const [width, height] of [[3440, 1440], [1920, 1080], [1366, 768], [390, 844], [320, 640]]) {
     await page.setViewportSize({ width, height });
     const timelineWidth = await widthOf(".replay-timeline");
-    const eventWidth = await widthOf(".replay-event");
-    const codeWidth = await widthOf(".md-content pre");
     const proseWidth = await widthOf(".md-content p");
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await focus.click();
-    await expect(focus).toHaveAttribute("aria-pressed", "true");
-    await page.setViewportSize({ width, height });
-    expect(await widthOf(".replay-timeline")).toBe(timelineWidth);
-    expect(await widthOf(".replay-event")).toBe(eventWidth);
-    expect(await widthOf(".md-content pre")).toBe(codeWidth);
+    expect(proseWidth).toBe(await widthOf(".md-content"));
+    const code = page.locator(".md-content pre").first();
+    expect(await code.evaluate(element => element.getBoundingClientRect().width)).toBe(await code.evaluate(element => element.parentElement!.getBoundingClientRect().width));
     expect(await page.locator(".replay-scroll").evaluate(element => element.clientWidth)).toBeCloseTo(timelineWidth, 0);
-    if (width >= 1920) expect(await widthOf(".md-content p")).toBeLessThan(proseWidth);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await focus.click();
-    await expect(focus).toHaveAttribute("aria-pressed", "false");
-    await page.setViewportSize({ width, height });
-    expect(await widthOf(".replay-timeline")).toBe(timelineWidth);
-    expect(await widthOf(".md-content p")).toBe(proseWidth);
   }
 });
 

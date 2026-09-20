@@ -38,6 +38,20 @@ const markdownRhythm = [
   "Closing paragraph.",
 ].join("\n\n");
 await writeFile(join(folder, "markdown-rhythm.jsonl"), [event("Markdown rhythm verification", 0), event(markdownRhythm, 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
+const markdownWrapping = [
+  "# Natural wrapping",
+  "Soft-wrapped prose stays\non one line when there is room.",
+  "A separate paragraph stays separate.",
+  "Two-space hard break.  \nStill explicit.",
+  "Backslash hard break.\\\nStill explicit.",
+  "HTML hard break.<br>Still explicit.",
+  "- A list item with a soft newline\n  continues naturally.\n- A separate list item.",
+  "> A quote with a soft newline\n> continues naturally.",
+  "```ts\nconst first = 1;\nconst second = 2;\n```",
+  "Long prose wraps at the available edge instead of a fixed character count. ".repeat(30),
+  `Unbroken token: ${"abcdefghij".repeat(50)}`,
+].join("\n\n");
+await writeFile(join(folder, "markdown-wrapping.jsonl"), [event("Markdown wrapping verification", 0), event(markdownWrapping, 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);

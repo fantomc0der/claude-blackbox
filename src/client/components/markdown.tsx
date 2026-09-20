@@ -64,7 +64,7 @@ export function Markdown(props: MarkdownProps) {
   const html = createMemo(() => {
     const renderer = new marked.Renderer();
     renderer.image = ({ text }) => `<span data-blocked-image="true">Image blocked${text ? `: ${escapeHtml(text)}` : ""}</span>`;
-    const parsed = marked.parse(props.content, { async: false, gfm: true, breaks: true, renderer }) as string;
+    const parsed = marked.parse(props.content, { async: false, gfm: true, breaks: false, renderer }) as string;
     const sanitized = DOMPurify.sanitize(parsed, {
       ALLOWED_TAGS: ["a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "span", "strong", "table", "tbody", "td", "th", "thead", "tr", "ul"],
       ALLOWED_ATTR: ["data-blocked-image", "href", "rel", "target", "title"],

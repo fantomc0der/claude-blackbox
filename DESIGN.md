@@ -120,6 +120,8 @@ Dark mode is the default surface system; lime is its active accent. Light mode i
 
 Replay preserves its separate Inter/system-sans stack for transcript prose and platform monospace stack for tool output. These are font-family declarations, not bundled font assets.
 
+Replay prose wraps naturally across the available event width, without a character-count cap or a width-changing reading toggle. Source soft newlines do not force visual breaks; paragraphs, intentional hard breaks, and code formatting remain intact.
+
 **Character:** The interface uses a compact, high-legibility system sans with a modest hierarchy rather than a separate display face. Monospace is reserved for code, keyboard material, and technical content.
 
 ### Hierarchy

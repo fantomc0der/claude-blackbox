@@ -1,6 +1,5 @@
 :root { color-scheme: dark; }
 .md-content { --md-block-gap: 1rem; --md-section-gap: 1.5rem; --md-heading-gap: .75rem; }
-.md-content :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-inline-size: var(--replay-prose-width, 72ch); }
 .md-content :where(p, ul, ol, blockquote, pre, table, hr) { margin-block: 0 var(--md-block-gap); }
 .md-content :where(h1, h2, h3, h4, h5, h6) { margin-block: var(--md-section-gap) var(--md-heading-gap); }
 .md-content :where(li) > :where(ul, ol) { margin-block: 0; }

@@ -26,7 +26,6 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const [error, setError] = createSignal("");
   const [updated, setUpdated] = createSignal(false);
   const [retry, setRetry] = createSignal(0);
-  const [focused, setFocused] = createSignal(false);
   const [overview, setOverview] = createSignal(true);
   let atBottom = false;
   let initial = true;
@@ -106,7 +105,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     scroll.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   };
 
-  return <section class={['replay-panel', { 'replay-focused': focused(), 'overview-hidden': !overview() }]} aria-label="Session replay">
+  return <section class={['replay-panel', { 'overview-hidden': !overview() }]} aria-label="Session replay">
     <header class="replay-panel-heading">
       <div class="replay-title-row">
         <Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <h2 title={session().title}>{session().title}</h2>}</Show>
@@ -144,7 +143,6 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         </>}</Show>
         <div class="replay-layout-controls" role="group" aria-label="Replay layout">
           <button class="layout-button library-toggle" aria-expanded={props.libraryCollapsed ? "false" : "true"} aria-controls="session-library" onClick={props.toggleLibrary}>{props.libraryCollapsed ? "Show library" : "Hide library"}</button>
-          <button class="layout-button reading-toggle" aria-pressed={focused() ? "true" : "false"} onClick={() => setFocused(value => !value)}>Focused reading</button>
           <button class="layout-button overview-toggle" aria-expanded={overview() ? "true" : "false"} aria-controls="recording-overview" onClick={() => setOverview(value => !value)}>{overview() ? "Hide overview" : "Show overview"}</button>
         </div>
       </div>

@@ -216,7 +216,6 @@
   .replay-layout-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; margin-left: auto; }
   .layout-button { min-height: 32px; padding: 6px 8px; border-radius: 5px; color: var(--muted); font-size: var(--text-control); }
   .layout-button:hover { background: var(--raised); color: var(--text); }
-  .layout-button[aria-pressed="true"] { background: var(--accent-dim); color: var(--accent); }
   .overview-toggle { display: none; }
   .replay-panel-heading h2 { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-weight: 550; font-size: 22px; letter-spacing: -.5px; line-height: 1.4; margin: 6px 0 0; }
   .source-path { display: flex; align-items: center; gap: 7px; color: #9ca994; font: var(--text-meta) var(--mono); max-width: 100%; min-height: 28px; text-align: left; padding: 0; line-height: 1.7; }
@@ -349,7 +348,7 @@
   }
   @media (max-width: 900px) {
     .has-replay .library { display: none; }
-    .library-divider, .library-toggle, .reading-toggle { display: none; }
+    .library-divider, .library-toggle { display: none; }
     .replay-panel-heading h2 { font-size: 23px; }
     .replay-timeline { padding: 25px 30px; }
     .replay-layout-controls { display: none; }
@@ -426,7 +425,6 @@
   .replay-panel { container: replay / inline-size; }
   .replay-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
   .replay-inspector { display: none; }
-  .replay-focused { --replay-prose-width: 65ch; }
   @container replay (min-width: 640px) {
     .replay-controls { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 24px; }
     .replay-find { border-top: 0; }
