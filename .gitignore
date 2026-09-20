@@ -4,3 +4,12 @@
 
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
+
+node_modules/
+dist/
+.blackbox/
+.playwright/
+test-results/
+playwright-report/
+*.log
+.env

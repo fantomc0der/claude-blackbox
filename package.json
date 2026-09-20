@@ -1,0 +1,32 @@
+{
+  "name": "claude-blackbox",
+  "version": "0.1.0",
+  "description": "The flight recorder for your Claude Code sessions. Replay every conversation in a clean web UI",
+  "private": true,
+  "type": "module",
+  "engines": { "bun": ">=1.4.0" },
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "build": "bun --bun vite build",
+    "start": "bun src/server/cli.ts",
+    "demo": "bun scripts/demo.ts && bun src/server/cli.ts --dir .blackbox/demo --state-dir .blackbox/demo-state --port 12002",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests",
+    "test:e2e": "bun --bun playwright test",
+    "check": "bun run typecheck && bun test tests && bun run build"
+  },
+  "dependencies": {
+    "@solidjs/web": "2.0.0-rc.9",
+    "solid-js": "2.0.0-rc.9",
+    "dompurify": "3.4.15",
+    "marked": "18.0.13",
+    "diff": "9.0.0"
+  },
+  "devDependencies": {
+    "@solidjs/vite-plugin": "3.0.0-next.44",
+    "@types/bun": "1.4.2",
+    "@playwright/test": "1.58.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.0"
+  }
+}
