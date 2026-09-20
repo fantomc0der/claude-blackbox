@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-20T00:00:00-04:00",
+  "title": "Design System: claude-blackbox",
+  "extensions": {
+    "colorMeta": {
+      "dark-bg": { "role": "neutral", "displayName": "Charcoal Canvas", "canonical": "#101214", "tonalRamp": ["#101214", "#171a1c", "#1d2123", "#2a2e30", "#4b5152", "#767e7e", "#b5b9b5", "#e9eae5"] },
+      "dark-accent": { "role": "primary", "displayName": "Recorder Lime", "canonical": "#c7ee79", "tonalRamp": ["#273016", "#435027", "#62753b", "#849c50", "#a6c764", "#c7ee79", "#dbf5a9", "#effbd7"] },
+      "light-bg": { "role": "neutral", "displayName": "Off-White Canvas", "canonical": "#efefed", "tonalRamp": ["#262825", "#41453f", "#5c5f5a", "#858780", "#a8aba3", "#d0d1cc", "#e4e4e1", "#f6f6f4"] },
+      "light-accent": { "role": "primary", "displayName": "Graphite Active", "canonical": "#41453f", "tonalRamp": ["#262825", "#41453f", "#5c5f5a", "#858780", "#a8aba3", "#d0d1cc", "#e4e4e1", "#f6f6f4"] },
+      "light-danger": { "role": "secondary", "displayName": "Muted Error Rose", "canonical": "#944438", "tonalRamp": ["#3d1c18", "#5c2a24", "#76362e", "#944438", "#b16a5d", "#c7a298", "#e1c8c2", "#f0e3df"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Recorder Heading", "purpose": "Library and primary pane headings." },
+      "body": { "displayName": "Control Body", "purpose": "Default controls and interface copy." },
+      "support": { "displayName": "Supporting UI", "purpose": "Compact descriptions and option labels." },
+      "meta": { "displayName": "Metadata", "purpose": "Timestamps, labels, and low-priority navigation copy." },
+      "code": { "displayName": "Technical Mono", "purpose": "Keyboard material and technical UI values." },
+      "replay-body": { "displayName": "Transcript Prose", "purpose": "Recorded conversation content, using the separate Inter/system-sans stack." },
+      "replay-code": { "displayName": "Transcript Code", "purpose": "Tool output and code blocks, using platform monospace." }
+    },
+    "shadows": [
+      { "name": "dark-overlay", "value": "0 30px 130px #000b", "purpose": "Dialog depth in the dark baseline." },
+      { "name": "light-overlay", "value": "0 6px 35px #2628251f", "purpose": "Toast and transient overlay depth in light mode." }
+    ],
+    "motion": [
+      { "name": "control-color", "value": "background .15s, color .15s", "purpose": "Compact control hover and selection feedback." },
+      { "name": "mobile-drawer", "value": "transform .2s", "purpose": "Mobile navigation drawer movement." }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1050px" },
+      { "name": "mobile-drawer", "value": "680px" },
+      { "name": "wide-desktop", "value": "1600px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Theme Control",
+      "kind": "custom",
+      "refersTo": "theme-option",
+      "description": "Persistent Dark/Light choice in the sidebar reading controls.",
+      "html": "<fieldset class=\"ds-theme-control\"><legend>Theme</legend><div class=\"ds-theme-options\"><button type=\"button\" aria-pressed=\"true\">Dark</button><button type=\"button\" aria-pressed=\"false\">Light</button></div></fieldset>",
+      "css": ".ds-theme-control { min-width: 0; margin: 0; padding: 0; border: 0; color: #e9eae5; font: .8125rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-theme-control legend { margin-bottom: 6px; color: #929a9a; font-size: .75rem; } .ds-theme-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid #2a2e30; border-radius: 7px; background: #101214; } .ds-theme-options button { min-height: 36px; padding: 6px; border: 0; border-radius: 4px; color: #929a9a; background: transparent; font: inherit; cursor: pointer; } .ds-theme-options button:hover { color: #e9eae5; background: #1d2123; } .ds-theme-options button[aria-pressed=\"true\"] { color: #c7ee79; background: #c7ee7910; } .ds-theme-options button:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Local Flight Recorder",
+    "overview": "A compact, pane-based recorder UI that preserves its charcoal-and-lime dark baseline while offering a muted off-white, mostly grayscale light alternate. Theme changes recolor existing surfaces and retain typography, layout, icon strokes, and responsive behavior.",
+    "keyCharacteristics": ["Dense recorder layout", "Explicit persisted theme choice", "Dark baseline preserved", "Grayscale light alternate"],
+    "rules": [
+      { "name": "The Preserved Dark Rule", "body": "Dark mode is the baseline visual system; alternate-theme work must not alter its tokens or appearance.", "section": "colors" },
+      { "name": "The Restrained Light Rule", "body": "In light mode, ordinary navigation and controls stay grayscale; green and red communicate semantic status rather than decoration.", "section": "colors" },
+      { "name": "The Stable Frame Rule", "body": "Theme changes recolor existing surfaces; they do not move navigation, library, replay, or top-bar structure.", "section": "layout" }
+    ],
+    "dos": ["Do preserve the dark token set when extending light mode.", "Do use the grayscale light stack for standard light surfaces and selection.", "Do keep Theme with sidebar reading controls, including the mobile drawer."],
+    "donts": ["Don't infer theme from system appearance.", "Don't use lime as general light-mode decoration.", "Don't change typography, spacing, or responsive structure for a palette switch."]
+  }
+}

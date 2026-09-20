@@ -49,6 +49,7 @@ All source recordings, including subagents, are included initially. Uncheck **In
 
 ### Desktop And Responsive Layout
 
+- Dark is the default theme. Choose **Dark** or **Light** in the sidebar footer; the muted, gray-scale light theme and text size preferences are saved in your browser. On mobile, open navigation to find these controls.
 - Compact laptop displays use a single recording list and space-conscious headers.
 - Wide desktops use two recording columns; ultrawide and 4K displays use three.
 - The replay workspace adapts pane widths while bounding prose width. Large displays also show recording metadata and an event outline.
@@ -89,7 +90,7 @@ bun run check
 
 Development uses Vite on `127.0.0.1:12000` and the Bun API on `127.0.0.1:12001`. Stop any production server on that API port before starting development. For synthetic data, first run `bun scripts/demo.ts`, then `bun dev --dir .blackbox/demo --state-dir .blackbox/dev-state`.
 
-Browser tests use **Bun's test runner with Playwright controlling installed Microsoft Edge**, not Playwright's Node-dependent test runner. They build the UI, start an isolated fixture server on port `12003`, exercise real browser interactions, and audit accessibility with axe. Failed tests save screenshots and traces in ignored `test-results/`. No real transcripts are used by the test suite.
+Browser tests use **Bun's test runner with Playwright controlling installed Microsoft Edge**, not Playwright's Node-dependent test runner. They build the UI, preload the shared browser/server lifecycle across spec files, start an isolated fixture server on port `12003`, exercise real browser interactions, and audit accessibility with axe. Failed tests save screenshots and traces in ignored `test-results/`. No real transcripts are used by the test suite.
 
 Solid and its web renderer are pinned to `2.0.0-rc.9`, with a matching pinned compiler plugin. The implementation uses Solid 2's split effects, renderer-owned JSX, `onSettled`, and keyed rendering. It is still prerelease software; update the runtime and compiler together, then rerun the complete checks.
 

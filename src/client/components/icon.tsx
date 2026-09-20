@@ -27,6 +27,8 @@ const paths = {
   menu: "M4 6h16 M4 12h16 M4 18h16",
   keyboard: "M2 5h20v14H2z M5 9h1m3 0h1m3 0h1m3 0h1 M5 13h1m3 0h1m3 0h1m3 0h1 M7 16h10",
   dot: "M13 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0",
+  moon: "M20.5 13a8.5 8.5 0 0 1-9.5-9.5A8.5 8.5 0 1 0 20.5 13Z",
+  sun: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5",
 };
 
 export type IconName = keyof typeof paths;

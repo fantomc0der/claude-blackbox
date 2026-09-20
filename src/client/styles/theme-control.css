@@ -1,0 +1,7 @@
+.theme-control { min-width: 0; margin: 0 0 18px; padding: 0; border: 0; }
+.theme-control legend { padding: 0; margin-bottom: 6px; color: var(--muted); font-size: var(--text-meta); }
+.theme-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+.theme-options button { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; margin: 0; padding: 6px; border-radius: 4px; color: var(--muted); font-size: var(--text-support); }
+.theme-options button:hover { color: var(--text); background: var(--raised); }
+.theme-options button[aria-pressed="true"] { color: var(--theme-selected-text, var(--accent)); background: var(--theme-selected-surface, var(--accent-dim)); }
+.theme-options button:focus-visible { outline-offset: 0; }
