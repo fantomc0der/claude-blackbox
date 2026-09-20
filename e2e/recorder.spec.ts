@@ -26,19 +26,20 @@ test("full-record search finds tool output and survives URL reload", async ({ pa
 
 test("structured tools, bookmarks, resume clipboard and JSONL export work", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/?q=effortless");
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.getByRole("heading", { name: DEMO_HERO_TITLE })).toBeVisible();
   await page.getByRole("button", { name: "Copy resume command" }).click();
   await expect(page.getByRole("status")).toContainText("Resume command copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("cd -- '/synthetic/workspaces/orbit-auth' && claude --resume");
-  await page.getByLabel("Session details and actions").click();
+  await expect(page.locator(".session-details > summary")).toHaveText("Session details", { useInnerText: true });
+  await expect(page.locator(".session-details-menu")).toBeHidden();
   await page.getByRole("button", { name: "Bookmark session", exact: true }).click();
   await expect(page.getByRole("button", { name: "Remove bookmark" })).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("link", { name: "Export recording" }).click();
   expect((await downloadPromise).suggestedFilename()).toMatch(/^blackbox-.*\.jsonl$/);
-  await page.getByLabel("Session details and actions").click();
   const tools = page.locator('.tool-summary[aria-expanded="false"]');
   while (await tools.count()) await tools.first().click();
   await expect(page.locator(".tool-diff-added").first()).toBeVisible();
@@ -47,6 +48,56 @@ test("structured tools, bookmarks, resume clipboard and JSONL export work", asyn
   await page.getByRole("button", { name: "Close replay" }).click();
   await page.getByRole("button", { name: /^Bookmarked/ }).click();
   await expect(page.locator(".session-row")).toHaveCount(1);
+});
+
+test("secondary session actions adapt to pane width with visible labels and keyboard access", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/?q=effortless");
+  await page.locator(".session-row").click();
+  const bookmark = page.getByRole("button", { name: /^(Bookmark session|Remove bookmark)$/ });
+  const exportRecording = page.getByRole("link", { name: "Export recording" });
+  await expect(bookmark).toBeVisible();
+  await expect(exportRecording).toBeVisible();
+  await page.locator(".session-details > summary").click();
+  await expect(page.getByRole("heading", { name: "Session details", exact: true })).toBeVisible();
+  await expect(bookmark).toHaveCount(1);
+  await expect(exportRecording).toHaveCount(1);
+  await page.locator(".session-details > summary").press("Escape");
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const divider = page.getByRole("separator", { name: "Resize session library" });
+  await divider.press("End");
+  await expect(page.locator(".session-details > summary")).toHaveText("Session actions", { useInnerText: true });
+  await expect(bookmark).toHaveCount(0);
+  await divider.press("Home");
+  await expect(page.locator(".session-details > summary")).toHaveText("Session details", { useInnerText: true });
+  await expect(bookmark).toBeVisible();
+
+  for (const [width, height] of [[1440, 900], [390, 844], [320, 640], [960, 540]]) {
+    await page.setViewportSize({ width, height });
+    const actions = page.locator(".session-details > summary");
+    await expect(actions).toHaveText("Session actions", { useInnerText: true });
+    await expect(bookmark).toHaveCount(0);
+    await expect(exportRecording).toHaveCount(0);
+    await actions.focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await expect(bookmark).toBeFocused();
+    const previousLabel = await bookmark.innerText();
+    await page.keyboard.press("Enter");
+    await expect(bookmark).toHaveText(previousLabel === "Bookmark session" ? "Remove bookmark" : "Bookmark session");
+    await page.keyboard.press("Tab");
+    await expect(exportRecording).toBeFocused();
+    const download = page.waitForEvent("download");
+    await page.keyboard.press("Enter");
+    expect((await download).suggestedFilename()).toMatch(/^blackbox-.*\.jsonl$/);
+    await expect(page.getByRole("heading", { name: "Session details", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(actions).toBeFocused();
+    await expect(page.locator(".session-details-menu")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Copy resume command" })).toBeVisible();
+    expect(await page.locator(".replay-actions").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  }
 });
 
 test("output expansion controls align with the code panel in both states", async ({ page }) => {
@@ -191,10 +242,10 @@ test("event permalinks and open tool disclosures survive metadata refresh", asyn
   const tool = page.locator('.tool-summary[aria-expanded="false"]').first();
   await tool.click();
   const expanded = await page.locator('.tool-summary[aria-expanded="true"]').count();
-  await page.getByLabel("Session details and actions").click();
+  await page.locator(".session-details > summary").click();
   await page.getByRole("button", { name: /^(Bookmark session|Remove bookmark)$/ }).click();
   await expect(page.locator('.tool-summary[aria-expanded="true"]')).toHaveCount(expanded);
-  await page.getByLabel("Session details and actions").click();
+  await page.locator(".session-details > summary").click();
   const link = page.locator(".replay-event-link").nth(1);
   const href = await link.getAttribute("href");
   const eventId = new URL(href!, "http://127.0.0.1:12003").searchParams.get("event");
@@ -370,7 +421,7 @@ test("session details preserve context and keyboard access without shifting the 
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.locator(".replay-event").first()).toBeVisible();
   const transcript = await page.locator(".replay-scroll").boundingBox();
-  const disclosure = page.getByLabel("Session details and actions");
+  const disclosure = page.locator(".session-details > summary");
   await disclosure.focus();
   await page.keyboard.press("Enter");
   const details = page.getByRole("region", { name: "Session details", exact: true });
@@ -409,7 +460,7 @@ test("long session context stays accessible at compact sizes and larger text", a
   for (const [width, height] of [[1440, 900], [390, 844], [320, 640], [844, 390]]) {
     await page.setViewportSize({ width, height });
     expect(await title.evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) * 2 + 1)).toBe(true);
-    await page.getByLabel("Session details and actions").click();
+    await page.locator(".session-details > summary").click();
     const details = page.getByRole("region", { name: "Session details", exact: true });
     await expect(details).toContainText(longTitle);
     await expect(details).toContainText(longPath);
@@ -420,7 +471,7 @@ test("long session context stays accessible at compact sizes and larger text", a
     expect(await details.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
     await details.getByText("Source type", { exact: true }).scrollIntoViewIfNeeded();
     await expect(details.getByText("Main recording", { exact: true })).toBeInViewport();
-    await page.getByLabel("Session details and actions").press("Escape");
+    await page.locator(".session-details > summary").press("Escape");
   }
 });
 

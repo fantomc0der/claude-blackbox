@@ -8,6 +8,13 @@ import { EventCard } from "./event-card";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
 
+function SessionActions(props: { session: Session; onBookmark: () => void }) {
+  return <div class="session-secondary-actions">
+    <button class={['secondary-button', { bookmarked: props.session.bookmarked }]} onClick={props.onBookmark}><Icon name="bookmark" size={16} />{props.session.bookmarked ? "Remove bookmark" : "Bookmark session"}</button>
+    <a class="secondary-button" href={`/api/sessions/${props.session.id}/export`} download title="Export original JSONL records"><Icon name="download" size={16} />Export recording</a>
+  </div>;
+}
+
 export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; navigate: Navigate; changed: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void }) {
   let scroll!: HTMLDivElement;
   const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : "conversation");
@@ -108,18 +115,17 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-actions">
         <Show when={props.session}>{session => <>
           <button class="primary-button small" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button>
+          <SessionActions session={session()} onBookmark={() => void bookmark()} />
           <details class="session-details" onKeyDown={event => {
             if (event.key !== "Escape") return;
             event.stopPropagation();
             event.currentTarget.open = false;
             event.currentTarget.querySelector("summary")?.focus();
           }}>
-            <summary class="text-button" aria-label="Session details and actions">Details<Icon name="down" size={14} /></summary>
+            <summary class="text-button"><span class="session-actions-label">Session actions</span><span class="session-details-label">Session details</span><Icon name="down" size={14} /></summary>
             <div class="session-details-menu" role="region" aria-label="Session details">
-              <div class="session-secondary-actions">
-                <button class={['secondary-button', { bookmarked: session().bookmarked }]} onClick={() => void bookmark()}><Icon name="bookmark" size={16} />{session().bookmarked ? "Remove bookmark" : "Bookmark session"}</button>
-                <a class="secondary-button" href={`/api/sessions/${props.id}/export`} download title="Export original JSONL records"><Icon name="download" size={16} />Export recording</a>
-              </div>
+              <SessionActions session={session()} onBookmark={() => void bookmark()} />
+              <h3>Session details</h3>
               <dl>
                 <dt>Title</dt><dd>{session().title}</dd>
                 <dt>Original workspace</dt><dd><button class="source-path" title="Copy original working directory" onClick={() => void copy(session().cwd, "Source path")}><Icon name="folder" size={13} /><span>{session().cwd || "Working directory not recorded"}</span><Icon name="copy" size={12} /></button></dd>

@@ -225,12 +225,17 @@
   .replay-actions { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .replay-actions > .primary-button, .session-details > summary { min-height: 44px; }
   .bookmarked { color: var(--accent); background: #c7ee7910; }
-  .session-details > summary { list-style: none; padding: 8px; }
+  .session-details { flex: 1; min-width: min-content; max-width: max-content; }
+  .session-details > summary { list-style: none; padding: 3px 8px; line-height: 1.35; }
   .session-details[open] > summary { color: var(--accent); }
   .session-details[open] > summary svg { transform: rotate(180deg); }
   .session-details-menu { left: 0; right: auto; width: min(380px, 100%); max-height: min(60dvh, calc(100dvh - 260px)); overscroll-behavior: contain; }
   .session-secondary-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .session-secondary-actions > .secondary-button { min-height: 44px; }
+  .replay-actions > .session-secondary-actions, .session-details-label { display: none; }
+  .session-details-menu > .session-secondary-actions { flex-direction: column; }
+  .session-details-menu .secondary-button { justify-content: flex-start; }
+  .session-details-menu h3 { margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--line); font-size: var(--text-support); font-weight: 550; }
   .session-details-menu dt { color: #8b978f; font-size: var(--text-meta); margin-top: 15px; }
   .session-details-menu dd { margin: 5px 0 0; font-size: var(--text-support); overflow-wrap: anywhere; line-height: 1.6; }
   .session-details-menu p { color: #8b978f; font-size: var(--text-meta); line-height: 1.7; margin: 15px 0 0; }
@@ -425,6 +430,14 @@
   @container replay (min-width: 640px) {
     .replay-controls { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 24px; }
     .replay-find { border-top: 0; }
+  }
+  @container replay (min-width: 64rem) {
+    .replay-actions > .session-secondary-actions { display: flex; }
+    .session-details-label { display: inline; }
+    .session-actions-label, .session-details-menu > .session-secondary-actions { display: none; }
+    .session-details { position: relative; }
+    .session-details-menu { left: auto; right: 0; width: 380px; }
+    .session-details-menu h3 { margin: 0; padding: 0; border: 0; }
   }
   @media (min-width: 1600px) {
     .app-shell { grid-template-columns: clamp(226px, 13vw, 252px) minmax(0, 1fr); }
