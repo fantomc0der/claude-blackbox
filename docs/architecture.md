@@ -31,6 +31,8 @@ Discovery uses a single list on compact displays, a two-column grid on wide desk
 
 Typography uses shared, rem-based roles: 14px controls and code, 12px metadata, 13px supporting text, and the existing 15px/1.65 conversation rhythm at the browser's default font size. Compact layouts retain the same role sizes rather than shrinking utility text. The sidebar's Text size selector offers a larger scale across discovery and replay; it is saved locally in the browser, with an in-memory fallback when storage is unavailable. Browser font preferences and zoom remain independent of this setting.
 
+The replay header prioritizes the session title, close navigation, and copy-resume action. A keyboard-accessible Details disclosure holds the full title, original workspace, branch, model, activity counts, provenance, bookmark, and export actions without reducing the transcript viewport when open. Long titles take at most two header lines; their full text remains available in Details. Tabs and in-recording search share a row when the replay pane is wide enough, and stack on compact panes without reducing text size.
+
 The client requests 50 recordings or 60 events at a time. Tool bodies and raw records mount on demand. Stable event identities preserve open disclosures across metadata refreshes, and request sequence guards prevent stale fetches from replacing a newer page.
 
 ## Implementation layers

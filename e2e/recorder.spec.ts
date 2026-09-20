@@ -32,16 +32,18 @@ test("structured tools, bookmarks, resume clipboard and JSONL export work", asyn
   await page.getByRole("button", { name: "Copy resume command" }).click();
   await expect(page.getByRole("status")).toContainText("Resume command copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("cd -- '/synthetic/workspaces/orbit-auth' && claude --resume");
+  await page.getByLabel("Session details and actions").click();
   await page.getByRole("button", { name: "Bookmark session", exact: true }).click();
   await expect(page.getByRole("button", { name: "Remove bookmark" })).toBeVisible();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Export recording" }).click();
+  expect((await downloadPromise).suggestedFilename()).toMatch(/^blackbox-.*\.jsonl$/);
+  await page.getByLabel("Session details and actions").click();
   const tools = page.locator('.tool-summary[aria-expanded="false"]');
   while (await tools.count()) await tools.first().click();
   await expect(page.locator(".tool-diff-added").first()).toBeVisible();
   await expect(page.locator(".tool-terminal").first()).toBeVisible();
   await expect(page.locator(".tool-checklist")).toBeVisible();
-  const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("link", { name: "Export recording" }).click();
-  expect((await downloadPromise).suggestedFilename()).toMatch(/^blackbox-.*\.jsonl$/);
   await page.getByRole("button", { name: "Close replay" }).click();
   await page.getByRole("button", { name: /^Bookmarked/ }).click();
   await expect(page.locator(".session-row")).toHaveCount(1);
@@ -189,8 +191,10 @@ test("event permalinks and open tool disclosures survive metadata refresh", asyn
   const tool = page.locator('.tool-summary[aria-expanded="false"]').first();
   await tool.click();
   const expanded = await page.locator('.tool-summary[aria-expanded="true"]').count();
+  await page.getByLabel("Session details and actions").click();
   await page.getByRole("button", { name: /^(Bookmark session|Remove bookmark)$/ }).click();
   await expect(page.locator('.tool-summary[aria-expanded="true"]')).toHaveCount(expanded);
+  await page.getByLabel("Session details and actions").click();
   const link = page.locator(".replay-event-link").nth(1);
   const href = await link.getAttribute("href");
   const eventId = new URL(href!, "http://127.0.0.1:12003").searchParams.get("event");
@@ -338,6 +342,86 @@ test("session library divider supports pointer keyboard and responsive bounds", 
   await page.setViewportSize({ width: 1920, height: 1080 });
   await expect.poll(libraryWidth).toBe(560);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("compact replay reserves vertical space for conversation across viewports", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await expect(page.locator(".replay-event").first()).toBeVisible();
+  for (const [width, height, minimumReadingHeight] of [[1440, 900, 610], [1366, 768, 490], [390, 844, 520], [320, 640, 310], [844, 390, 110]]) {
+    await page.setViewportSize({ width, height });
+    const transcript = await page.locator(".replay-scroll").boundingBox();
+    expect(transcript!.height).toBeGreaterThanOrEqual(minimumReadingHeight);
+    await expect(page.locator(".session-details-menu")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Copy resume command" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Close replay" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Find in this recording" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const selector of [".replay-actions", ".replay-controls", ".replay-footer"]) {
+      expect(await page.locator(selector).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    }
+  }
+});
+
+test("session details preserve context and keyboard access without shifting the conversation", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await expect(page.locator(".replay-event").first()).toBeVisible();
+  const transcript = await page.locator(".replay-scroll").boundingBox();
+  const disclosure = page.getByLabel("Session details and actions");
+  await disclosure.focus();
+  await page.keyboard.press("Enter");
+  const details = page.getByRole("region", { name: "Session details", exact: true });
+  await expect(details).toBeVisible();
+  await expect(details).toContainText(DEMO_HERO_TITLE);
+  await expect(details).toContainText("feat/auth-delight");
+  await expect(details).toContainText("Sonnet 4 5");
+  await expect(details).toContainText("3 messages · 7 tools");
+  const copyPath = details.getByRole("button", { name: /synthetic\/workspaces\/orbit-auth/ });
+  await copyPath.click();
+  await expect(page.getByRole("status")).toContainText("Source path copied");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("/synthetic/workspaces/orbit-auth");
+  expect(await page.locator(".replay-scroll").boundingBox()).toEqual(transcript);
+  await page.keyboard.press("Escape");
+  await expect(details).toBeHidden();
+  await expect(disclosure).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(details).toBeVisible();
+  const audit = await new AxeBuilder({ page }).include(".replay-panel-heading").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  expect(audit.violations.map(violation => ({ id: violation.id, nodes: violation.nodes.map(node => node.target) }))).toEqual([]);
+});
+
+test("long session context stays accessible at compact sizes and larger text", async ({ page }) => {
+  const longTitle = "Review the authentication flow and verify every recovery path ".repeat(8).trim();
+  const longPath = "/synthetic/" + "deeply-nested-workspace/".repeat(12);
+  await page.addInitScript(() => { localStorage.setItem("blackbox:text-size", "larger"); });
+  await page.route(/\/api\/sessions\/[^/?]+$/, async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), title: longTitle, cwd: longPath } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  const title = page.locator(".replay-panel-heading h2");
+  await expect(title).toHaveText(longTitle);
+  await expect(page.getByRole("combobox", { name: "Text size" })).toHaveValue("larger");
+  for (const [width, height] of [[1440, 900], [390, 844], [320, 640], [844, 390]]) {
+    await page.setViewportSize({ width, height });
+    expect(await title.evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) * 2 + 1)).toBe(true);
+    await page.getByLabel("Session details and actions").click();
+    const details = page.getByRole("region", { name: "Session details", exact: true });
+    await expect(details).toContainText(longTitle);
+    await expect(details).toContainText(longPath);
+    const bounds = await details.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(height);
+    expect(await details.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await details.getByText("Source type", { exact: true }).scrollIntoViewIfNeeded();
+    await expect(details.getByText("Main recording", { exact: true })).toBeInViewport();
+    await page.getByLabel("Session details and actions").press("Escape");
+  }
 });
 
 test("utility typography stays readable across desktop and compact viewports", async ({ page }) => {

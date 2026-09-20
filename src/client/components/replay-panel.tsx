@@ -100,18 +100,48 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   };
 
   return <section class={['replay-panel', { 'replay-focused': focused(), 'overview-hidden': !overview() }]} aria-label="Session replay">
-    <header class="replay-panel-heading"><div class="replay-overline"><span><span class="live-dot" />SESSION REPLAY</span><div class="replay-layout-controls" role="group" aria-label="Replay layout">
-      <button class="layout-button library-toggle" aria-expanded={props.libraryCollapsed ? "false" : "true"} aria-controls="session-library" onClick={props.toggleLibrary}>{props.libraryCollapsed ? "Show library" : "Hide library"}</button>
-      <button class="layout-button reading-toggle" aria-pressed={focused() ? "true" : "false"} onClick={() => setFocused(value => !value)}>Focused reading</button>
-      <button class="layout-button overview-toggle" aria-expanded={overview() ? "true" : "false"} aria-controls="recording-overview" onClick={() => setOverview(value => !value)}>{overview() ? "Hide overview" : "Show overview"}</button>
-      <button class="icon-button tiny" aria-label="Close replay" title="Back to session library" onClick={() => props.navigate({ session: null, event: null })}><Icon name="close" size={18} /></button>
-    </div></div>
-      <Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <>
-        <h2>{session().title}</h2>
-        <button class="source-path" title="Copy original working directory" onClick={() => void copy(session().cwd, "Source path")}><Icon name="folder" size={13} /><span>{session().cwd || "Working directory not recorded"}</span><Icon name="copy" size={12} /></button>
-        <div class="replay-session-meta"><span><Icon name="branch" size={13} />{session().branch || "No branch"}</span><span class="model-label"><span class="model-dot" />{modelName(session().model)}</span><span>{session().messageCount} messages</span><span>{session().toolCount} tools</span></div>
-        <div class="replay-actions"><button class="primary-button small" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button><button class={['icon-button', { bookmarked: session().bookmarked }]} aria-label={session().bookmarked ? "Remove bookmark" : "Bookmark session"} title={session().bookmarked ? "Remove bookmark" : "Bookmark session"} onClick={() => void bookmark()}><Icon name="bookmark" size={17} /></button><a class="icon-button" href={`/api/sessions/${props.id}/export`} download title="Export original JSONL records" aria-label="Export recording"><Icon name="download" size={17} /></a><details class="session-details"><summary class="text-button">Details</summary><div class="session-details-menu"><dl><dt>Session ID</dt><dd><button class="text-button mono" onClick={() => void copy(session().sessionId, "Session ID")}>{session().sessionId}</button></dd><dt>First recorded</dt><dd>{dateTime(session().startedAt)}</dd><dt>Last recorded</dt><dd>{dateTime(session().updatedAt)}</dd><dt>Original transcript</dt><dd class="mono">{session().source}</dd><dt>Source type</dt><dd>{session().isAgent ? "Subagent recording" : "Main recording"}</dd></dl><p>Read-only replay. Commands are only copied, never executed.</p></div></details></div>
-      </>}</Show>
+    <header class="replay-panel-heading">
+      <div class="replay-title-row">
+        <Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <h2 title={session().title}>{session().title}</h2>}</Show>
+        <button class="icon-button replay-close" aria-label="Close replay" title="Back to session library" onClick={() => props.navigate({ session: null, event: null })}><Icon name="close" size={18} /></button>
+      </div>
+      <div class="replay-actions">
+        <Show when={props.session}>{session => <>
+          <button class="primary-button small" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button>
+          <details class="session-details" onKeyDown={event => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            event.currentTarget.open = false;
+            event.currentTarget.querySelector("summary")?.focus();
+          }}>
+            <summary class="text-button" aria-label="Session details and actions">Details<Icon name="down" size={14} /></summary>
+            <div class="session-details-menu" role="region" aria-label="Session details">
+              <div class="session-secondary-actions">
+                <button class={['secondary-button', { bookmarked: session().bookmarked }]} onClick={() => void bookmark()}><Icon name="bookmark" size={16} />{session().bookmarked ? "Remove bookmark" : "Bookmark session"}</button>
+                <a class="secondary-button" href={`/api/sessions/${props.id}/export`} download title="Export original JSONL records"><Icon name="download" size={16} />Export recording</a>
+              </div>
+              <dl>
+                <dt>Title</dt><dd>{session().title}</dd>
+                <dt>Original workspace</dt><dd><button class="source-path" title="Copy original working directory" onClick={() => void copy(session().cwd, "Source path")}><Icon name="folder" size={13} /><span>{session().cwd || "Working directory not recorded"}</span><Icon name="copy" size={12} /></button></dd>
+                <dt>Branch</dt><dd>{session().branch || "No branch"}</dd>
+                <dt>Model</dt><dd>{modelName(session().model)}</dd>
+                <dt>Activity</dt><dd>{session().messageCount} messages · {session().toolCount} tools</dd>
+                <dt>Session ID</dt><dd><button class="text-button mono" onClick={() => void copy(session().sessionId, "Session ID")}>{session().sessionId}</button></dd>
+                <dt>First recorded</dt><dd>{dateTime(session().startedAt)}</dd>
+                <dt>Last recorded</dt><dd>{dateTime(session().updatedAt)}</dd>
+                <dt>Original transcript</dt><dd class="mono">{session().source}</dd>
+                <dt>Source type</dt><dd>{session().isAgent ? "Subagent recording" : "Main recording"}</dd>
+              </dl>
+              <p>Read-only replay. Commands are only copied, never executed.</p>
+            </div>
+          </details>
+        </>}</Show>
+        <div class="replay-layout-controls" role="group" aria-label="Replay layout">
+          <button class="layout-button library-toggle" aria-expanded={props.libraryCollapsed ? "false" : "true"} aria-controls="session-library" onClick={props.toggleLibrary}>{props.libraryCollapsed ? "Show library" : "Hide library"}</button>
+          <button class="layout-button reading-toggle" aria-pressed={focused() ? "true" : "false"} onClick={() => setFocused(value => !value)}>Focused reading</button>
+          <button class="layout-button overview-toggle" aria-expanded={overview() ? "true" : "false"} aria-controls="recording-overview" onClick={() => setOverview(value => !value)}>{overview() ? "Hide overview" : "Show overview"}</button>
+        </div>
+      </div>
     </header>
     <div class="replay-controls">
       <div class="replay-tabs" role="group" aria-label="Replay content">
