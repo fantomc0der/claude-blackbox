@@ -284,6 +284,7 @@
 }
 
 @layer responsive {
+  .library-split .heading-group { display: none; }
   @media (min-width: 1800px) {
     .library:not(.library-split) { padding: 0 65px; }
     .library-split { width: 370px; flex-basis: 370px; }
