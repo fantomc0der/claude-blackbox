@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
 import { createHandler } from "../src/server/http";
+import { removeTestDirectory } from "./helpers";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -14,7 +15,7 @@ async function setup() {
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, "record.jsonl"), JSON.stringify({ type: "user", cwd: "/work/example", message: { content: "Hello" } }) + "\n");
   const recorder = await Recorder.open(join(root, "claude"), join(root, "state"));
-  cleanup.push(async () => { await recorder.close(); await rm(root, { recursive: true, force: true }); });
+  cleanup.push(async () => { await recorder.close(); await removeTestDirectory(root); });
   return { handler: createHandler({ recorder }), recorder, id: recorder.list(new URLSearchParams()).items[0].id };
 }
 

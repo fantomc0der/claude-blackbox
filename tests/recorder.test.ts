@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
 import { parseSearch } from "../src/server/search";
+import { removeTestDirectory } from "./helpers";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -19,7 +20,7 @@ async function fixture() {
     message: { role: "user", content }, ...extra,
   });
   let recorder: Recorder | undefined;
-  cleanup.push(async () => { await recorder?.close(); await rm(root, { recursive: true, force: true }); });
+  cleanup.push(async () => { await recorder?.close(); await removeTestDirectory(root); });
   return { root, data, project, file, record, open: async () => recorder = await Recorder.open(data, join(root, "state")) };
 }
 
@@ -113,6 +114,21 @@ describe("recording index", () => {
   test("refuses state inside the source directory", async () => {
     const fixtureData = await fixture();
     await expect(Recorder.open(fixtureData.data, join(fixtureData.data, "cache"))).rejects.toThrow("outside");
+  });
+
+  test.skipIf(process.platform !== "win32")("compares state containment case-insensitively on Windows", async () => {
+    const fixtureData = await fixture();
+    await expect(Recorder.open(fixtureData.data, join(fixtureData.data.toUpperCase(), "cache"))).rejects.toThrow("outside");
+  });
+
+  test("includes subagents explicitly and lets discovery filter them out", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("Main recording") + "\n");
+    await writeFile(join(fixtureData.project, "agent-worker.jsonl"), fixtureData.record("Delegated work") + "\n");
+    const recorder = await fixtureData.open();
+    expect(recorder.list(new URLSearchParams()).total).toBe(2);
+    expect(recorder.list(new URLSearchParams({ agents: "0" })).total).toBe(1);
+    expect(recorder.list(new URLSearchParams({ q: "Delegated" })).items[0].isAgent).toBe(true);
   });
 
   test("uses recorded session IDs and generated titles, not injected context", async () => {

@@ -1,7 +1,7 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, stat, open } from "node:fs/promises";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, EventPage, ReplayEvent, Session, SessionPage, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
 import { normalize, object, pathName, promptTitle, string } from "./normalize";
@@ -59,6 +59,15 @@ const joins = `FROM sessions s LEFT JOIN group_paths gp ON gp.path = s.cwd
   LEFT JOIN groups g ON g.id = gp.group_id LEFT JOIN bookmarks b ON b.session_id = s.id`;
 const columns = `s.*, g.id AS group_id, g.name AS group_name, (b.session_id IS NOT NULL) AS bookmarked`;
 
+async function physicalPath(path: string): Promise<string> {
+  try { return await realpath(path); }
+  catch (error) {
+    if (object(error).code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    return parent === path ? path : join(await physicalPath(parent), basename(path));
+  }
+}
+
 export class Recorder {
   readonly db: Database;
   readonly dataDir: string;
@@ -87,13 +96,17 @@ export class Recorder {
   }
 
   static async open(dataDir: string, stateDir: string): Promise<Recorder> {
-    const root = resolve(dataDir);
-    const state = resolve(stateDir);
-    if (state === root || state.startsWith(root + sep)) throw new Error("The state directory must be outside the Claude data directory.");
+    const [root, state] = await Promise.all([physicalPath(resolve(dataDir)), physicalPath(resolve(stateDir))]);
+    const compareRoot = process.platform === "win32" ? root.toLowerCase() : root;
+    const compareState = process.platform === "win32" ? state.toLowerCase() : state;
+    if (compareState === compareRoot || compareState.startsWith(compareRoot + sep)) throw new Error("The state directory must be outside the Claude data directory.");
     await mkdir(state, { recursive: true, mode: 0o700 });
-    const recorder = new Recorder(root, state, new Database(join(state, "index.sqlite"), { create: true }));
-    try { await recorder.scan(); } catch (error) { recorder.db.close(); throw error; }
-    return recorder;
+    const database = new Database(join(state, "index.sqlite"), { create: true });
+    try {
+      const recorder = new Recorder(root, state, database);
+      await recorder.scan();
+      return recorder;
+    } catch (error) { database.close(); throw error; }
   }
 
   watch(interval = 2500): void {
@@ -268,7 +281,7 @@ export class Recorder {
     if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
     if (params.get("errors") === "1") conditions.push("s.errors>0");
     if (params.get("edits") === "1") conditions.push("s.edits>0");
-    if (params.get("agents") !== "1") conditions.push("s.agent=0");
+    if (params.get("agents") === "0") conditions.push("s.agent=0");
     if (params.get("active") === "1") {
       conditions.push("s.updated>=? AND s.mtime>=?");
       bindings.push(new Date(Date.now() - 120_000).toISOString(), Date.now() - 120_000);
@@ -290,8 +303,8 @@ export class Recorder {
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const total = this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total ${joins} ${where}`).get(...bindings)!.total;
-    const offset = pageNumber(params.get("offset"), 0, 1_000_000);
     const limit = Math.max(1, pageNumber(params.get("limit"), 50, 100));
+    const offset = Math.min(pageNumber(params.get("offset"), 0, 1_000_000), Math.floor(Math.max(0, total - 1) / limit) * limit);
     const order = params.get("sort") === "oldest" ? "s.updated ASC" : params.get("sort") === "activity" ? "s.events DESC, s.updated DESC" : "s.updated DESC";
     const rows = this.db.query<SourceRow, SQLQueryBindings[]>(`SELECT ${columns} ${joins} ${where} ORDER BY ${order},s.id LIMIT ? OFFSET ?`).all(...bindings, limit, offset);
     const positive = terms.find(term => !term.exclude && /[\p{L}\p{N}]/u.test(term.value));
@@ -323,6 +336,7 @@ export class Recorder {
       const anchor = this.db.query<{ sequence: number }, [string, string]>("SELECT sequence FROM events WHERE session_id=? AND event_id=?").get(id, params.get("anchor")!);
       if (anchor) offset = this.db.query<{ count: number }, SQLQueryBindings[]>(`SELECT count(*) AS count FROM events WHERE ${filter} AND sequence<?`).get(...bindings, anchor.sequence)!.count;
     }
+    offset = Math.min(offset, Math.max(0, total - 1));
     const items = this.db.query<StoredEvent, SQLQueryBindings[]>(`SELECT raw,event_id,sequence,offset,text FROM events WHERE ${filter} ORDER BY sequence LIMIT ? OFFSET ?`)
       .all(...bindings, limit, offset).map(row => normalize(JSON.parse(row.raw), id, row.offset, row.sequence));
     return { items, total, offset, limit };

@@ -27,7 +27,7 @@ export function resumeCommand(session: Pick<Session, "cwd" | "sessionId">): stri
   const windows = /^[A-Za-z]:[\\/]/.test(session.cwd) || session.cwd.startsWith("\\\\");
   const quote = (value: string) => windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`;
   const resume = `claude --resume ${quote(session.sessionId)}`;
-  return session.cwd ? windows ? `Set-Location -LiteralPath ${quote(session.cwd)}; ${resume}` : `cd -- ${quote(session.cwd)} && ${resume}` : resume;
+  return session.cwd ? windows ? `Set-Location -LiteralPath ${quote(session.cwd)} -ErrorAction Stop; ${resume}` : `cd -- ${quote(session.cwd)} && ${resume}` : resume;
 }
 
 export function searchHighlight(query: string): string {
