@@ -8,7 +8,7 @@ import { EventCard } from "./event-card";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
 
-export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; navigate: Navigate; changed: () => void; notify: (message: string) => void }) {
+export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; navigate: Navigate; changed: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void }) {
   let scroll!: HTMLDivElement;
   const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : "conversation");
   const [query, setQuery] = createSignal("");
@@ -19,6 +19,8 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const [error, setError] = createSignal("");
   const [updated, setUpdated] = createSignal(false);
   const [retry, setRetry] = createSignal(0);
+  const [focused, setFocused] = createSignal(false);
+  const [overview, setOverview] = createSignal(true);
   let atBottom = false;
   let initial = true;
   let lastKey = "";
@@ -97,8 +99,13 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     scroll.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   };
 
-  return <section class="replay-panel" aria-label="Session replay">
-    <header class="replay-panel-heading"><div class="replay-overline"><span><span class="live-dot" />SESSION REPLAY</span><button class="icon-button tiny" aria-label="Close replay" title="Back to session library" onClick={() => props.navigate({ session: null, event: null })}><Icon name="close" size={18} /></button></div>
+  return <section class={['replay-panel', { 'replay-focused': focused(), 'overview-hidden': !overview() }]} aria-label="Session replay">
+    <header class="replay-panel-heading"><div class="replay-overline"><span><span class="live-dot" />SESSION REPLAY</span><div class="replay-layout-controls" role="group" aria-label="Replay layout">
+      <button class="layout-button library-toggle" aria-expanded={props.libraryCollapsed ? "false" : "true"} aria-controls="session-library" onClick={props.toggleLibrary}>{props.libraryCollapsed ? "Show library" : "Hide library"}</button>
+      <button class="layout-button reading-toggle" aria-pressed={focused() ? "true" : "false"} onClick={() => setFocused(value => !value)}>Focused reading</button>
+      <button class="layout-button overview-toggle" aria-expanded={overview() ? "true" : "false"} aria-controls="recording-overview" onClick={() => setOverview(value => !value)}>{overview() ? "Hide overview" : "Show overview"}</button>
+      <button class="icon-button tiny" aria-label="Close replay" title="Back to session library" onClick={() => props.navigate({ session: null, event: null })}><Icon name="close" size={18} /></button>
+    </div></div>
       <Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <>
         <h2>{session().title}</h2>
         <button class="source-path" title="Copy original working directory" onClick={() => void copy(session().cwd, "Source path")}><Icon name="folder" size={13} /><span>{session().cwd || "Working directory not recorded"}</span><Icon name="copy" size={12} /></button>
@@ -126,7 +133,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         <For each={visibleEvents()} keyed={event => event.id} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match.</h3><p>Choose another event type or search phrase.</p></div>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />You're all caught up.<small>New activity appears here automatically.</small></div>}><button class="load-events" onClick={() => { setOffset(page()!.offset + page()!.limit); props.navigate({ event: null }, true); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
-    </div><aside class="replay-inspector" aria-label="Recording overview">
+    </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">
       <p class="eyebrow">AT A GLANCE</p>
       <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
       <div class="inspector-source"><span class="eyebrow">ORIGINAL WORKSPACE</span><p>{props.session?.cwd || "Not recorded"}</p><span class="inspector-date">{dateTime(props.session?.startedAt || "")}</span></div>

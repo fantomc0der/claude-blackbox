@@ -24,7 +24,7 @@ export function Library(props: LibraryProps) {
     return Object.entries(labels).filter(([key]) => props.params.get(key));
   };
   const openSession = (session: Session) => props.navigate({ session: session.id, event: session.matchEventId || null });
-  return <section class={['library', { 'library-split': Boolean(selected()) }]} aria-label="Session library">
+  return <section id="session-library" class={['library', { 'library-split': Boolean(selected()) }]} aria-label="Session library">
     <header class="library-heading"><div><p class="eyebrow">YOUR DEVELOPMENT, DOCUMENTED</p><h1>{selected() ? "Session library" : props.params.get("bookmarked") ? "Worth coming back to." : workspace() ? workspace()!.name : <>Good work leaves <span>a trail.</span></>}</h1><p class="library-description">Every prompt, every breakthrough, every detour. All right here.</p></div><button class="secondary-button heading-group" onClick={props.group}><Icon name="merge" size={16} />Group workspaces</button></header>
     <Show when={!selected()}><div class="overview">
       <div class="stat"><span class="stat-label"><Icon name="library" size={15} />RECORDED SESSIONS</span><strong>{compact(props.catalog?.sessions || 0)}</strong><span class="stat-note">Your complete local history</span></div>

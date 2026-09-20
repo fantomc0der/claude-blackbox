@@ -3,6 +3,7 @@ import type { Catalog } from "../../shared/types";
 import { compact } from "../lib/format";
 import type { Navigate } from "../lib/location";
 import { Icon } from "./icon";
+import { TextSizeControl } from "./text-size-control";
 
 export function Sidebar(props: { catalog: Catalog | null; params: URLSearchParams; navigate: Navigate; group: () => void; refresh: () => void; close: () => void; hidden: boolean }) {
   const select = (values: Record<string, string | null>) => {
@@ -24,6 +25,6 @@ export function Sidebar(props: { catalog: Catalog | null; params: URLSearchParam
       <Icon name={workspace.grouped ? "merge" : "folder"} size={16} /><span>{workspace.name}<Show when={workspace.grouped}><small>{workspace.paths.length} folders, one history</small></Show></span><span class="nav-count">{workspace.count}</span>
     </button>}</For><Show when={props.catalog && !props.catalog.workspaces.length}><p class="nav-empty">Your projects will appear here once a session is recorded.</p></Show></nav>
     <button class="group-hint" onClick={props.group}><span class="group-hint-icon"><Icon name="merge" /></span><span>Many folders. One story.<small>Bring your worktrees together</small></span><Icon name="chevron" size={14} /></button>
-    <div class="sidebar-footer"><div><Icon name="shield" size={17} /><span>Local. Private. Yours.<small>No cloud. No telemetry.</small></span><button class="icon-button tiny" title="Rescan recordings" aria-label="Rescan recordings" onClick={props.refresh}><Icon name="refresh" size={15} /></button></div><span class="version-label">CLAUDE-BLACKBOX <span>V0.1.0</span></span></div>
+    <div class="sidebar-footer"><TextSizeControl /><div><Icon name="shield" size={17} /><span>Local. Private. Yours.<small>No cloud. No telemetry.</small></span><button class="icon-button tiny" title="Rescan recordings" aria-label="Rescan recordings" onClick={props.refresh}><Icon name="refresh" size={15} /></button></div><span class="version-label">CLAUDE-BLACKBOX <span>V0.1.0</span></span></div>
   </aside>;
 }

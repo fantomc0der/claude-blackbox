@@ -233,9 +233,179 @@ test("desktop layouts adapt from compact laptops through 4K and ultrawide monito
     expect(await page.locator(".recordings-scroll").evaluate(element => element.clientHeight)).toBeGreaterThan(180);
     await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
     await expect(page.locator(".replay-event").first()).toBeVisible();
-    expect(await page.locator(".replay-timeline").evaluate(element => element.getBoundingClientRect().width)).toBeLessThanOrEqual(961);
+    const widths = await page.locator(".replay-panel").evaluate(panel => ({
+      panel: panel.clientWidth,
+      body: panel.querySelector(".replay-body")!.getBoundingClientRect().width,
+      scroll: panel.querySelector(".replay-scroll")!.clientWidth,
+      timeline: panel.querySelector(".replay-timeline")!.getBoundingClientRect().width,
+    }));
+    expect(Math.abs(widths.body - widths.panel)).toBeLessThan(1);
+    expect(Math.abs(widths.timeline - widths.scroll)).toBeLessThan(1);
+    const content = await page.locator(".md-content").filter({ has: page.locator("pre") }).first().evaluate(element => {
+      const paragraph = element.querySelector("p")!;
+      return {
+        prose: paragraph.getBoundingClientRect().width,
+        measure: parseFloat(getComputedStyle(paragraph).maxInlineSize),
+        code: element.querySelector("pre")!.getBoundingClientRect().width,
+      };
+    });
+    expect(content.prose).toBeLessThanOrEqual(content.measure + 1);
+    if (size.width >= 2560) {
+      expect(widths.timeline).toBeGreaterThan(1400);
+      expect(content.code).toBeGreaterThan(1400);
+      expect(content.code).toBeGreaterThan(content.prose * 2);
+    }
     expect(await page.locator(".replay-scroll").evaluate(element => element.clientHeight)).toBeGreaterThan(180);
     if (size.width >= 2000) await expect(page.getByRole("complementary", { name: "Recording overview" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
+});
+
+test("replay layout controls preserve reading and navigation", async ({ page }) => {
+  await page.setViewportSize({ width: 3440, height: 1440 });
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  const library = page.getByRole("region", { name: "Session library" });
+  const overview = page.getByRole("complementary", { name: "Recording overview" });
+  const timeline = page.locator(".replay-timeline");
+  const timelineWidth = () => timeline.evaluate(element => element.getBoundingClientRect().width);
+  const originalWidth = await timelineWidth();
+  await expect(overview).toBeVisible();
+  await page.getByRole("button", { name: "Hide overview" }).click();
+  await expect(overview).toBeHidden();
+  expect(await timelineWidth()).toBeGreaterThan(originalWidth + 200);
+  await page.getByRole("button", { name: "Hide library" }).click();
+  await expect(library).toBeHidden();
+  await expect(page.getByRole("separator")).toHaveCount(0);
+  expect(await timelineWidth()).toBeGreaterThan(originalWidth + 600);
+  await page.getByRole("button", { name: "Show library" }).click();
+  await expect(library).toBeVisible();
+  await page.getByRole("button", { name: "Hide library" }).click();
+  await page.keyboard.press("Control+k");
+  await expect(page.getByRole("textbox", { name: "Search all recordings" })).toBeFocused();
+  await expect(library).toBeVisible();
+  await expect(overview).toBeHidden();
+  await page.getByRole("button", { name: "Show overview" }).click();
+  await page.locator(".replay-raw > summary").first().click();
+  const focus = page.getByRole("button", { name: "Focused reading" });
+  await focus.click();
+  await expect(focus).toHaveAttribute("aria-pressed", "true");
+  expect(await timelineWidth()).toBeLessThanOrEqual(960);
+  await focus.click();
+  expect(await timelineWidth()).toBeGreaterThan(2000);
+  await expect(page.locator(".replay-raw").first()).toHaveAttribute("open", "");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(library).toBeHidden();
+  await expect(overview).toBeHidden();
+  await expect(page.getByRole("button", { name: "Hide library" })).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.getByRole("button", { name: "Hide library" }).click();
+  await page.getByRole("button", { name: "Close replay" }).click();
+  await expect(library).toBeVisible();
+});
+
+test("session library divider supports pointer keyboard and responsive bounds", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  const divider = page.getByRole("separator", { name: "Resize session library" });
+  const libraryWidth = () => page.locator(".library-split").evaluate(element => Math.round(element.getBoundingClientRect().width));
+  const originalWidth = await libraryWidth();
+  await expect(divider).toHaveAttribute("aria-valuenow", String(originalWidth));
+  await divider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(libraryWidth).toBe(originalWidth + 24);
+  await expect(divider).toHaveAttribute("aria-valuenow", String(originalWidth + 24));
+  await page.keyboard.press("Home");
+  await expect.poll(libraryWidth).toBe(240);
+  await page.keyboard.press("End");
+  await expect.poll(libraryWidth).toBe(560);
+  const bounds = await divider.boundingBox();
+  await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(bounds!.x + bounds!.width / 2 - 100, bounds!.y + 100, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(libraryWidth).toBe(460);
+  await divider.dblclick();
+  await expect.poll(libraryWidth).toBe(originalWidth);
+  await divider.press("End");
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect.poll(libraryWidth).toBeLessThan(350);
+  await expect.poll(() => page.locator(".replay-panel").evaluate(element => element.clientWidth)).toBeGreaterThanOrEqual(480);
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect(divider).toBeHidden();
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await expect.poll(libraryWidth).toBe(560);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("utility typography stays readable across desktop and compact viewports", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await expect(page.locator(".md-content").first()).toBeVisible();
+  for (const width of [1920, 1024, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const selector of [".nav-item", ".session-title", ".filter-tab", ".search-box input", ".replay-tab", ".replay-find input", ".primary-button.small"]) {
+      await expect(page.locator(selector).first()).toHaveCSS("font-size", "14px");
+    }
+    for (const selector of [".session-path", ".session-time", ".source-path", ".inspector-source .eyebrow"]) {
+      await expect(page.locator(selector).first()).toHaveCSS("font-size", "12px");
+    }
+    await expect(page.locator(".tool-preview").first()).toHaveCSS("font-size", "13px");
+    await expect(page.locator(".md-content code").first()).toHaveCSS("font-size", "14px");
+    await expect(page.locator(".md-content").first()).toHaveCSS("font-size", "15px");
+    await expect(page.locator(".md-content").first()).toHaveCSS("line-height", "24.75px");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const selector of [".replay-controls", ".replay-actions", ".replay-footer"]) {
+      expect(await page.locator(selector).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    }
+  }
+});
+
+test("larger text persists without resetting replay and respects browser font preferences", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await page.locator(".replay-raw > summary").first().click();
+  const replayUrl = page.url();
+  const selector = page.getByRole("combobox", { name: "Text size" });
+  await selector.selectOption("larger");
+  await expect(page.locator(".replay-find input")).toHaveCSS("font-size", "16px");
+  await expect(page.locator(".source-path")).toHaveCSS("font-size", "14px");
+  await expect(page.locator(".tool-code pre").first()).toHaveCSS("font-size", "15px");
+  await expect(page.locator(".md-content").first()).toHaveCSS("font-size", "17px");
+  await expect(page.locator(".replay-raw").first()).toHaveAttribute("open", "");
+  expect(page.url()).toBe(replayUrl);
+  await page.reload();
+  await expect(selector).toHaveValue("larger");
+  await expect(page.locator(".replay-find input")).toHaveCSS("font-size", "16px");
+  for (const width of [1024, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const target of [".replay-controls", ".replay-actions", ".replay-footer"]) {
+      expect(await page.locator(target).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    }
+  }
+  await page.getByRole("button", { name: "Open workspace navigation" }).click();
+  await selector.focus();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Tab");
+  await expect(selector).toHaveValue("standard");
+  await page.getByRole("button", { name: "Close navigation", exact: true }).last().click();
+  await expect(page.locator(".replay-find input")).toHaveCSS("font-size", "14px");
+  await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; });
+  await expect(page.locator(".replay-find input")).toHaveCSS("font-size", "17.5px");
+  await expect(page.locator(".md-content").first()).toHaveCSS("font-size", "18.75px");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("text size remains usable when local storage is unavailable", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", { get() { throw new DOMException("Storage blocked", "SecurityError"); } });
+  });
+  await page.goto("/");
+  const selector = page.getByRole("combobox", { name: "Text size" });
+  await expect(selector).toHaveValue("standard");
+  await selector.selectOption("larger");
+  await expect(page.getByRole("textbox", { name: "Search all recordings" })).toHaveCSS("font-size", "16px");
 });
