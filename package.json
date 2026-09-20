@@ -13,7 +13,7 @@
     "build": "bun --bun vite build",
     "start": "bun src/server/cli.ts",
     "demo": "bun scripts/demo.ts && bun src/server/cli.ts --dir .blackbox/demo --state-dir .blackbox/demo-state --port 12002",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun --bun tsc --noEmit",
     "test": "bun test tests",
     "test:e2e": "bun run build && bun test e2e --timeout 30000",
     "check": "bun run typecheck && bun test tests && bun run build"

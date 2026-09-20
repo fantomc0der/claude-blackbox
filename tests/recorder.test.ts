@@ -160,6 +160,8 @@ describe("recording index", () => {
     expect(session).toBeDefined();
     expect(recorder.events(session.id, new URLSearchParams({ limit: "1" })).items).toHaveLength(1);
     expect(recorder.results(session.id, ["call"]).call.content).toBe("Finished");
+    const plan = recorder.db.query<{ detail: string }, []>("EXPLAIN QUERY PLAN SELECT rowid FROM tool_results WHERE event_row=1").all();
+    expect(plan.some(row => row.detail.includes("tool_results_event"))).toBe(true);
   });
 
   test("recovers an interrupted import from stored records without duplicates", async () => {
