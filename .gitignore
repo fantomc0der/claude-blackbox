@@ -13,3 +13,16 @@ test-results/
 playwright-report/
 *.log
 .env
+
+# Impeccable: per-developer config and regenerable run artifacts.
+# Shared project config (config.json, design.json, live/config.json) stays tracked.
+.impeccable/config.local.json
+.impeccable/build/
+.impeccable/review/
+.impeccable/mocks/decision/
+.impeccable/live/sessions/
+.impeccable/live/annotations/
+.impeccable/live/roots.json
+.impeccable/live/inject-journal.json
+.impeccable/critique/*
+!.impeccable/critique/ignore.md
