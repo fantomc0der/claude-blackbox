@@ -31,7 +31,7 @@ export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; 
     } catch (error) { setError(String(error instanceof Error ? error.message : error)); }
     finally { setSaving(false); }
   };
-  return <dialog ref={dialog} class="workspace-dialog" onClose={props.onClose} onCancel={props.onClose} aria-labelledby="workspace-title">
+  return <dialog ref={dialog} class="workspace-dialog" onClose={props.onClose} onCancel={props.onClose} aria-label="Group workspaces">
     <div class="dialog-heading"><span class="dialog-symbol"><Icon name="merge" size={22} /></span><button class="icon-button" aria-label="Close workspace settings" onClick={() => dialog.close()}><Icon name="close" /></button></div>
     <p class="eyebrow">ONE PROJECT. EVERY PERSPECTIVE.</p>
     <h2 id="workspace-title">Bring your workspaces together.</h2>

@@ -19,6 +19,7 @@ export function App() {
   const [error, setError] = createSignal("");
   const [groupOpen, setGroupOpen] = createSignal(false);
   const [navOpen, setNavOpen] = createSignal(false);
+  const [mobile, setMobile] = createSignal(matchMedia("(max-width: 680px)").matches);
   const [query, setQuery] = createSignal(params().get("q") || "");
   const [toast, setToast] = createSignal("");
   const [help, setHelp] = createSignal(false);
@@ -28,8 +29,21 @@ export function App() {
     const next = new URLSearchParams(params()); next.delete("session"); next.delete("event"); return next.toString();
   });
 
+  createEffect(() => catalog(), value => {
+    const workspace = params().get("workspace");
+    if (value && workspace && !value.workspaces.some(entry => entry.id === workspace)) navigate({ workspace: null, cwd: null, offset: null }, true);
+  });
+  createEffect(() => navOpen(), (open, previous) => {
+    if (!mobile()) return;
+    requestAnimationFrame(() => {
+      if (open) document.querySelector<HTMLButtonElement>(".sidebar-mobile-close")?.focus();
+      else if (previous) document.querySelector<HTMLButtonElement>(".mobile-menu")?.focus();
+    });
+  });
+
   createEffect(() => params().get("q") || "", value => { setQuery(value); });
   createEffect(() => query(), value => {
+    if (value === (params().get("q") || "")) return;
     const timeout = setTimeout(() => navigate({ q: value || null, offset: null }, true), 220);
     return () => clearTimeout(timeout);
   });
@@ -46,7 +60,14 @@ export function App() {
   createEffect(() => ({ query: listQuery(), revision: revision() }), value => {
     const controller = new AbortController();
     setPending(true); setError("");
-    void request<SessionPage>(`/api/sessions?${value.query}`, { signal: controller.signal }).then(data => { setPage(data); setPending(false); }).catch(error => {
+    void request<SessionPage>(`/api/sessions?${value.query}`, { signal: controller.signal }).then(data => {
+      const existing = new Map(page()?.items.map(session => [session.id, session]) || []);
+      data.items = data.items.map(session => {
+        const previous = existing.get(session.id);
+        return previous && JSON.stringify(previous) === JSON.stringify(session) ? previous : session;
+      });
+      setPage(data); setPending(false);
+    }).catch(error => {
       if (!isAbort(error)) { setError(error.message); setPending(false); }
     });
     return () => controller.abort();
@@ -61,11 +82,19 @@ export function App() {
     return () => controller.abort();
   });
   onSettled(() => {
+    const media = matchMedia("(max-width: 680px)");
+    const mediaChanged = () => setMobile(media.matches);
+    media.addEventListener("change", mediaChanged);
     const source = new EventSource("/api/live");
     source.onopen = () => setConnected(true);
     source.onerror = () => setConnected(false);
     source.addEventListener("change", changed);
     const keyboard = (event: KeyboardEvent) => {
+      if (navOpen() && mobile() && event.key === "Tab") {
+        const targets = [...document.querySelectorAll<HTMLElement>(".sidebar a,.sidebar button:not([disabled])")].filter(element => element.getClientRects().length);
+        if (event.shiftKey && document.activeElement === targets[0]) { event.preventDefault(); targets.at(-1)?.focus(); }
+        else if (!event.shiftKey && document.activeElement === targets.at(-1)) { event.preventDefault(); targets[0]?.focus(); }
+      }
       const editing = (event.target instanceof HTMLElement) && (event.target.matches("input,textarea,select") || event.target.isContentEditable);
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" || event.key === "/" && !editing) {
         if (groupOpen()) return;
@@ -77,7 +106,7 @@ export function App() {
       if (event.key === "?" && !editing) setHelp(value => !value);
     };
     window.addEventListener("keydown", keyboard);
-    return () => { source.close(); window.removeEventListener("keydown", keyboard); };
+    return () => { source.close(); window.removeEventListener("keydown", keyboard); media.removeEventListener("change", mediaChanged); };
   });
   const refresh = async () => {
     try { await request("/api/refresh", { method: "POST", body: "{}" }); changed(); setToast("Recordings are up to date"); }
@@ -88,7 +117,7 @@ export function App() {
   return <div class={['app-shell', { 'has-replay': Boolean(params().get("session")), 'nav-open': navOpen() }]}>
     <a class="skip-link" href="#main-content">Skip to recordings</a>
     <Show when={navOpen()}><button class="nav-scrim" aria-label="Close navigation" onClick={() => setNavOpen(false)} /></Show>
-    <Sidebar catalog={catalog()} params={params()} navigate={navigate} group={() => setGroupOpen(true)} refresh={() => void refresh()} close={() => setNavOpen(false)} />
+    <Sidebar catalog={catalog()} params={params()} navigate={navigate} group={() => setGroupOpen(true)} refresh={() => void refresh()} close={() => setNavOpen(false)} hidden={mobile() && !navOpen()} />
     <main class="main-shell" id="main-content"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu icon-button" aria-label="Open workspace navigation" onClick={() => setNavOpen(true)}><Icon name="menu" /></button><Icon name="box" size={16} /><span>Flight recorder</span><span class="breadcrumb-divider">/</span><strong>{currentWorkspace()?.name || (params().get("bookmarked") ? "Bookmarked" : "All workspaces")}</strong></div><div class="topbar-actions"><Show when={catalog()?.demo}><span class="demo-label">DEMO MODE</span></Show><span class={['connection-state', { disconnected: !connected() }]}><span class="live-dot" />{connected() ? "Connected locally" : "Reconnecting…"}</span><button class="icon-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(value => !value)}><Icon name="keyboard" size={18} /></button></div></header>
       <Show when={error()}><div class="error-banner" role="alert"><Icon name="alert" size={16} />{error()}<button class="text-button" onClick={changed}>Retry</button></div></Show>
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>

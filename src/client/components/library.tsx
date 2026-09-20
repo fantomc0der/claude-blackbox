@@ -20,7 +20,7 @@ export function Library(props: LibraryProps) {
     filter(Object.fromEntries(["q", "workspace", "cwd", "days", "bookmarked", "errors", "edits", "model", "tool", "branch", "after", "before", "agents", "active"].map(key => [key, null])));
   };
   const chips = () => {
-    const labels: Record<string, string> = { workspace: workspace()?.name || "Workspace", cwd: "Source folder", bookmarked: "Bookmarked", days: `Last ${props.params.get("days")} days`, errors: "Has errors", edits: "File changes", model: modelName(props.params.get("model") || ""), tool: props.params.get("tool") || "", branch: `Branch: ${props.params.get("branch")}`, after: `From ${props.params.get("after")}`, before: `To ${props.params.get("before")}`, agents: "Include subagents", active: "Recently active" };
+    const labels: Record<string, string> = { workspace: workspace()?.name || "Workspace", cwd: "Source folder", bookmarked: "Bookmarked", days: `Last ${props.params.get("days")} days`, errors: "Has errors", edits: "File changes", model: modelName(props.params.get("model") || ""), tool: props.params.get("tool") || "", branch: `Branch: ${props.params.get("branch")}`, after: `From ${props.params.get("after")}`, before: `To ${props.params.get("before")}`, agents: "Main sessions only", active: "Recently active" };
     return Object.entries(labels).filter(([key]) => props.params.get(key));
   };
   const openSession = (session: Session) => props.navigate({ session: session.id, event: session.matchEventId || null });
@@ -49,7 +49,7 @@ export function Library(props: LibraryProps) {
         <label>Tool used<select value={props.params.get("tool") || ""} onChange={event => filter({ tool: event.currentTarget.value || null })}><option value="">Any tool</option><For each={["Bash", "PowerShell", "Read", "Edit", "Write", "Grep", "Glob", "Task", "Agent", "WebSearch", "WebFetch", "mcp__"]}>{tool => <option value={tool}>{tool === "mcp__" ? "MCP tools" : tool}</option>}</For></select></label>
         <label>Git branch<input placeholder="Exact branch name" value={props.params.get("branch") || ""} onChange={event => filter({ branch: event.currentTarget.value.trim() || null })} /></label>
         <div class="date-fields"><label>From<input type="date" value={props.params.get("after") || ""} onChange={event => filter({ after: event.currentTarget.value || null, days: null })} /></label><label>Through<input type="date" value={props.params.get("before") || ""} onChange={event => filter({ before: event.currentTarget.value || null, days: null })} /></label></div>
-        <label class="checkbox-label"><input type="checkbox" checked={props.params.get("agents") === "1"} onChange={event => filter({ agents: event.currentTarget.checked ? "1" : null })} />Include subagent recordings</label>
+        <label class="checkbox-label"><input type="checkbox" checked={props.params.get("agents") !== "0"} onChange={event => filter({ agents: event.currentTarget.checked ? null : "0" })} />Include subagent recordings</label>
         <label class="checkbox-label"><input type="checkbox" checked={props.params.get("active") === "1"} onChange={event => filter({ active: event.currentTarget.checked ? "1" : null })} />Active in the last 2 minutes</label>
         <button class="text-button" onClick={clear}>Reset all filters</button><p class="search-help">Search: <code>"exact phrase" -exclude</code><br />Searches messages, code, and tool output.</p>
       </div></details></div>
@@ -57,10 +57,13 @@ export function Library(props: LibraryProps) {
     </div>
     <div class="list-caption"><span>{props.query ? "SEARCH RESULTS" : "RECORDINGS"}<span class="result-count" aria-live="polite">{props.page?.total ?? "—"}</span><Show when={props.pending}><span class="loading-dot" /></Show></span><select aria-label="Sort recordings" value={props.params.get("sort") || "recent"} onChange={event => filter({ sort: event.currentTarget.value })}><option value="recent">Newest first</option><option value="oldest">Oldest first</option><option value="activity">Most activity</option></select></div>
     <div class="recordings-scroll" aria-busy={props.pending ? "true" : "false"} onKeyDown={event => {
-      if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+      if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
       const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".session-row")];
       const index = rows.indexOf(document.activeElement as HTMLButtonElement);
-      if (index !== -1) { event.preventDefault(); rows[Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))]?.focus(); }
+      const style = getComputedStyle(event.currentTarget);
+      const columns = style.display === "grid" ? style.gridTemplateColumns.split(" ").length : 1;
+      const step = event.key === "ArrowDown" ? columns : event.key === "ArrowUp" ? -columns : event.key === "ArrowRight" ? 1 : -1;
+      if (index !== -1) { event.preventDefault(); rows[Math.max(0, Math.min(rows.length - 1, index + step))]?.focus(); }
     }}>
       <Show when={props.page} fallback={<div class="skeleton-list"><For each={[1, 2, 3, 4, 5]}>{() => <div class="skeleton-row" />}</For></div>}>
         <For each={props.page?.items || []} fallback={<div class="empty-state"><span class="empty-icon"><Icon name={props.catalog?.sessions ? "search" : "box"} size={32} /></span><h2>{props.catalog?.sessions ? "No trails match this search." : "Your next session starts the story."}</h2><p>{props.catalog?.sessions ? "Try a different phrase or give your filters a little more room." : "Use Claude Code in a project, then come back. Your recordings will appear here automatically."}</p><Show when={props.catalog?.sessions} fallback={<code class="empty-source">{props.catalog?.dataDir}</code>}><button class="secondary-button" onClick={clear}>Clear search & filters</button></Show></div>}>

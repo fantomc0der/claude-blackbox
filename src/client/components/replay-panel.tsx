@@ -10,7 +10,7 @@ type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
 
 export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; navigate: Navigate; changed: () => void; notify: (message: string) => void }) {
   let scroll!: HTMLDivElement;
-  const [kind, setKind] = createSignal("conversation");
+  const [kind, setKind] = createSignal(props.anchor ? "all" : "conversation");
   const [query, setQuery] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [offset, setOffset] = createSignal(0);
@@ -22,13 +22,17 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   let atBottom = false;
   let initial = true;
   let lastKey = "";
+  let jumpBottom = false;
+  let requestSequence = 0;
 
   createEffect(() => query(), value => {
+    if (value === search()) return;
     const timer = setTimeout(() => { setSearch(value); setOffset(0); }, 180);
     return () => clearTimeout(timer);
   });
 
   createEffect(() => ({ kind: kind(), q: search(), offset: offset(), anchor: props.anchor, revision: props.revision, retry: retry() }), state => {
+    const sequence = ++requestSequence;
     const controller = new AbortController();
     const params = new URLSearchParams({ kind: state.kind === "errors" ? "all" : state.kind, offset: String(state.offset), limit: "60" });
     if (state.kind === "errors") params.set("errors", "1");
@@ -40,13 +44,21 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     if (navigation || initial) setPending(true);
     setError("");
     void request<ReplayPage>(`/api/sessions/${props.id}/events?${params}`, { signal: controller.signal }).then(next => {
+      if (controller.signal.aborted || sequence !== requestSequence) return;
       const grew = Boolean(page() && next.total > page()!.total);
       const follow = !navigation && !initial && atBottom && (page()!.offset + page()!.limit >= page()!.total);
+      const existing = new Map(page()?.items.map(event => [event.id, event]) || []);
+      next.items = next.items.map(event => {
+        const previous = existing.get(event.id);
+        return previous && JSON.stringify(previous.raw) === JSON.stringify(event.raw) ? previous : event;
+      });
       setPage(next); setPending(false);
       if (grew && !follow) setUpdated(true);
-      if (follow && grew && next.offset + next.limit < next.total) setOffset(Math.max(0, next.total - next.limit));
+      if (follow && grew && next.offset + next.limit < next.total) { jumpBottom = true; setOffset(Math.max(0, next.total - next.limit)); }
       requestAnimationFrame(() => {
-        if (navigation || initial) scroll?.scrollTo({ top: 0 });
+        if (sequence !== requestSequence) return;
+        if (jumpBottom) { scroll?.scrollTo({ top: scroll.scrollHeight }); jumpBottom = false; }
+        else if (navigation || initial) scroll?.scrollTo({ top: 0 });
         else if (follow) scroll?.scrollTo({ top: scroll.scrollHeight });
         initial = false;
       });
@@ -69,7 +81,17 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     catch (error) { props.notify(error instanceof Error ? error.message : "Could not update bookmark"); }
   };
   const changeKind = (value: string) => { setKind(value); setOffset(0); props.navigate({ event: null }, true); };
-  const latest = () => { setOffset(Math.max(0, (page()?.total || 0) - 60)); setUpdated(false); requestAnimationFrame(() => scroll?.scrollTo({ top: scroll.scrollHeight, behavior: "smooth" })); };
+  const latest = () => {
+    const target = Math.max(0, (page()?.total || 0) - 60);
+    jumpBottom = true;
+    const samePage = offset() === target && !props.anchor;
+    setOffset(target); setUpdated(false); props.navigate({ event: null }, true);
+    if (samePage) requestAnimationFrame(() => { scroll?.scrollTo({ top: scroll.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" }); jumpBottom = false; });
+  };
+  const outline = () => visibleEvents().filter(event => event.category === "message" || event.error || event.toolNames.length).slice(0, 24);
+  const jumpToEvent = (id: string) => {
+    scroll.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  };
 
   return <section class="replay-panel" aria-label="Session replay">
     <header class="replay-panel-heading"><div class="replay-overline"><span><span class="live-dot" />SESSION REPLAY</span><button class="icon-button tiny" aria-label="Close replay" title="Back to session library" onClick={() => props.navigate({ session: null, event: null })}><Icon name="close" size={18} /></button></div>
@@ -93,14 +115,20 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       </div>
     </div>
     <Show when={error()}><div class="error-banner" role="alert">{error()}<button class="text-button" onClick={() => setRetry(value => value + 1)}>Retry</button></div></Show>
-    <div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
+    <div class="replay-body"><div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{page()?.offset ? `CONTINUED · EVENT ${page()!.offset + 1}` : "BEGINNING OF RECORDING"}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { setOffset(Math.max(0, page()!.offset - 60)); props.navigate({ event: null }, true); }}><Icon name="back" size={14} />Previous events</button></Show>
         <For each={visibleEvents()} keyed={event => event.id} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match.</h3><p>Choose another event type or search phrase.</p></div>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />You're all caught up.<small>New activity appears here automatically.</small></div>}><button class="load-events" onClick={() => { setOffset(page()!.offset + page()!.limit); props.navigate({ event: null }, true); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
-    </div>
+    </div><aside class="replay-inspector" aria-label="Recording overview">
+      <p class="eyebrow">AT A GLANCE</p>
+      <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
+      <div class="inspector-source"><span class="eyebrow">ORIGINAL WORKSPACE</span><p>{props.session?.cwd || "Not recorded"}</p><span class="inspector-date">{dateTime(props.session?.startedAt || "")}</span></div>
+      <nav class="replay-outline" aria-label="Events on this page"><p class="eyebrow">ON THIS PAGE</p><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" }]} /><span><small>{event.error ? "Error" : event.toolNames.length ? event.toolNames.join(" · ") : event.role === "user" ? "You" : "Claude"}</small>{event.blocks.find(block => block.type === "text")?.text?.replace(/<[^>]+>/g, "").slice(0, 100) || event.toolNames.join(", ") || event.type}</span></button>}</For></nav>
+      <p class="inspector-note"><Icon name="shield" size={13} />An original record. Nothing rewritten.</p>
+    </aside></div>
     <Show when={updated()}><button class="new-events" onClick={latest}><Icon name="down" size={15} />Recording updated · Jump to latest</button></Show>
     <footer class="replay-footer"><span><Icon name="shield" size={12} />Read-only replay</span><span>{pending() ? "Reading recording…" : `${page() ? Math.min(page()!.offset + 1, page()!.total) : 0}–${Math.min((page()?.offset || 0) + (page()?.items.length || 0), page()?.total || 0)} of ${page()?.total || 0} events`}</span><button class="text-button" onClick={latest}>Jump to latest<Icon name="down" size={12} /></button></footer>
   </section>;

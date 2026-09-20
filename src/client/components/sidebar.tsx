@@ -4,13 +4,13 @@ import { compact } from "../lib/format";
 import type { Navigate } from "../lib/location";
 import { Icon } from "./icon";
 
-export function Sidebar(props: { catalog: Catalog | null; params: URLSearchParams; navigate: Navigate; group: () => void; refresh: () => void; close: () => void }) {
+export function Sidebar(props: { catalog: Catalog | null; params: URLSearchParams; navigate: Navigate; group: () => void; refresh: () => void; close: () => void; hidden: boolean }) {
   const select = (values: Record<string, string | null>) => {
     props.navigate({ workspace: null, cwd: null, bookmarked: null, days: null, session: null, event: null, offset: null, ...values });
     props.close();
   };
   const all = () => !props.params.get("workspace") && !props.params.get("bookmarked") && !props.params.get("days");
-  return <aside class="sidebar" aria-label="Workspace navigation">
+  return <aside class="sidebar" aria-label="Workspace navigation" inert={props.hidden}>
     <a class="brand" href="/" onClick={event => { event.preventDefault(); select({ q: null, errors: null, edits: null, model: null, tool: null, branch: null, after: null, before: null, agents: null, active: null }); }}><span class="brand-mark"><Icon name="box" size={23} /></span><span>blackbox<small>FOR CLAUDE CODE</small></span></a>
     <button class="sidebar-mobile-close icon-button" onClick={props.close} aria-label="Close navigation"><Icon name="close" /></button>
     <div class="nav-section-label">FLIGHT RECORDER</div>
