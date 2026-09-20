@@ -41,6 +41,7 @@ const schema = `
     event_row INTEGER NOT NULL REFERENCES events(rowid) ON DELETE CASCADE,
     PRIMARY KEY(session_id, tool_id)
   );
+  CREATE INDEX IF NOT EXISTS tool_results_event ON tool_results(event_row);
   CREATE INDEX IF NOT EXISTS sessions_cwd ON sessions(cwd);
   CREATE INDEX IF NOT EXISTS sessions_updated ON sessions(updated DESC);
   CREATE VIRTUAL TABLE IF NOT EXISTS event_fts USING fts5(text, content='events', content_rowid='rowid', tokenize='unicode61');
