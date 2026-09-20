@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
 import type { ContentBlock, EventPage, Session } from "../../shared/types";
 import { isAbort, request } from "../lib/api";
 import { dateTime, modelName, resumeCommand } from "../lib/format";
@@ -10,7 +10,7 @@ type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
 
 export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; navigate: Navigate; changed: () => void; notify: (message: string) => void }) {
   let scroll!: HTMLDivElement;
-  const [kind, setKind] = createSignal(props.anchor ? "all" : "conversation");
+  const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : "conversation");
   const [query, setQuery] = createSignal("");
   const [search, setSearch] = createSignal("");
   const [offset, setOffset] = createSignal(0);
@@ -25,13 +25,17 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   let jumpBottom = false;
   let requestSequence = 0;
 
+  createEffect(() => props.anchor, value => {
+    if (value) { setKind("all"); setOffset(0); }
+  });
+
   createEffect(() => query(), value => {
-    if (value === search()) return;
+    if (value === untrack(search)) return;
     const timer = setTimeout(() => { setSearch(value); setOffset(0); }, 180);
     return () => clearTimeout(timer);
   });
 
-  createEffect(() => ({ kind: kind(), q: search(), offset: offset(), anchor: props.anchor, revision: props.revision, retry: retry() }), state => {
+  createEffect(() => ({ id: props.id, kind: kind(), q: search(), offset: offset(), anchor: props.anchor, revision: props.revision, retry: retry() }), state => {
     const sequence = ++requestSequence;
     const controller = new AbortController();
     const params = new URLSearchParams({ kind: state.kind === "errors" ? "all" : state.kind, offset: String(state.offset), limit: "60" });
@@ -43,7 +47,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     lastKey = key;
     if (navigation || initial) setPending(true);
     setError("");
-    void request<ReplayPage>(`/api/sessions/${props.id}/events?${params}`, { signal: controller.signal }).then(next => {
+    void request<ReplayPage>(`/api/sessions/${state.id}/events?${params}`, { signal: controller.signal }).then(next => {
       if (controller.signal.aborted || sequence !== requestSequence) return;
       const grew = Boolean(page() && next.total > page()!.total);
       const follow = !navigation && !initial && atBottom && (page()!.offset + page()!.limit >= page()!.total);

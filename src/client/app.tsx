@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
 import type { Catalog, Session, SessionPage } from "../shared/types";
 import { isAbort, request } from "./lib/api";
 import { createLocation } from "./lib/location";
@@ -20,7 +20,7 @@ export function App() {
   const [groupOpen, setGroupOpen] = createSignal(false);
   const [navOpen, setNavOpen] = createSignal(false);
   const [mobile, setMobile] = createSignal(matchMedia("(max-width: 680px)").matches);
-  const [query, setQuery] = createSignal(params().get("q") || "");
+  const [query, setQuery] = createSignal(new URLSearchParams(location.search).get("q") || "");
   const [toast, setToast] = createSignal("");
   const [help, setHelp] = createSignal(false);
   let searchInput!: HTMLInputElement;
@@ -29,21 +29,20 @@ export function App() {
     const next = new URLSearchParams(params()); next.delete("session"); next.delete("event"); return next.toString();
   });
 
-  createEffect(() => catalog(), value => {
-    const workspace = params().get("workspace");
-    if (value && workspace && !value.workspaces.some(entry => entry.id === workspace)) navigate({ workspace: null, cwd: null, offset: null }, true);
+  createEffect(() => ({ catalog: catalog(), workspace: params().get("workspace") }), ({ catalog, workspace }) => {
+    if (catalog && workspace && !catalog.workspaces.some(entry => entry.id === workspace)) navigate({ workspace: null, cwd: null, offset: null }, true);
   });
-  createEffect(() => navOpen(), (open, previous) => {
-    if (!mobile()) return;
+  createEffect(() => ({ open: navOpen(), mobile: mobile() }), ({ open, mobile }, previous) => {
+    if (!mobile) return;
     requestAnimationFrame(() => {
       if (open) document.querySelector<HTMLButtonElement>(".sidebar-mobile-close")?.focus();
-      else if (previous) document.querySelector<HTMLButtonElement>(".mobile-menu")?.focus();
+      else if (previous?.open) document.querySelector<HTMLButtonElement>(".mobile-menu")?.focus();
     });
   });
 
   createEffect(() => params().get("q") || "", value => { setQuery(value); });
   createEffect(() => query(), value => {
-    if (value === (params().get("q") || "")) return;
+    if (value === untrack(() => params().get("q") || "")) return;
     const timeout = setTimeout(() => navigate({ q: value || null, offset: null }, true), 220);
     return () => clearTimeout(timeout);
   });
@@ -75,7 +74,7 @@ export function App() {
   createEffect(() => ({ id: params().get("session"), revision: revision() }), value => {
     const controller = new AbortController();
     if (!value.id) { setSession(null); return; }
-    if (session()?.id !== value.id) setSession(null);
+    if (untrack(() => session()?.id) !== value.id) setSession(null);
     void request<Session>(`/api/sessions/${value.id}`, { signal: controller.signal }).then(setSession).catch(error => {
       if (!isAbort(error)) { setError(error.message); setSession(null); }
     });

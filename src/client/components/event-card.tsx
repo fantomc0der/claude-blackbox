@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onSettled } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onSettled, untrack } from "solid-js";
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
 import {
   boundedDiff,
@@ -66,11 +66,11 @@ function CodePanel(props: { title: string; value: string; terminal?: boolean; hi
 }
 
 function DiffPanel(props: { input: Record<string, unknown> }) {
-  const before = getString(props.input.old_string) ?? getString(props.input.before) ?? "";
-  const after = getString(props.input.new_string) ?? getString(props.input.after) ?? "";
-  const lines = createMemo(() => boundedDiff(before, after));
+  const before = () => getString(props.input.old_string) ?? getString(props.input.before) ?? "";
+  const after = () => getString(props.input.new_string) ?? getString(props.input.after) ?? "";
+  const lines = createMemo(() => boundedDiff(before(), after()));
   return (
-    <Show when={before || after} fallback={<CodePanel title="Edit input" value={prettyValue(props.input)} />}>
+    <Show when={before() || after()} fallback={<CodePanel title="Edit input" value={prettyValue(props.input)} />}>
       <section class="tool-diff" aria-label="Bounded file diff">
         <For each={lines()}>{(line) => <div class={`tool-diff-line tool-diff-${line.kind}`}><span>{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span><code>{line.value}</code></div>}</For>
       </section>
@@ -121,7 +121,7 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
 }
 
 function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string }) {
-  const [open, setOpen] = createSignal(Boolean(props.result?.is_error || props.highlight || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || "")));
+  const [open, setOpen] = createSignal(untrack(() => Boolean(props.result?.is_error || props.highlight || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || ""))));
   const preview = () => toolPreview(props.block);
   const status = () => props.result?.is_error === true ? "error" : props.result ? "success" : "pending";
   createEffect(() => Boolean(props.highlight || props.result?.is_error), value => { if (value) setOpen(true); });
