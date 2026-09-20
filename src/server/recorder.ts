@@ -1,0 +1,375 @@
+import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readdir, stat, open } from "node:fs/promises";
+import { basename, join, relative, resolve, sep } from "node:path";
+import type { Catalog, EventPage, ReplayEvent, Session, SessionPage, WorkspaceGroup } from "../shared/types";
+import { readJsonLines } from "./jsonl";
+import { normalize, object, pathName, promptTitle, string } from "./normalize";
+import { ftsPhrase, pageNumber, parseSearch } from "./search";
+
+interface SourceRow {
+  id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
+  started: string; updated: string; events: number; messages: number; tools: number; errors: number;
+  edits: number; agent: number; size: number; mtime: number; cursor: number; fingerprint: string;
+  warnings: number; named: number; group_id?: string; group_name?: string; bookmarked?: number;
+}
+
+interface StoredEvent { raw: string; event_id: string; sequence: number; offset: number; text: string }
+
+const schema = `
+  PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY, session_id TEXT NOT NULL, source TEXT NOT NULL UNIQUE,
+    cwd TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '', started TEXT NOT NULL DEFAULT '', updated TEXT NOT NULL DEFAULT '',
+    events INTEGER NOT NULL DEFAULT 0, messages INTEGER NOT NULL DEFAULT 0, tools INTEGER NOT NULL DEFAULT 0,
+    errors INTEGER NOT NULL DEFAULT 0, edits INTEGER NOT NULL DEFAULT 0, agent INTEGER NOT NULL DEFAULT 0,
+    size INTEGER NOT NULL DEFAULT 0, mtime REAL NOT NULL DEFAULT 0, cursor INTEGER NOT NULL DEFAULT 0,
+    fingerprint TEXT NOT NULL DEFAULT '', warnings INTEGER NOT NULL DEFAULT 0, named INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS events (
+    rowid INTEGER PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL, offset INTEGER NOT NULL, category TEXT NOT NULL, type TEXT NOT NULL,
+    error INTEGER NOT NULL, tools TEXT NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS events_session ON events(session_id, sequence);
+  CREATE INDEX IF NOT EXISTS sessions_cwd ON sessions(cwd);
+  CREATE INDEX IF NOT EXISTS sessions_updated ON sessions(updated DESC);
+  CREATE VIRTUAL TABLE IF NOT EXISTS event_fts USING fts5(text, content='events', content_rowid='rowid', tokenize='unicode61');
+  CREATE TRIGGER IF NOT EXISTS event_insert AFTER INSERT ON events BEGIN
+    INSERT INTO event_fts(rowid, text) VALUES (new.rowid, new.text);
+  END;
+  CREATE TRIGGER IF NOT EXISTS event_delete AFTER DELETE ON events BEGIN
+    INSERT INTO event_fts(event_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+  END;
+  CREATE TABLE IF NOT EXISTS bookmarks (session_id TEXT PRIMARY KEY);
+  CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS group_paths (path TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE);
+`;
+
+const joins = `FROM sessions s LEFT JOIN group_paths gp ON gp.path = s.cwd
+  LEFT JOIN groups g ON g.id = gp.group_id LEFT JOIN bookmarks b ON b.session_id = s.id`;
+const columns = `s.*, g.id AS group_id, g.name AS group_name, (b.session_id IS NOT NULL) AS bookmarked`;
+
+export class Recorder {
+  readonly db: Database;
+  readonly dataDir: string;
+  readonly stateDir: string;
+  readonly listeners = new Set<(ids: string[]) => void>();
+  indexedAt = "";
+  private scanning: Promise<string[]> | null = null;
+  private timer?: ReturnType<typeof setInterval>;
+  private stopped = false;
+  private scanWarnings = 0;
+
+  private constructor(dataDir: string, stateDir: string, db: Database) {
+    this.dataDir = resolve(dataDir);
+    this.stateDir = resolve(stateDir);
+    this.db = db;
+    db.exec(schema);
+  }
+
+  static async open(dataDir: string, stateDir: string): Promise<Recorder> {
+    const root = resolve(dataDir);
+    const state = resolve(stateDir);
+    if (state === root || state.startsWith(root + sep)) throw new Error("The state directory must be outside the Claude data directory.");
+    await mkdir(state, { recursive: true, mode: 0o700 });
+    const recorder = new Recorder(root, state, new Database(join(state, "index.sqlite"), { create: true }));
+    try { await recorder.scan(); } catch (error) { recorder.db.close(); throw error; }
+    return recorder;
+  }
+
+  watch(interval = 2500): void {
+    this.timer = setInterval(() => { void this.scan().catch(error => console.error("Index refresh failed:", error.message)); }, interval);
+    this.timer.unref();
+  }
+
+  async close(): Promise<void> {
+    this.stopped = true;
+    clearInterval(this.timer);
+    await this.scanning;
+    this.listeners.clear();
+    this.db.close();
+  }
+
+  scan(): Promise<string[]> {
+    if (this.stopped) return Promise.resolve([]);
+    if (this.scanning) return this.scanning;
+    this.scanning = this.reconcile().finally(() => { this.scanning = null; });
+    return this.scanning;
+  }
+
+  private async discover(directory: string, files: string[], depth = 0): Promise<boolean> {
+    if (depth > 6) return true;
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      let complete = true;
+      for (const entry of entries) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) complete = await this.discover(path, files, depth + 1) && complete;
+        else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(path);
+      }
+      return complete;
+    } catch (error) {
+      if (object(error).code === "ENOENT") return true;
+      this.scanWarnings++;
+      return false;
+    }
+  }
+
+  private async fingerprint(path: string, size: number): Promise<string> {
+    const file = await open(path, "r");
+    try {
+      const buffer = Buffer.alloc(Math.min(size, 256));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      return createHash("sha256").update(buffer.subarray(0, bytesRead)).digest("hex");
+    } finally { await file.close(); }
+  }
+
+  private async reconcile(): Promise<string[]> {
+    this.scanWarnings = 0;
+    const files: string[] = [];
+    const complete = await this.discover(join(this.dataDir, "projects"), files);
+    const known = new Map(this.db.query<SourceRow, []>("SELECT * FROM sessions").all().map(row => [row.source, row]));
+    const changed: string[] = [];
+    for (const path of files) {
+      const previous = known.get(path);
+      known.delete(path);
+      try {
+        const info = await stat(path);
+        if (previous && previous.size === info.size && previous.mtime === info.mtimeMs && previous.cursor === info.size) continue;
+        if (previous && previous.size === info.size && previous.mtime === info.mtimeMs) continue;
+        const id = previous?.id || createHash("sha256").update(relative(this.dataDir, path)).digest("hex").slice(0, 24);
+        const reset = previous && (info.size <= previous.size || previous.fingerprint !== await this.fingerprint(path, previous.size));
+        if (!previous) this.db.query("INSERT INTO sessions(id, session_id, source, agent) VALUES (?, ?, ?, ?)")
+          .run(id, basename(path, ".jsonl"), path, Number(path.includes(`${sep}subagents${sep}`) || basename(path).startsWith("agent-")));
+        if (reset) this.db.transaction(() => {
+          this.db.query("DELETE FROM events WHERE session_id = ?").run(id);
+          this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
+            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0 WHERE id=?`).run(id);
+        })();
+        const row = this.db.query<SourceRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id)!;
+        let batch: ReplayEvent[] = [];
+        const write = this.db.transaction((events: ReplayEvent[]) => {
+          const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text)
+            VALUES (?,?,?,?,?,?,?,?,?,?)`);
+          for (const event of events) insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
+            Number(event.error), event.toolNames.join("\n"), JSON.stringify(event.raw), event.text);
+        });
+        for await (const line of readJsonLines(path, row.cursor, info.size)) {
+          row.cursor = line.nextOffset;
+          if (!line.value) { row.warnings++; continue; }
+          const event = normalize(line.value, id, line.offset, row.events);
+          row.events++;
+          row.messages += Number(event.category === "message");
+          row.tools += event.toolNames.length;
+          row.errors += Number(event.error);
+          row.edits ||= Number(event.toolNames.some(name => /^(edit|write|multiedit|notebookedit)$/i.test(name)));
+          row.cwd ||= event.cwd || "";
+          row.branch = string(line.value.gitBranch) || row.branch;
+          row.model = string(object(line.value.message).model) || row.model;
+          const explicit = string(line.value.customTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
+          if (explicit) { row.title = explicit.slice(0, 240); row.named = 1; }
+          else if (!row.title) row.title = promptTitle(event);
+          if (event.timestamp) {
+            if (!row.started || event.timestamp < row.started) row.started = event.timestamp;
+            if (!row.updated || event.timestamp > row.updated) row.updated = event.timestamp;
+          }
+          batch.push(event);
+          if (batch.length >= 250) { write(batch); batch = []; await Bun.sleep(0); }
+        }
+        write(batch);
+        const stamp = new Date(info.mtimeMs).toISOString();
+        this.db.query(`UPDATE sessions SET cwd=?,title=?,branch=?,model=?,started=?,updated=?,events=?,messages=?,tools=?,errors=?,
+          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=? WHERE id=?`).run(
+          row.cwd, row.title || `Session ${row.session_id.slice(0, 8)}`, row.branch, row.model, row.started || stamp, row.updated || stamp,
+          row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
+          await this.fingerprint(path, info.size), row.warnings, row.named, id);
+        changed.push(id);
+      } catch (error) {
+        this.scanWarnings++;
+        console.warn(`Could not index ${basename(path)}: ${error instanceof Error ? error.message : "read error"}`);
+      }
+    }
+    if (complete) for (const row of known.values()) {
+      this.db.query("DELETE FROM sessions WHERE id=?").run(row.id);
+      changed.push(row.id);
+    }
+    this.indexedAt = new Date().toISOString();
+    if (changed.length) this.emit(changed);
+    return changed;
+  }
+
+  emit(ids: string[] = []): void {
+    for (const listener of this.listeners) listener(ids);
+  }
+
+  private session(row: SourceRow): Session {
+    return {
+      id: row.id, sessionId: row.session_id, title: row.title, cwd: row.cwd,
+      workspace: row.group_name || pathName(row.cwd), groupId: row.group_id || null,
+      branch: row.branch, model: row.model, startedAt: row.started, updatedAt: row.updated,
+      eventCount: row.events, messageCount: row.messages, toolCount: row.tools, errorCount: row.errors,
+      hasEdits: Boolean(row.edits), bookmarked: Boolean(row.bookmarked), isAgent: Boolean(row.agent),
+      active: Date.now() - Date.parse(row.updated) < 120_000 && Date.now() - row.mtime < 120_000,
+      source: relative(this.dataDir, row.source),
+    };
+  }
+
+  getSession(id: string): Session | null {
+    const row = this.db.query<SourceRow, [string]>(`SELECT ${columns} ${joins} WHERE s.id=?`).get(id);
+    return row ? this.session(row) : null;
+  }
+
+  list(params: URLSearchParams): SessionPage {
+    const conditions: string[] = [];
+    const bindings: SQLQueryBindings[] = [];
+    const terms = parseSearch(params.get("q") || "");
+    for (const term of terms) {
+      const hasTokens = /[\p{L}\p{N}]/u.test(term.value);
+      const match = hasTokens ? `s.id IN (SELECT e.session_id FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ?)`
+        : `s.id IN (SELECT session_id FROM events WHERE instr(lower(text),lower(?))>0)`;
+      conditions.push(`${term.exclude ? "NOT " : ""}(${match} OR instr(lower(s.title || ' ' || s.cwd || ' ' || s.branch || ' ' || s.model || ' ' || coalesce(g.name,'')), lower(?))>0)`);
+      bindings.push(hasTokens ? ftsPhrase(term.value) : term.value, term.value);
+    }
+    const workspace = params.get("workspace");
+    if (workspace) {
+      conditions.push("(g.id=? OR s.cwd=?)"); bindings.push(workspace, workspace);
+    }
+    for (const [key, column] of [["cwd", "s.cwd"], ["model", "s.model"], ["branch", "s.branch"]]) {
+      if (params.get(key)) { conditions.push(`${column}=?`); bindings.push(params.get(key)!); }
+    }
+    if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
+    if (params.get("errors") === "1") conditions.push("s.errors>0");
+    if (params.get("edits") === "1") conditions.push("s.edits>0");
+    if (params.get("agents") !== "1") conditions.push("s.agent=0");
+    if (params.get("active") === "1") {
+      conditions.push("s.updated>=? AND s.mtime>=?");
+      bindings.push(new Date(Date.now() - 120_000).toISOString(), Date.now() - 120_000);
+    }
+    if (params.get("days")) {
+      const days = Math.min(Math.max(Number(params.get("days")) || 7, 1), 3650);
+      conditions.push("s.updated>=?"); bindings.push(new Date(Date.now() - days * 86400000).toISOString());
+    }
+    for (const [key, comparison] of [["after", ">="], ["before", "<="]]) {
+      const date = params.get(key);
+      if (date && Number.isFinite(Date.parse(date))) {
+        conditions.push(`s.updated ${comparison} ?`);
+        bindings.push(new Date(Date.parse(date) + (key === "before" && date.length === 10 ? 86399999 : 0)).toISOString());
+      }
+    }
+    if (params.get("tool")) {
+      conditions.push("EXISTS (SELECT 1 FROM events e WHERE e.session_id=s.id AND instr(lower(e.tools),lower(?))>0)");
+      bindings.push(params.get("tool")!);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const total = this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total ${joins} ${where}`).get(...bindings)!.total;
+    const offset = pageNumber(params.get("offset"), 0, 1_000_000);
+    const limit = Math.max(1, pageNumber(params.get("limit"), 50, 100));
+    const order = params.get("sort") === "oldest" ? "s.updated ASC" : params.get("sort") === "activity" ? "s.events DESC, s.updated DESC" : "s.updated DESC";
+    const rows = this.db.query<SourceRow, SQLQueryBindings[]>(`SELECT ${columns} ${joins} ${where} ORDER BY ${order},s.id LIMIT ? OFFSET ?`).all(...bindings, limit, offset);
+    const positive = terms.find(term => !term.exclude && /[\p{L}\p{N}]/u.test(term.value));
+    const items = rows.map(row => {
+      const session = this.session(row);
+      if (positive) {
+        const match = this.db.query<{ snippet: string; event_id: string }, [string, string]>(`SELECT snippet(event_fts,0,'','', ' … ',28) AS snippet,e.event_id
+          FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ? AND e.session_id=? ORDER BY rank LIMIT 1`)
+          .get(ftsPhrase(positive.value), row.id);
+        if (match) { session.snippet = match.snippet; session.matchEventId = match.event_id; }
+      }
+      return session;
+    });
+    return { items, total, offset, limit };
+  }
+
+  events(id: string, params: URLSearchParams): EventPage {
+    const bindings: SQLQueryBindings[] = [id];
+    let filter = "session_id=?";
+    const kind = params.get("kind");
+    if (kind === "conversation") filter += " AND category!='system'";
+    else if (["message", "tool", "thinking", "system"].includes(kind || "")) { filter += " AND category=?"; bindings.push(kind!); }
+    if (params.get("errors") === "1") filter += " AND error=1";
+    if (params.get("q")) { filter += " AND instr(lower(text),lower(?))>0"; bindings.push(params.get("q")!); }
+    const total = this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total FROM events WHERE ${filter}`).get(...bindings)!.total;
+    const limit = Math.max(1, pageNumber(params.get("limit"), 80, 200));
+    let offset = pageNumber(params.get("offset"), 0, 1_000_000);
+    if (params.get("anchor")) {
+      const anchor = this.db.query<{ sequence: number }, [string, string]>("SELECT sequence FROM events WHERE session_id=? AND event_id=?").get(id, params.get("anchor")!);
+      if (anchor) offset = this.db.query<{ count: number }, SQLQueryBindings[]>(`SELECT count(*) AS count FROM events WHERE ${filter} AND sequence<?`).get(...bindings, anchor.sequence)!.count;
+    }
+    const items = this.db.query<StoredEvent, SQLQueryBindings[]>(`SELECT raw,event_id,sequence,offset,text FROM events WHERE ${filter} ORDER BY sequence LIMIT ? OFFSET ?`)
+      .all(...bindings, limit, offset).map(row => normalize(JSON.parse(row.raw), id, row.offset, row.sequence));
+    return { items, total, offset, limit };
+  }
+
+  results(id: string, toolIds: string[]): Record<string, import("../shared/types").ContentBlock> {
+    const found: Record<string, import("../shared/types").ContentBlock> = {};
+    if (!toolIds.length) return found;
+    const wanted = new Set(toolIds);
+    const rows = this.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? AND type='user'").iterate(id);
+    for (const row of rows) {
+      const content = object(JSON.parse(row.raw).message).content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block?.type === "tool_result" && wanted.has(block.tool_use_id)) found[block.tool_use_id] = block;
+      }
+    }
+    return found;
+  }
+
+  bookmark(id: string, value: boolean): void {
+    if (!this.getSession(id)) throw new Error("Session not found");
+    if (value) this.db.query("INSERT OR IGNORE INTO bookmarks VALUES (?)").run(id);
+    else this.db.query("DELETE FROM bookmarks WHERE session_id=?").run(id);
+    this.emit([id]);
+  }
+
+  groups(): WorkspaceGroup[] {
+    return this.db.query<{ id: string; name: string }, []>("SELECT id,name FROM groups ORDER BY name").all().map(group => ({
+      ...group, paths: this.db.query<{ path: string }, [string]>("SELECT path FROM group_paths WHERE group_id=? ORDER BY path").all(group.id).map(row => row.path),
+    }));
+  }
+
+  saveGroup(input: unknown): WorkspaceGroup {
+    const value = object(input);
+    const name = string(value.name).trim();
+    const paths = Array.isArray(value.paths) ? [...new Set(value.paths.filter((entry): entry is string => typeof entry === "string"))] : [];
+    if (!name || name.length > 80 || paths.length < 2 || paths.length > 100) throw new Error("Choose a name and at least two source folders.");
+    const id = string(value.id) || randomUUID();
+    for (const path of paths) {
+      if (!this.db.query("SELECT 1 FROM sessions WHERE cwd=?").get(path)) throw new Error("Unknown source folder.");
+      const existing = this.db.query<{ group_id: string }, [string]>("SELECT group_id FROM group_paths WHERE path=?").get(path);
+      if (existing && existing.group_id !== id) throw new Error("A source folder already belongs to another group. Ungroup it first.");
+    }
+    this.db.transaction(() => {
+      this.db.query("INSERT INTO groups VALUES (?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name").run(id, name);
+      this.db.query("DELETE FROM group_paths WHERE group_id=?").run(id);
+      for (const path of paths) this.db.query("INSERT INTO group_paths VALUES (?,?)").run(path, id);
+    })();
+    this.emit();
+    return { id, name, paths };
+  }
+
+  deleteGroup(id: string): void {
+    this.db.query("DELETE FROM groups WHERE id=?").run(id);
+    this.emit();
+  }
+
+  async catalog(): Promise<Catalog> {
+    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number }, []>(
+      "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings FROM sessions").get()!;
+    const sources = this.db.query<{ cwd: string; count: number }, []>("SELECT cwd,count(*) AS count FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
+    const groups = this.groups();
+    const workspaces = groups.map(group => ({ ...group, grouped: true, count: sources.filter(row => group.paths.includes(row.cwd)).reduce((sum, row) => sum + row.count, 0) }));
+    for (const source of sources) if (!groups.some(group => group.paths.includes(source.cwd))) {
+      workspaces.push({ id: source.cwd || "unknown", name: pathName(source.cwd), paths: [source.cwd], count: source.count, grouped: false });
+    }
+    return {
+      ...totals, warnings: totals.warnings + this.scanWarnings, groups, workspaces: workspaces.sort((left, right) => right.count - left.count),
+      bookmarked: this.db.query<{ count: number }, []>("SELECT count(*) AS count FROM bookmarks b JOIN sessions s ON b.session_id=s.id").get()!.count,
+      models: this.db.query<{ model: string }, []>("SELECT DISTINCT model FROM sessions WHERE model!='' ORDER BY model").all().map(row => row.model),
+      dataDir: this.dataDir, indexedAt: this.indexedAt, demo: await Bun.file(join(this.dataDir, ".blackbox-demo")).exists(),
+    };
+  }
+}
