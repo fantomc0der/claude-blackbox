@@ -1,4 +1,5 @@
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
+import { diffLines } from "diff";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -84,28 +85,22 @@ export interface DiffLine {
 }
 
 export function boundedDiff(before: string, after: string, limit = 80): DiffLine[] {
-  const previous = before.split("\n");
-  const next = after.split("\n");
-  let prefix = 0;
-  while (prefix < previous.length && prefix < next.length && previous[prefix] === next[prefix]) prefix++;
-  let suffix = 0;
-  while (
-    suffix < previous.length - prefix &&
-    suffix < next.length - prefix &&
-    previous[previous.length - suffix - 1] === next[next.length - suffix - 1]
-  ) suffix++;
-
-  const lines: DiffLine[] = [
-    ...previous.slice(0, prefix).map((value) => ({ kind: "same" as const, value })),
-    ...previous.slice(prefix, previous.length - suffix).map((value) => ({ kind: "removed" as const, value })),
-    ...next.slice(prefix, next.length - suffix).map((value) => ({ kind: "added" as const, value })),
-    ...next.slice(next.length - suffix).map((value) => ({ kind: "same" as const, value })),
-  ];
-
+  if (before.length + after.length > 400_000) return [{ kind: "same", value: "Large edit — open the raw event for complete before/after content." }];
+  const changes = diffLines(before, after, { timeout: 35, maxEditLength: 1000 });
+  if (!changes) return [{ kind: "same", value: "Complex edit — open the raw event for complete before/after content." }];
+  const lines: DiffLine[] = [];
+  for (const change of changes) {
+    const values = change.value.split(/\r?\n/);
+    if (change.value.endsWith("\n")) values.pop();
+    const kind: DiffLine["kind"] = change.added ? "added" : change.removed ? "removed" : "same";
+    if (kind === "same" && values.length > 8) {
+      lines.push(...values.slice(0, 3).map((value): DiffLine => ({ kind, value })), { kind, value: `… ${values.length - 6} unchanged lines …` }, ...values.slice(-3).map((value): DiffLine => ({ kind, value })));
+    } else lines.push(...values.map((value): DiffLine => ({ kind, value })));
+  }
   if (lines.length <= limit) return lines;
   const head = Math.max(8, Math.floor(limit / 2));
   const tail = Math.max(8, limit - head - 1);
-  return [...lines.slice(0, head), { kind: "same", value: "… diff truncated …" }, ...lines.slice(-tail)];
+  return [...lines.slice(0, head), { kind: "same", value: "… diff shortened; complete strings are in the raw event …" }, ...lines.slice(-tail)];
 }
 
 export function eventRaw(event: ReplayEvent): string {

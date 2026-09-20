@@ -1,4 +1,9 @@
 :root { color-scheme: dark; }
+.replay-event-user { border-left: 2px solid #90a56e !important; }
+.replay-event-system .replay-role { color: #aca392; }
+.replay-event-link:hover { color: #c7ee79; text-decoration: underline; }
+.tool-code mark { background: #c7ee7933; color: #e2ffb6; }
+.replay-event-body > *, .tool-content, .tool-code, .tool-diff { min-width: 0; }
 .replay-event { background: #191c1e; border: 1px solid #292e30; border-radius: 12px; color: #e9eae5; font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 12px 0; overflow: clip; }
 .md-content [data-blocked-image="true"] { background: #101214; border: 1px dashed #52595a; border-radius: 5px; color: #969d9d; display: inline-block; font-size: 12px; padding: 3px 7px; }
 .replay-event-error { border-color: #7b4d49; }
