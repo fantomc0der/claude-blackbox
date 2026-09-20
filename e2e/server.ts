@@ -21,6 +21,23 @@ await writeFile(join(folder, "long-recording.jsonl"), Array.from({ length: 175 }
 }).join("\n") + "\n");
 await writeFile(join(folder, "live-recording.jsonl"), JSON.stringify(event("Live update verification", 0)) + "\n");
 await writeFile(join(folder, "unsafe-markdown.jsonl"), [event("Unsafe markdown verification", 0), event('<script>window.blackboxXss = true</script><img src="https://blocked.invalid/pixel" onerror="window.blackboxXss = true"><p class="nav-scrim">Untrusted styling</p>\n[Unsafe](javascript:alert(1))\n![Remote image](https://blocked.invalid/image)\n## Safe content', 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
+const markdownRhythm = [
+  "# Opening heading",
+  "Introductory paragraph.",
+  "## After a paragraph",
+  "| Area | Decision |\n| --- | --- |\n| Scope | Keep the change focused |",
+  "### After a table",
+  "- Parent item\n  - Nested item\n- Sibling item",
+  "#### After a list",
+  "```ts\nconst result = await verifySpacing()\n```",
+  "##### After code",
+  "> Quoted context.\n>\n> Another quoted paragraph.",
+  "###### After a quote",
+  "---",
+  "# After a divider",
+  "Closing paragraph.",
+].join("\n\n");
+await writeFile(join(folder, "markdown-rhythm.jsonl"), [event("Markdown rhythm verification", 0), event(markdownRhythm, 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);

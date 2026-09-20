@@ -163,9 +163,9 @@ test("session and event pagination remain bounded and navigable", async ({ page 
   await expect(page.locator(".session-row")).toHaveCount(50);
   await page.getByRole("button", { name: "Next recordings" }).click();
   await expect(page).toHaveURL(/offset=50/);
-  await expect(page.locator(".session-row")).toHaveCount(23);
+  await expect(page.locator(".session-row")).toHaveCount(24);
   await page.reload();
-  await expect(page.locator(".session-row")).toHaveCount(23);
+  await expect(page.locator(".session-row")).toHaveCount(24);
   await page.waitForTimeout(300);
   await expect(page).toHaveURL(/offset=50/);
   await page.getByRole("button", { name: "Previous recordings" }).click();
@@ -205,6 +205,70 @@ test("transcript HTML cannot execute scripts, spoof app styles, or load remote i
   expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).blackboxXss)).toBeUndefined();
   await expect(page.locator('.md-content script, .md-content img, .md-content [href^="javascript:"], .md-content .nav-scrim')).toHaveCount(0);
   expect(remoteRequests).toEqual([]);
+});
+
+test("demo Markdown separates sections consistently across viewports and text sizes", async ({ page }) => {
+  for (const title of ["Make conversation search feel instant", DEMO_HERO_TITLE]) {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`/?q=${encodeURIComponent(title)}`);
+    await page.locator(".session-row").click();
+    const markdown = page.locator(".md-content").filter({ has: page.locator("table") }).first();
+    await expect(markdown.locator("table + h3")).toBeVisible();
+    for (const textSize of ["standard", "larger"]) {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.getByRole("combobox", { name: "Text size" }).selectOption(textSize);
+      for (const [width, height] of [[1440, 1000], [390, 844], [320, 640]]) {
+        await page.setViewportSize({ width, height });
+        const spacing = await markdown.evaluate(element => {
+          const gapBefore = (selector: string) => {
+            const block = element.querySelector(selector)!;
+            return block.getBoundingClientRect().top - block.previousElementSibling!.getBoundingClientRect().bottom;
+          };
+          return {
+            section: gapBefore("table + h3"),
+            heading: gapBefore("h3 + ol"),
+            table: gapBefore("p + table"),
+            code: gapBefore("ol + pre"),
+            paragraph: gapBefore("pre + p"),
+            first: getComputedStyle(element.firstElementChild!).marginTop,
+            last: getComputedStyle(element.lastElementChild!).marginBottom,
+          };
+        });
+        expect(spacing).toEqual({ section: 24, heading: 12, table: 16, code: 16, paragraph: 16, first: "0px", last: "0px" });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      }
+    }
+  }
+});
+
+test("Markdown heading rhythm covers every level without loosening nested content", async ({ page }) => {
+  await page.goto("/?q=Markdown+rhythm+verification");
+  await page.locator(".session-row").click();
+  const markdown = page.locator(".md-content").filter({ has: page.getByRole("heading", { name: "Opening heading" }) });
+  await expect(markdown).toBeVisible();
+  for (const [width, height] of [[1440, 1000], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    const spacing = await markdown.evaluate(element => {
+      const headings = Array.from(element.querySelectorAll("h1, h2, h3, h4, h5, h6"));
+      const quote = element.querySelector("blockquote")!;
+      const nestedList = getComputedStyle(element.querySelector("li > ul")!);
+      return {
+        before: headings.slice(1).map(heading => heading.getBoundingClientRect().top - heading.previousElementSibling!.getBoundingClientRect().bottom),
+        after: headings.map(heading => heading.nextElementSibling!.getBoundingClientRect().top - heading.getBoundingClientRect().bottom),
+        quoteStart: getComputedStyle(quote.firstElementChild!).marginTop,
+        quoteEnd: getComputedStyle(quote.lastElementChild!).marginBottom,
+        nestedStart: nestedList.marginTop,
+        nestedEnd: nestedList.marginBottom,
+      };
+    });
+    expect(spacing.before).toEqual([24, 24, 24, 24, 24, 24]);
+    expect(spacing.after).toEqual([12, 12, 12, 12, 12, 12, 12]);
+    expect(spacing.quoteStart).toBe("0px");
+    expect(spacing.quoteEnd).toBe("0px");
+    expect(spacing.nestedStart).toBe("0px");
+    expect(spacing.nestedEnd).toBe("0px");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
 });
 
 test("mobile navigation and replay avoid horizontal overflow", async ({ page }) => {
