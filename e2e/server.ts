@@ -15,7 +15,10 @@ const event = (text: string, sequence: number, type = "user") => ({
 for (let index = 0; index < 55; index++) {
   await writeFile(join(folder, `pagination-${index}.jsonl`), JSON.stringify(event(`Pagination fixture ${String(index).padStart(2, "0")}`, index)) + "\n");
 }
-await writeFile(join(folder, "long-recording.jsonl"), Array.from({ length: 175 }, (_, index) => JSON.stringify(event(`Long recording event ${index}`, index))).join("\n") + "\n");
+await writeFile(join(folder, "long-recording.jsonl"), Array.from({ length: 175 }, (_, index) => {
+  const record = event(`Long recording event ${index}`, index);
+  return JSON.stringify(index === 0 ? { ...record, diagnostics: "Synthetic diagnostic output\n".repeat(100) } : record);
+}).join("\n") + "\n");
 await writeFile(join(folder, "live-recording.jsonl"), JSON.stringify(event("Live update verification", 0)) + "\n");
 await writeFile(join(folder, "unsafe-markdown.jsonl"), [event("Unsafe markdown verification", 0), event('<script>window.blackboxXss = true</script><img src="https://blocked.invalid/pixel" onerror="window.blackboxXss = true"><p class="nav-scrim">Untrusted styling</p>\n[Unsafe](javascript:alert(1))\n![Remote image](https://blocked.invalid/image)\n## Safe content', 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));

@@ -47,6 +47,40 @@ test("structured tools, bookmarks, resume clipboard and JSONL export work", asyn
   await expect(page.locator(".session-row")).toHaveCount(1);
 });
 
+test("output expansion controls align with the code panel in both states", async ({ page }) => {
+  await page.goto("/?q=Long+recording");
+  await page.locator(".session-row").click();
+  await expect(page.locator(".replay-event").first()).toBeVisible();
+  await page.locator(".replay-raw > summary").first().click();
+  const toggle = page.locator(".tool-output-toggle").first();
+  const assertSpacing = async () => {
+    const spacing = await toggle.evaluate(button => {
+      const output = button.parentElement!.querySelector("pre")!;
+      const buttonStyle = getComputedStyle(button);
+      const outputStyle = getComputedStyle(output);
+      return {
+        inset: parseFloat(buttonStyle.paddingLeft),
+        alignment: Math.abs(button.getBoundingClientRect().left + parseFloat(buttonStyle.paddingLeft) - output.getBoundingClientRect().left - parseFloat(outputStyle.paddingLeft)),
+        height: button.getBoundingClientRect().height,
+      };
+    });
+    expect(spacing.inset).toBe(10);
+    expect(spacing.alignment).toBeLessThan(1);
+    expect(spacing.height).toBeGreaterThanOrEqual(36);
+  };
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(toggle).toHaveText("Show full output");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await assertSpacing();
+    await toggle.click();
+    await expect(toggle).toHaveText("Show less");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await assertSpacing();
+    await toggle.click();
+  }
+});
+
 test("workspace groups persist and retain the original source filter", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Group workspaces", exact: true }).first().click();

@@ -59,7 +59,7 @@ function CodePanel(props: { title: string; value: string; terminal?: boolean; hi
       <header><span>{props.title}</span><CopyButton value={props.value} /></header>
       <pre><code><Highlight text={preview()} term={props.highlight || ""} /></code></pre>
       <Show when={props.value.length > 1800}>
-        <button class="replay-text-button" type="button" onClick={() => setOpen(!open())}>{open() ? "Show less" : "Show full output"}</button>
+        <button class="replay-text-button tool-output-toggle" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => setOpen(!open())}>{open() ? "Show less" : "Show full output"}</button>
       </Show>
     </section>
   );
