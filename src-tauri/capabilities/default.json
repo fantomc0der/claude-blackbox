@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No Tauri APIs are exposed to the localhost application.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

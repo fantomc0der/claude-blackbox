@@ -26,6 +26,25 @@ On Windows, quote paths with spaces. Resume commands use PowerShell literal-path
 
 Optional local command registration: run `bun link` after building, then use `claude-blackbox`. Bun must remain installed; this is a Bun-native application, not a Node server.
 
+### Desktop App (Optional)
+
+The Tauri desktop app is an alternative wrapper around the same local application. It compiles the Bun server and `dist/` UI into a sidecar executable, starts that sidecar on a free loopback port, and opens the Tauri webview at that private `127.0.0.1` URL. The browser workflow above remains supported and unchanged.
+
+Building the desktop app requires the platform prerequisites for **Tauri 2**, including Rust and the native webview dependencies for your operating system:
+
+```sh
+bun install
+bun run desktop
+```
+
+`bun run desktop` builds the current-platform sidecar and launches Tauri in development mode. To produce installers or application bundles:
+
+```sh
+bun run desktop:build
+```
+
+Desktop bundles include the Bun runtime, so they are substantially larger than a typical Tauri application. The backend still listens on a dynamically selected loopback TCP port; the existing hostname, origin, request-shape, and cross-site checks remain active. Closing the desktop window stops the sidecar process.
+
 ## Explore
 
 - **Full-record search:** prompts, assistant responses, reasoning, file paths, commands, tool inputs/results, and recorded metadata. Matching snippets link directly to their events.
@@ -86,6 +105,8 @@ bun run typecheck
 bun run test
 bun run test:e2e
 bun run check
+bun run desktop:sidecar
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 Development uses Vite on `127.0.0.1:12000` and the Bun API on `127.0.0.1:12001`. Stop any production server on that API port before starting development. For synthetic data, first run `bun scripts/demo.ts`, then `bun dev --dir .blackbox/demo --state-dir .blackbox/dev-state`.
@@ -93,6 +114,20 @@ Development uses Vite on `127.0.0.1:12000` and the Bun API on `127.0.0.1:12001`.
 Browser tests use **Bun's test runner with Playwright controlling installed Microsoft Edge**, not Playwright's Node-dependent test runner. They build the UI, preload the shared browser/server lifecycle across spec files, start an isolated fixture server on port `12003`, exercise real browser interactions, and audit accessibility with axe. Failed tests save screenshots and traces in ignored `test-results/`. No real transcripts are used by the test suite.
 
 Solid and its web renderer are pinned to `2.0.0-rc.9`, with a matching pinned compiler plugin. The implementation uses Solid 2's split effects, renderer-owned JSX, `onSettled`, and keyed rendering. It is still prerelease software; update the runtime and compiler together, then rerun the complete checks.
+
+## Releases
+
+The release command requires a clean, synchronized `main` branch, authenticated `gh` CLI access, Bun, and Rust:
+
+```sh
+bun run release --patch
+bun run release --minor
+bun run release --major
+```
+
+The command uses SemVer to increment the current synchronized version. PowerShell-style aliases `-BumpPatch`, `-BumpMinor`, and `-BumpMajor` are also accepted. Use `bun run release 1.0.0` for an exact SemVer target, including prereleases such as `1.0.0-rc.1`, or add `--dry-run` to preview the selected version.
+
+It updates the package, Tauri, and Cargo versions; runs the application and Rust checks; commits and tags the version; pushes `main` and the tag; creates a draft GitHub release with generated notes; dispatches `.github/workflows/desktop-release.yml`; waits for Windows, Linux, and macOS bundles; and publishes the release only after every desktop build succeeds. Versions containing a hyphen are published as prereleases. macOS CI builds use ad-hoc signing; configure normal platform signing credentials before presenting the artifacts as trusted production installers.
 
 ## Privacy And Storage
 

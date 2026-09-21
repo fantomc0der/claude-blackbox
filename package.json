@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "The flight recorder for your Claude Code sessions. Replay every conversation in a clean web UI",
   "private": true,
-  "bin": { "claude-blackbox": "./src/server/cli.ts" },
+  "bin": {
+    "claude-blackbox": "./src/server/cli.ts"
+  },
   "type": "module",
   "engines": {
     "bun": ">=1.4.0"
@@ -12,7 +14,11 @@
     "dev": "bun scripts/dev.ts",
     "build": "bun --bun vite build",
     "start": "bun src/server/cli.ts",
+    "desktop": "bun tauri dev",
+    "desktop:build": "bun tauri build",
+    "desktop:sidecar": "bun scripts/build-sidecar.ts",
     "demo": "bun scripts/demo.ts && bun src/server/cli.ts --dir .blackbox/demo --state-dir .blackbox/demo-state --port 12002",
+    "release": "bun scripts/release.ts",
     "typecheck": "bun --bun tsc --noEmit",
     "test": "bun test tests",
     "test:e2e": "bun run build && bun test --preload ./e2e/harness.ts e2e --timeout 30000",
@@ -29,7 +35,10 @@
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.58.2",
     "@solidjs/vite-plugin": "3.0.0-next.44",
+    "@tauri-apps/cli": "2.11.5",
     "@types/bun": "1.4.2",
+    "@types/semver": "7.8.0",
+    "semver": "7.8.5",
     "typescript": "7.0.2",
     "vite": "8.3.0"
   }

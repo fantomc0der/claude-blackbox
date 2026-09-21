@@ -37,6 +37,12 @@ The client requests 50 recordings or 60 events at a time. Tool bodies and raw re
 
 ## Implementation layers
 
+### Optional desktop runtime
+
+`src-tauri` is a deliberately thin Tauri 2 host. `scripts/build-sidecar.ts` first builds the normal Vite client, then uses `bun build --compile` to create a target-specific `claude-blackbox-server` sidecar with `dist/` embedded. Tauri reserves a free loopback port, starts that binary with the existing `--port` option, waits for the listener, and creates the main webview at the resulting `http://127.0.0.1:<port>` origin. No recorder, SQLite, HTTP, or client behavior is reimplemented in Rust.
+
+The localhost and desktop entry points therefore share the same server and security boundary. The desktop host exposes no Tauri command APIs to the remote-origin page, restricts navigation to its selected loopback origin, and terminates the sidecar when the main window closes. This retains the operational tradeoff of a listening TCP socket and packages the Bun runtime in every desktop artifact.
+
 1. Typed application foundation and pinned toolchain.
 2. Lossless ingestion and searchable local index.
 3. Loopback API, live invalidation, and reversible preferences.
