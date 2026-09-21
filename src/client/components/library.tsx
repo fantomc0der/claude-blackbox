@@ -1,5 +1,6 @@
 import { For, onSettled, Show } from "solid-js";
 import type { Catalog, Session, SessionPage } from "../../shared/types";
+import { anchoredMenu } from "../lib/anchor";
 import { dismissableDetails } from "../lib/dismissable";
 import { compact, dateTime, modelName, searchHighlight, timeAgo } from "../lib/format";
 import type { Navigate } from "../lib/location";
@@ -13,8 +14,9 @@ interface LibraryProps {
 }
 
 export function Library(props: LibraryProps) {
-  let filters!: HTMLDetailsElement;
-  onSettled(() => dismissableDetails(filters));
+  let filters!: HTMLDetailsElement, filterMenu!: HTMLDivElement;
+  onSettled(() => { dismissableDetails(filters); anchoredMenu(filters, filterMenu); });
+  const closeFilters = () => { filters.open = false; filters.querySelector("summary")!.focus(); };
   const selected = () => props.params.get("session");
   const workspace = () => props.catalog?.workspaces.find(workspace => workspace.id === props.params.get("workspace"));
   const filter = (values: Record<string, string | null>) => props.navigate({ offset: null, ...values });
@@ -44,8 +46,8 @@ export function Library(props: LibraryProps) {
         <button class={['filter-tab', { active: !props.params.get("edits") && !props.params.get("errors") }]} onClick={() => filter({ edits: null, errors: null })}>All sessions</button>
         <button class={['filter-tab', { active: props.params.get("edits") === "1" }]} onClick={() => filter({ edits: props.params.get("edits") ? null : "1" })}><Icon name="edit" size={14} />With edits</button>
         <button class={['filter-tab', { active: props.params.get("errors") === "1" }]} onClick={() => filter({ errors: props.params.get("errors") ? null : "1" })}><Icon name="alert" size={14} />With errors</button>
-      </div><details class="filter-popover" ref={filters}><summary aria-label="Filter recordings"><Icon name="sliders" size={16} /><span>Filters</span><Show when={chips().length}><span class="filter-count">{chips().length}</span></Show></summary><div class="filter-menu">
-        <h3>Refine your recordings</h3>
+      </div><details class="filter-popover" ref={filters}><summary aria-label="Filter recordings"><Icon name="sliders" size={16} /><span>Filters</span><Show when={chips().length}><span class="filter-count">{chips().length}</span></Show></summary><div class="filter-menu" ref={filterMenu}>
+        <div class="filter-menu-heading"><h3>Refine your recordings</h3><button class="icon-button tiny filter-menu-close" aria-label="Close filters" onClick={closeFilters}><Icon name="close" size={16} /></button></div>
         <label>Model<select value={props.params.get("model") || ""} onChange={event => filter({ model: event.currentTarget.value || null })}><option value="">All models</option><For each={props.catalog?.models || []}>{model => <option value={model}>{modelName(model)}</option>}</For></select></label>
         <label>Recorded<select value={props.params.get("days") || ""} onChange={event => filter({ days: event.currentTarget.value || null })}><option value="">Any time</option><option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label>
         <Show when={workspace()}><label>Original source<select aria-label="Original source" value={props.params.get("cwd") || ""} onChange={event => filter({ cwd: event.currentTarget.value || null })}><option value="">All source folders</option><For each={workspace()?.paths || []}>{path => <option value={path}>{path || "Unknown source"}</option>}</For></select></label></Show>

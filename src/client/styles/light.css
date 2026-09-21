@@ -120,6 +120,9 @@
   .md-content blockquote { border-color: var(--light-line-strong); color: var(--muted); }
   .md-content [data-blocked-image="true"] { background: var(--light-inset); border-color: var(--light-line-strong); color: var(--muted); }
 
+  @media (max-width: 680px) {
+    .filter-menu { box-shadow: 0 -12px 45px var(--light-shadow); }
+  }
   @media (min-width: 1800px) {
     .library:not(.library-split) .session-row { background: var(--surface); border-color: var(--line); }
     .library:not(.library-split) .session-row:hover { background: var(--light-inset); border-color: var(--light-line-strong); }
