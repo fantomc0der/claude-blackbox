@@ -112,3 +112,5 @@ jobs:
             exit 1
           fi
           echo "Maintenance PR #$pr is open."
+          gh workflow run ci.yml --repo "$REPO" --ref "$BRANCH"
+          echo "Dispatched CI for $BRANCH."
