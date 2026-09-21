@@ -29,6 +29,7 @@ export function Library(props: LibraryProps) {
     return Object.entries(labels).filter(([key]) => props.params.get(key));
   };
   const bookmarksOnly = () => props.params.get("bookmarked") === "1" && !props.params.get("q") && !props.query && chips().length === 1;
+  const countUnit = () => `${props.query ? " result" : " recording"}${props.page?.total === 1 ? "" : "s"}`;
   const openSession = (session: Session) => props.navigate({ session: session.id, event: session.matchEventId || null });
   return <section id="session-library" class={['library', { 'library-split': Boolean(selected()) }]} aria-label="Session library">
     <header class="library-heading"><div><p class="eyebrow">YOUR DEVELOPMENT, DOCUMENTED</p><h1>{selected() ? "Session library" : props.params.get("bookmarked") ? "Worth coming back to." : workspace() ? workspace()!.name : <>Good work leaves <span>a trail.</span></>}</h1><p class="library-description">Every prompt, every breakthrough, every detour. All right here.</p></div><button class="secondary-button heading-group" onClick={props.group}><Icon name="merge" size={16} />Group workspaces</button></header>
@@ -61,7 +62,7 @@ export function Library(props: LibraryProps) {
       </div></details></div>
       <Show when={chips().length}><div class="active-filters"><For each={chips()}>{([key, label]) => <button class="filter-chip" title={`Remove ${label}`} onClick={() => filter({ [key]: null, ...(key === "workspace" ? { cwd: null } : {}) })}>{label}<Icon name="close" size={12} /></button>}</For><button class="clear-filters" onClick={clear}>Clear all</button></div></Show>
     </div>
-    <div class="list-caption"><span>{props.query ? "SEARCH RESULTS" : "RECORDINGS"}<span class="result-count" aria-live="polite">{props.page?.total ?? "—"}<span class="count-unit">{props.query ? " results" : " recordings"}</span></span><Show when={props.pending}><span class="loading-dot" /></Show></span><select aria-label="Sort recordings" value={props.params.get("sort") || "recent"} onChange={event => filter({ sort: event.currentTarget.value })}><option value="recent">Newest first</option><option value="oldest">Oldest first</option><option value="activity">Most activity</option></select></div>
+    <div class="list-caption"><span>{props.query ? "SEARCH RESULTS" : "RECORDINGS"}<span class="result-count" aria-live="polite">{props.page?.total ?? "—"}<span class="count-unit">{countUnit()}</span></span><Show when={props.pending}><span class="loading-dot" /></Show></span><select aria-label="Sort recordings" value={props.params.get("sort") || "recent"} onChange={event => filter({ sort: event.currentTarget.value })}><option value="recent">Newest first</option><option value="oldest">Oldest first</option><option value="activity">Most activity</option></select></div>
     <div class="recordings-scroll" aria-busy={props.pending ? "true" : "false"} onKeyDown={event => {
       if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
       const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".session-row")];

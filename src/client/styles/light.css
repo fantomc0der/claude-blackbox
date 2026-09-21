@@ -49,7 +49,7 @@
   .inspector-source p, .inspector-date, .replay-outline button, .replay-outline small, .inspector-note { color: var(--muted); }
   .nav-item, .breadcrumbs strong, .archive-note p, .filter-popover > summary,
   .filter-menu label, .session-title, .field-label { color: var(--text); }
-  .nav-item:hover, .icon-button:hover, .filter-tab:hover, .session-row:hover { background: var(--light-hover); color: var(--text); }
+  .nav-item:hover, .icon-button:hover, .filter-tab:hover, .session-row:hover, .group-hint:hover { background: var(--light-hover); color: var(--text); }
   .nav-item.selected { color: var(--accent); background: var(--light-selected); border-color: var(--line); }
   .nav-item.selected .nav-count, .replay-tab.active { color: var(--accent); }
   .group-hint { border-color: var(--line); background: transparent; }

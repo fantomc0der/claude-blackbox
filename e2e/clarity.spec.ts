@@ -61,7 +61,7 @@ test("search snippets read as recorded content, not indexed field names", async 
   const text = (await snippet.textContent())!.trim();
   expect(text.startsWith("type:")).toBe(false);
   expect(text).not.toContain("tool_use_id");
-  await expect(page.locator(".result-count")).toHaveText("1 results");
+  await expect(page.locator(".result-count")).toHaveText("1 result");
 });
 
 test("the bookmarked view offers a way back when nothing is bookmarked", async ({ page }) => {
