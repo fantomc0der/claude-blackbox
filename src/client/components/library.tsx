@@ -15,7 +15,7 @@ interface LibraryProps {
 
 export function Library(props: LibraryProps) {
   let filters!: HTMLDetailsElement, filterMenu!: HTMLDivElement;
-  onSettled(() => { dismissableDetails(filters); anchoredMenu(filters, filterMenu); });
+  onSettled(() => { const releases = [dismissableDetails(filters), anchoredMenu(filters, filterMenu)]; return () => { for (const release of releases) release(); }; });
   const closeFilters = () => { filters.open = false; filters.querySelector("summary")!.focus(); };
   const selected = () => props.params.get("session");
   const workspace = () => props.catalog?.workspaces.find(workspace => workspace.id === props.params.get("workspace"));

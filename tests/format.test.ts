@@ -16,6 +16,8 @@ test("model names report missing records and pass unknown identifiers through", 
   expect(modelName("")).toBe("Model not recorded");
   expect(modelName("<synthetic>")).toBe("Model not recorded");
   expect(modelName("claude-internal-preview-build")).toBe("internal-preview-build");
+  expect(modelName("claude-opus-4-5-thinking-20250101")).toBe("opus-4-5-thinking");
+  expect(modelName("claude-sonnet-4-5-v2-20250929")).toBe("sonnet-4-5-v2");
   expect(modelName("gpt-4o-mini")).toBe("gpt-4o-mini");
 });
 

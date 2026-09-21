@@ -77,11 +77,17 @@ export function displayText(blocks: ContentBlock[]): string {
   }).filter(Boolean).join(" ").replaceAll("|", " ").replace(/\s+/g, " ").trim();
 }
 
+export function termPattern(term: string): RegExp | null {
+  const tokens = term.match(/[\p{L}\p{N}]+/gu);
+  return tokens ? new RegExp(tokens.join("[^\\p{L}\\p{N}]+"), "iu") : null;
+}
+
 export function displaySnippet(raw: string, term: string, words = 28): string {
   let text: string;
   try { text = displayText(normalize(JSON.parse(raw) as Record<string, unknown>, "", 0, 0).blocks); }
   catch { return ""; }
-  const index = text.toLowerCase().indexOf(term.toLowerCase());
+  const pattern = termPattern(term);
+  const index = pattern ? text.search(pattern) : text.toLowerCase().indexOf(term.toLowerCase());
   if (index < 0) return "";
   const before = text.slice(0, index).split(" ").filter(Boolean);
   const after = text.slice(index).split(" ").filter(Boolean);

@@ -49,6 +49,11 @@ test("the shortcuts popover takes focus and hands it back", async ({ page }) => 
   await tab.click();
   await expect(popover).toHaveCount(0);
   await expect(tab).toBeFocused();
+  await opener.click();
+  await expect(popover).toHaveCount(1);
+  await opener.click();
+  await expect(popover).toHaveCount(0);
+  await expect(opener).toBeFocused();
 });
 
 test("closing the grouping dialog returns focus to the button that opened it", async ({ page }) => {

@@ -88,6 +88,20 @@ describe("recording index", () => {
     expect(snippet).toContain("12 checks passed and retryBudget stayed inside the configured ceiling");
   });
 
+  test("keeps prose snippets for punctuated terms the index tokenises apart", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Tighten the copy"),
+      fixtureData.record([{ type: "tool_use", id: "call-3", name: "Read", input: { file_path: "src/auth.ts" } }], { type: "assistant" }),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "call-3", content: "The sign in screen still asks for the workspace twice" }]),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const snippet = recorder.list(new URLSearchParams({ q: "sign-in" })).items[0].snippet!;
+    expect(snippet.startsWith("type:")).toBe(false);
+    expect(snippet).not.toContain("tool_use_id");
+    expect(snippet).toContain("The sign in screen still asks for the workspace twice");
+  });
+
   test("reconciles truncation, same-size replacements and deletion", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("old") + "\n");

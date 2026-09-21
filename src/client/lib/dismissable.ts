@@ -1,13 +1,13 @@
 export type DismissReason = "escape" | "outside";
 
-export function dismissable(element: HTMLElement, dismiss: (reason: DismissReason) => void) {
+export function dismissable(element: HTMLElement, dismiss: (reason: DismissReason) => void, trigger?: HTMLElement) {
   const keydown = (event: KeyboardEvent) => {
     if (event.key !== "Escape") return;
     event.stopPropagation();
     dismiss("escape");
   };
   const pointerdown = (event: PointerEvent) => {
-    if (event.target instanceof Node && element.contains(event.target)) return;
+    if (event.target instanceof Node && (element.contains(event.target) || trigger?.contains(event.target))) return;
     dismiss("outside");
   };
   document.addEventListener("keydown", keydown);

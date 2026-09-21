@@ -24,7 +24,7 @@ export function modelName(model: string): string {
   const name = (variant ? model.slice(0, -variant.length) : model).replace(/^claude-/, "");
   const ordered = name.replace(/-\d{8}$/, "").replace(/^(\d+(?:-\d+)?)-([a-z]+)$/i, "$2-$1");
   const family = ordered.match(/^(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$/i);
-  const label = family ? `${family[1][0].toUpperCase()}${family[1].slice(1).toLowerCase()} ${family[2]}${family[3] ? `.${family[3]}` : ""}` : name;
+  const label = family ? `${family[1][0].toUpperCase()}${family[1].slice(1).toLowerCase()} ${family[2]}${family[3] ? `.${family[3]}` : ""}` : ordered;
   return variant ? `${label} ${variant}` : label;
 }
 

@@ -3,8 +3,13 @@ import { createEffect, createSignal, onSettled } from "solid-js";
 type ReadingWidth = "comfortable" | "full";
 const storageKey = "blackbox:reading-width";
 
+function savedReadingWidth(): ReadingWidth {
+  try { return localStorage.getItem(storageKey) === "comfortable" ? "comfortable" : "full"; }
+  catch { return document.documentElement.dataset.readingWidth === "comfortable" ? "comfortable" : "full"; }
+}
+
 export function ReadingWidthControl() {
-  const [width, setWidth] = createSignal<ReadingWidth>(document.documentElement.dataset.readingWidth === "comfortable" ? "comfortable" : "full");
+  const [width, setWidth] = createSignal<ReadingWidth>(savedReadingWidth());
   createEffect(() => width(), value => { document.documentElement.dataset.readingWidth = value; });
   const changeWidth = (value: string) => {
     const next = value === "comfortable" ? "comfortable" : "full";

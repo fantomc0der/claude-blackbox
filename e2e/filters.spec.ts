@@ -37,6 +37,17 @@ test("the filters menu is never clipped by the shell and reaches its reset actio
   await expect(page.locator("details.filter-popover > summary")).toBeFocused();
 });
 
+test("the filters menu stays on screen when the viewport is too short to open downward", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 360 });
+  await page.goto("/?errors=1");
+  const menu = await openFilters(page);
+  await expect.poll(async () => { const box = await menu.boundingBox(); return box && box.y >= 0 && Math.round(box.y + box.height) <= 360; }).toBe(true);
+  const reset = page.getByRole("button", { name: "Reset all filters" });
+  await reset.scrollIntoViewIfNeeded();
+  await reset.click();
+  await expect(page).not.toHaveURL(/errors=1/);
+});
+
 test("the filters menu keeps its right edge on screen at 1920 wide", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/");

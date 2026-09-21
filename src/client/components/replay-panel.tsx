@@ -90,7 +90,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     void request<ReplayPage>(`/api/sessions/${state.id}/events?${params}`, { signal: controller.signal }).then(next => {
       if (controller.signal.aborted || sequence !== requestSequence) return;
       const grew = !navigation && !initial && Boolean(page()) && next.total > page()!.total;
-      const follow = !navigation && !initial && atBottom && (page()!.offset + page()!.limit >= page()!.total);
+      const follow = !navigation && !initial && atBottom && Boolean(page()) && (page()!.offset + page()!.limit >= page()!.total);
       const existing = new Map(page()?.items.map(event => [event.id, event]) || []);
       next.items = next.items.map(event => {
         const previous = existing.get(event.id);
@@ -196,9 +196,9 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     <div class="replay-body"><div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{page()?.offset ? `CONTINUED · EVENT ${page()!.offset + 1}` : "BEGINNING OF RECORDING"}<span /></div>
-        <Show when={page()?.offset}><button class="load-events" onClick={() => { setOffset(Math.max(0, page()!.offset - 60)); props.navigate({ event: null }, true); }}><Icon name="back" size={14} />Previous events</button></Show>
+        <Show when={page()?.offset}><button class="load-events" onClick={() => { setOffset(Math.max(0, page()!.offset - 60)); setUpdated(false); props.navigate({ event: null }, true); }}><Icon name="back" size={14} />Previous events</button></Show>
         <For each={visibleEvents()} keyed={event => event.id} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match.</h3><p>Choose another event type or search phrase.</p></div>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} />}</For>
-        <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />You're all caught up.<small>New activity appears here automatically.</small></div>}><button class="load-events" onClick={() => { setOffset(page()!.offset + page()!.limit); props.navigate({ event: null }, true); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
+        <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />You're all caught up.<small>New activity appears here automatically.</small></div>}><button class="load-events" onClick={() => { setOffset(page()!.offset + page()!.limit); setUpdated(false); props.navigate({ event: null }, true); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">
       <p class="eyebrow">AT A GLANCE</p>

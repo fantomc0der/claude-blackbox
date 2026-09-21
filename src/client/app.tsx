@@ -10,12 +10,12 @@ import { ReplayPanel } from "./components/replay-panel";
 import { WorkspaceDialog } from "./components/workspace-dialog";
 import { Icon } from "./components/icon";
 
-function ShortcutPopover(props: { close: () => void }) {
+function ShortcutPopover(props: { close: () => void; trigger: HTMLButtonElement }) {
   let panel!: HTMLDivElement;
   const restore = rememberFocus();
   onSettled(() => {
     panel.querySelector("button")?.focus();
-    const release = dismissable(panel, props.close);
+    const release = dismissable(panel, props.close, props.trigger);
     return () => { release(); restore(panel); };
   });
   return <div class="shortcut-popover" role="dialog" aria-label="Keyboard shortcuts" ref={panel}><div><h3>Move a little faster.</h3><button class="icon-button tiny" aria-label="Close shortcuts" onClick={props.close}><Icon name="close" size={15} /></button></div><p><span>Search every recording</span><kbd>Ctrl / ⌘ K</kbd></p><p><span>Quick search</span><kbd>/</kbd></p><p><span>Move through recordings</span><kbd>↑ ↓</kbd></p><p><span>Open focused recording</span><kbd>Enter</kbd></p><p><span>Clear search / close overlay</span><kbd>Esc</kbd></p><p><span>Show these shortcuts</span><kbd>?</kbd></p></div>;
@@ -38,7 +38,7 @@ export function App() {
   const [help, setHelp] = createSignal(false);
   const [libraryCollapsed, setLibraryCollapsed] = createSignal(false);
   const [libraryWidth, setLibraryWidth] = createSignal<number>();
-  let searchInput!: HTMLInputElement;
+  let searchInput!: HTMLInputElement, helpButton!: HTMLButtonElement;
   const changed = () => setRevision(value => value + 1);
   const closeReplay = () => {
     const id = params().get("session");
@@ -144,7 +144,7 @@ export function App() {
     <a class="skip-link" href="#main-content">Skip to recordings</a>
     <Show when={navOpen()}><button class="nav-scrim" aria-label="Close navigation" onClick={() => setNavOpen(false)} /></Show>
     <Sidebar catalog={catalog()} params={params()} navigate={navigate} group={() => setGroupOpen(true)} refresh={() => void refresh()} close={() => setNavOpen(false)} hidden={mobile() && !navOpen()} />
-    <main class="main-shell" id="main-content"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu icon-button" aria-label="Open workspace navigation" onClick={() => setNavOpen(true)}><Icon name="menu" /></button><Icon name="box" size={16} /><span>Flight recorder</span><span class="breadcrumb-divider">/</span><strong>{currentWorkspace()?.name || (params().get("bookmarked") ? "Bookmarked" : "All workspaces")}</strong></div><div class="topbar-actions"><Show when={catalog()?.demo}><span class="demo-label">DEMO MODE</span></Show><span class={['connection-state', { disconnected: !connected() }]}><span class="live-dot" />{connected() ? "Connected locally" : "Reconnecting…"}</span><button class="icon-button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(value => !value)}><Icon name="keyboard" size={18} /></button></div></header>
+    <main class="main-shell" id="main-content"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu icon-button" aria-label="Open workspace navigation" onClick={() => setNavOpen(true)}><Icon name="menu" /></button><Icon name="box" size={16} /><span>Flight recorder</span><span class="breadcrumb-divider">/</span><strong>{currentWorkspace()?.name || (params().get("bookmarked") ? "Bookmarked" : "All workspaces")}</strong></div><div class="topbar-actions"><Show when={catalog()?.demo}><span class="demo-label">DEMO MODE</span></Show><span class={['connection-state', { disconnected: !connected() }]}><span class="live-dot" />{connected() ? "Connected locally" : "Reconnecting…"}</span><button class="icon-button" ref={helpButton} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(value => !value)}><Icon name="keyboard" size={18} /></button></div></header>
       <Show when={error()}><div class="error-banner" role="alert"><Icon name="alert" size={16} />{error()}<button class="text-button" onClick={changed}>Retry</button></div></Show>
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>
       <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} group={() => setGroupOpen(true)} />
@@ -153,7 +153,7 @@ export function App() {
       </div>
     </main>
     <Show when={groupOpen() && catalog()}><WorkspaceDialog catalog={catalog()!} onClose={() => setGroupOpen(false)} onSaved={changed} /></Show>
-    <Show when={help()}><ShortcutPopover close={() => setHelp(false)} /></Show>
+    <Show when={help()}><ShortcutPopover close={() => setHelp(false)} trigger={helpButton} /></Show>
     <Show when={toast()}><div class="toast" role="status"><Icon name="check" size={16} />{toast()}</div></Show>
   </div>;
 }

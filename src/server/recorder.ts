@@ -59,6 +59,7 @@ const schema = `
 const joins = `FROM sessions s LEFT JOIN group_paths gp ON gp.path = s.cwd
   LEFT JOIN groups g ON g.id = gp.group_id LEFT JOIN bookmarks b ON b.session_id = s.id`;
 const columns = `s.*, g.id AS group_id, g.name AS group_name, (b.session_id IS NOT NULL) AS bookmarked`;
+const snippetLimit = 262_144;
 
 async function physicalPath(path: string): Promise<string> {
   try { return await realpath(path); }
@@ -315,7 +316,7 @@ export class Recorder {
         const match = this.db.query<{ snippet: string; event_id: string; raw: string }, [string, string]>(`SELECT snippet(event_fts,0,'','', ' … ',28) AS snippet,e.event_id,e.raw
           FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ? AND e.session_id=? ORDER BY rank LIMIT 1`)
           .get(ftsPhrase(positive.value), row.id);
-        if (match) { session.snippet = displaySnippet(match.raw, positive.value) || match.snippet; session.matchEventId = match.event_id; }
+        if (match) { session.snippet = (match.raw.length > snippetLimit ? "" : displaySnippet(match.raw, positive.value)) || match.snippet; session.matchEventId = match.event_id; }
       }
       return session;
     });
