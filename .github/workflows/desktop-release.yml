@@ -25,7 +25,7 @@ jobs:
           - platform: ubuntu-22.04
             args: ""
           - platform: ubuntu-22.04-arm
-            args: ""
+            args: --bundles deb,rpm
           - platform: windows-latest
             args: ""
     runs-on: ${{ matrix.platform }}

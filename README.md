@@ -131,6 +131,8 @@ It updates the package, Tauri, and Cargo versions; runs the application and Rust
 
 The workflow's manual **Version tag** input is primarily a retry mechanism. Enter an existing tag such as `v0.2.0` only after a draft GitHub release for that tag already exists. The workflow builds and uploads assets but deliberately leaves the release as a draft; after every matrix job succeeds, publish it with `gh release edit v0.2.0 --draft=false --latest`. Normal releases should use `bun run release`, which performs and watches these steps automatically.
 
+Linux x64 releases include AppImage, DEB, and RPM packages. Linux ARM64 releases include DEB and RPM packages; ARM64 AppImage generation is omitted because its upstream `linuxdeploy` packaging path is not reliable on the native GitHub runner.
+
 ## Privacy And Storage
 
 - Binds to **loopback only**. Foreign origins, unsafe mutation requests, and non-loopback hostnames are rejected. There is no permissive CORS mode, account, telemetry, or cloud service.
