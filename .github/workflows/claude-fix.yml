@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 1
           token: ${{ secrets.PR_AUTOMATION_PAT }}
-      - uses: anthropics/claude-code-action@v1.0.183
+      - uses: anthropics/claude-code-action@v1.0.230
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.PR_AUTOMATION_PAT }}

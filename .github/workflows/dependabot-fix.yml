@@ -72,7 +72,7 @@ jobs:
 
       - name: Update Bun dependencies and resolve remaining alerts with Claude
         if: steps.status.outputs.should_run == 'true'
-        uses: anthropics/claude-code-action@v1.0.183
+        uses: anthropics/claude-code-action@v1.0.230
         env:
           ALERT_COUNT: ${{ steps.status.outputs.alert_count }}
           OUTDATED_COUNT: ${{ steps.status.outputs.outdated_count }}
