@@ -5,6 +5,7 @@
 .md-content :where(li) > :where(ul, ol) { margin-block: 0; }
 .md-content :where(blockquote) > :first-child { margin-top: 0; }
 .md-content :where(blockquote) > :last-child { margin-bottom: 0; }
+:root[data-reading-width="comfortable"] .md-content > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-inline-size: min(80ch, 100%); }
 .replay-event-user { border-left: 2px solid #90a56e !important; }
 .replay-event-system .replay-role { color: #aca392; }
 .replay-event-tool-result .replay-role { text-transform: none; }

@@ -120,7 +120,7 @@ Dark mode is the default surface system; lime is its active accent. Light mode i
 
 Replay preserves its separate Inter/system-sans stack for transcript prose and platform monospace stack for tool output. These are font-family declarations, not bundled font assets.
 
-Replay prose wraps naturally across the available event width, without a character-count cap or a width-changing reading toggle. Source soft newlines do not force visual breaks; paragraphs, intentional hard breaks, and code formatting remain intact.
+Replay prose wraps across the full event width by default; a Reading width control offers an opt-in Comfortable measure of about 80 characters for paragraphs, lists, blockquotes, and headings, while code, diffs, tables, and tool cards keep the full width in both modes. Source soft newlines do not force visual breaks; paragraphs, intentional hard breaks, and code formatting remain intact.
 
 **Character:** The interface uses a compact, high-legibility system sans with a modest hierarchy rather than a separate display face. Monospace is reserved for code, keyboard material, and technical content.
 
@@ -137,7 +137,7 @@ Replay prose wraps naturally across the available event width, without a charact
 
 ## Layout
 
-The desktop shell is a 226px sidebar beside a fluid main pane, with a 68px top bar and 38px horizontal library padding. At widths up to 1050px the sidebar narrows to 190px; at 680px and below it becomes a 250px off-canvas drawer while the main shell stays full width. The footer places Theme directly above Text size so appearance and reading comfort remain together.
+The desktop shell is a 226px sidebar beside a fluid main pane, with a 68px top bar and 38px horizontal library padding. At widths up to 1050px the sidebar narrows to 190px; at 680px and below it becomes a 250px off-canvas drawer while the main shell stays full width. The footer stacks Theme, Text size, and Reading width so appearance and reading comfort remain together; the two selectors put their label beside the control, and move it above the control below 1051px so the selected value stays readable in the narrow rail.
 
 **The Stable Frame Rule.** Theme changes recolor existing surfaces; they do not move navigation, library, replay, or top-bar structure.
 

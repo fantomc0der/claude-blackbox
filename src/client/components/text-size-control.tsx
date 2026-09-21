@@ -18,5 +18,5 @@ export function TextSizeControl() {
     catch {}
   };
 
-  return <label class="text-size-control"><span>Text size</span><select value={size()} onChange={event => changeSize(event.currentTarget.value)}><option value="standard">Standard</option><option value="larger">Larger</option></select></label>;
+  return <label class="sidebar-select"><span>Text size</span><select value={size()} onChange={event => changeSize(event.currentTarget.value)}><option value="standard">Standard</option><option value="larger">Larger</option></select></label>;
 }

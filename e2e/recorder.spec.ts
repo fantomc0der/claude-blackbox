@@ -464,6 +464,8 @@ test("replay prose and code use the available width across viewports", async ({ 
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.locator(".replay-event").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Focused reading" })).toHaveCount(0);
+  await expect(page.locator("html")).toHaveAttribute("data-reading-width", "full");
+  await expect(page.getByRole("combobox", { name: "Reading width" })).toHaveValue("full");
   const widthOf = (selector: string) => page.locator(selector).first().evaluate(element => element.getBoundingClientRect().width);
   for (const [width, height] of [[3440, 1440], [1920, 1080], [1366, 768], [390, 844], [320, 640]]) {
     await page.setViewportSize({ width, height });
