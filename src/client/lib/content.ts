@@ -36,7 +36,11 @@ export function formatEventTime(timestamp: string): string {
 
 export function toolTitle(name?: string): string {
   if (!name) return "Tool";
-  return name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ");
+  return name.startsWith("mcp__") ? name.slice(5).split("__").filter(Boolean).join(" · ") || name : name;
+}
+
+export function isToolResultEvent(event: Pick<ReplayEvent, "blocks">): boolean {
+  return event.blocks.length > 0 && event.blocks.every(block => block.type === "tool_result");
 }
 
 export function toolPreview(block: ContentBlock): string {

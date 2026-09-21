@@ -73,6 +73,21 @@ describe("recording index", () => {
     expect(recorder.list(new URLSearchParams()).total).toBe(1);
   });
 
+  test("builds search snippets from recorded content instead of the index serialization", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Make sign-in calmer"),
+      fixtureData.record([{ type: "tool_use", id: "call-7", name: "Bash", input: { command: "bun test auth" } }], { type: "assistant" }),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "call-7", content: "12 checks passed and retryBudget stayed inside the configured ceiling" }]),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const snippet = recorder.list(new URLSearchParams({ q: "retryBudget" })).items[0].snippet!;
+    expect(snippet.startsWith("type:")).toBe(false);
+    expect(snippet).not.toContain("tool_use_id");
+    expect(snippet).toContain("retryBudget");
+    expect(snippet).toContain("12 checks passed and retryBudget stayed inside the configured ceiling");
+  });
+
   test("reconciles truncation, same-size replacements and deletion", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("old") + "\n");

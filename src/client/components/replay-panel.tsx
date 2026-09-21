@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import type { ContentBlock, EventPage, Session } from "../../shared/types";
+import type { ContentBlock, EventPage, ReplayEvent, Session } from "../../shared/types";
 import { isAbort, request } from "../lib/api";
+import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
 import { dateTime, modelName, resumeCommand } from "../lib/format";
 import type { Navigate } from "../lib/location";
@@ -8,6 +9,33 @@ import { Icon } from "./icon";
 import { EventCard } from "./event-card";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
+
+function outlineLabel(event: ReplayEvent): string {
+  if (event.error) return "Error";
+  if (event.toolNames.length) return [...new Set(event.toolNames)].join(" · ");
+  if (isToolResultEvent(event)) return "Tool result";
+  return event.role === "user" ? "You" : "Claude";
+}
+
+function firstValue(value: unknown): string {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  const entries = Array.isArray(value) ? value : isRecord(value) ? Object.values(value) : [];
+  for (const entry of entries) {
+    const found = firstValue(entry);
+    if (found) return found;
+  }
+  return "";
+}
+
+function outlineBody(event: ReplayEvent): string {
+  const prose = (event.blocks.find(block => block.type === "text")?.text || "").replace(/<[^>]+>/g, " ").replace(/^\s*#{1,6}\s+/gm, "").replace(/\s+/g, " ").trim();
+  const call = event.blocks.find(block => block.type === "tool_use");
+  const result = event.blocks.find(block => block.type === "tool_result");
+  const body = prose || (call ? toolPreview(call) || firstValue(getToolInput(call)) : "")
+    || (result ? contentToText(result.content).replace(/\s+/g, " ").trim() : "");
+  return body && body !== outlineLabel(event) ? truncate(body, 100) : event.type;
+}
 
 function SessionActions(props: { session: Session; onBookmark: () => void }) {
   return <div class="session-secondary-actions">
@@ -87,6 +115,12 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     if (kind() === "all" || search() || kind() === "errors" || event.blocks.length === 0) return true;
     return !event.blocks.every(block => block.type === "tool_result" && toolIdsOnPage().has(block.tool_use_id));
   }));
+  const countLabel = () => {
+    const total = page()?.total;
+    if (total === undefined) return "— records";
+    const shown = visibleEvents().length;
+    return shown === total ? `${total} records` : `${shown} shown · ${total} records`;
+  };
   const copy = async (value: string, label: string) => {
     try { await navigator.clipboard.writeText(value); props.notify(`${label} copied`); }
     catch { props.notify("Clipboard access failed. Use your browser’s clipboard permission setting."); }
@@ -155,7 +189,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-find"><Icon name="search" size={14} />
         <input aria-label="Find in this recording" placeholder="Find in this recording…" value={query()} onInput={event => setQuery(event.currentTarget.value)} />
         <Show when={query()}><button class="icon-button tiny" aria-label="Clear recording search" onClick={() => setQuery("")}><Icon name="close" size={13} /></button></Show>
-        <span>{page()?.total ?? "—"} events</span>
+        <span>{countLabel()}</span>
       </div>
     </div>
     <Show when={error()}><div class="error-banner" role="alert">{error()}<button class="text-button" onClick={() => setRetry(value => value + 1)}>Retry</button></div></Show>
@@ -170,10 +204,10 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <p class="eyebrow">AT A GLANCE</p>
       <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
       <div class="inspector-source"><span class="eyebrow">ORIGINAL WORKSPACE</span><p>{props.session?.cwd || "Not recorded"}</p><span class="inspector-date">{dateTime(props.session?.startedAt || "")}</span></div>
-      <nav class="replay-outline" aria-label="Events on this page"><p class="eyebrow">ON THIS PAGE</p><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" }]} /><span><small>{event.error ? "Error" : event.toolNames.length ? event.toolNames.join(" · ") : event.role === "user" ? "You" : "Claude"}</small>{event.blocks.find(block => block.type === "text")?.text?.replace(/<[^>]+>/g, "").slice(0, 100) || event.toolNames.join(", ") || event.type}</span></button>}</For></nav>
+      <nav class="replay-outline" aria-label="Events on this page"><p class="eyebrow">ON THIS PAGE</p><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>
       <p class="inspector-note"><Icon name="shield" size={13} />An original record. Nothing rewritten.</p>
     </aside></div>
     <Show when={updated()}><button class="new-events" onClick={latest}><Icon name="down" size={15} />Recording updated · Jump to latest</button></Show>
-    <footer class="replay-footer"><span><Icon name="shield" size={12} />Read-only replay</span><span>{pending() ? "Reading recording…" : `${page() ? Math.min(page()!.offset + 1, page()!.total) : 0}–${Math.min((page()?.offset || 0) + (page()?.items.length || 0), page()?.total || 0)} of ${page()?.total || 0} events`}</span><button class="text-button" onClick={latest}>Jump to latest<Icon name="down" size={12} /></button></footer>
+    <footer class="replay-footer"><span><Icon name="shield" size={12} />Read-only replay</span><span>{pending() ? "Reading recording…" : `${page() ? Math.min(page()!.offset + 1, page()!.total) : 0}–${Math.min((page()?.offset || 0) + (page()?.items.length || 0), page()?.total || 0)} of ${page()?.total || 0} records`}</span><button class="text-button" onClick={latest}>Jump to latest<Icon name="down" size={12} /></button></footer>
   </section>;
 }

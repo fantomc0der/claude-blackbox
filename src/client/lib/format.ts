@@ -20,7 +20,12 @@ export function dateTime(value: string): string {
 
 export function modelName(model: string): string {
   if (!model || model === "<synthetic>") return "Model not recorded";
-  return model.replace(/^claude-/, "").replace(/-\d{8}$/, "").replace(/-/g, " ").replace(/^\w/, value => value.toUpperCase());
+  const variant = model.match(/\[[^\]]*\]$/)?.[0] ?? "";
+  const name = (variant ? model.slice(0, -variant.length) : model).replace(/^claude-/, "");
+  const ordered = name.replace(/-\d{8}$/, "").replace(/^(\d+(?:-\d+)?)-([a-z]+)$/i, "$2-$1");
+  const family = ordered.match(/^(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?$/i);
+  const label = family ? `${family[1][0].toUpperCase()}${family[1].slice(1).toLowerCase()} ${family[2]}${family[3] ? `.${family[3]}` : ""}` : name;
+  return variant ? `${label} ${variant}` : label;
 }
 
 export function resumeCommand(session: Pick<Session, "cwd" | "sessionId">): string {

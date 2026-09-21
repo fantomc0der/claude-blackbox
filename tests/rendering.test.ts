@@ -24,7 +24,10 @@ describe("replay content helpers", () => {
     expect(safeDataImage({ type: "url", media_type: "image/png", data: "https://example.com/image.png" })).toBeUndefined();
   });
 
-  test("normalizes tool names for labels", () => {
-    expect(toolTitle("AskUserQuestion")).toBe("Ask User Question");
+  test("keeps recorded tool names and unpacks MCP tool identifiers", () => {
+    expect(toolTitle("AskUserQuestion")).toBe("AskUserQuestion");
+    expect(toolTitle("TodoWrite")).toBe("TodoWrite");
+    expect(toolTitle("mcp__playwright__browser_click")).toBe("playwright · browser_click");
+    expect(toolTitle()).toBe("Tool");
   });
 });

@@ -545,7 +545,7 @@ test("session details preserve context and keyboard access without shifting the 
   await expect(details).toBeVisible();
   await expect(details).toContainText(DEMO_HERO_TITLE);
   await expect(details).toContainText("feat/auth-delight");
-  await expect(details).toContainText("Sonnet 4 5");
+  await expect(details).toContainText("Sonnet 4.5");
   await expect(details).toContainText("3 messages · 7 tools");
   const copyPath = details.getByRole("button", { name: /synthetic\/workspaces\/orbit-auth/ });
   await copyPath.click();

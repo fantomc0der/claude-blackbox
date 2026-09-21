@@ -8,6 +8,7 @@ import {
   getString,
   getToolInput,
   isRecord,
+  isToolResultEvent,
   prettyValue,
   resultText,
   safeDataImage,
@@ -158,6 +159,8 @@ export function EventCard(props: EventCardProps) {
     setSettled(true);
   });
   const role = createMemo(() => props.event.role || "system");
+  const presentation = createMemo(() => isToolResultEvent(props.event) ? "tool-result" : role());
+  const roleLabel = createMemo(() => presentation() === "tool-result" ? "Tool result" : role());
   const hasBlocks = createMemo(() => props.event.blocks.length > 0);
   const permalink = () => {
     const url = new URL(location.href);
@@ -165,8 +168,8 @@ export function EventCard(props: EventCardProps) {
     url.searchParams.set("event", props.event.id);
     return url.pathname + url.search;
   };
-  return <article class={`replay-event replay-event-${role()} ${props.event.error ? "replay-event-error" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
-    <header class="replay-event-header"><span class="replay-role">{role()}</span><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a><Show when={props.event.cwd}><code>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
+  return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
+    <header class="replay-event-header"><span class="replay-role">{roleLabel()}</span><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a><Show when={props.event.cwd}><code>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
     <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} highlight={props.highlight} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} /></Show></details>
   </article>;

@@ -4,7 +4,7 @@ import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, EventPage, ReplayEvent, Session, SessionPage, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
-import { normalize, object, pathName, promptTitle, string } from "./normalize";
+import { displaySnippet, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { ftsPhrase, pageNumber, parseSearch } from "./search";
 
 interface SourceRow {
@@ -312,10 +312,10 @@ export class Recorder {
     const items = rows.map(row => {
       const session = this.session(row);
       if (positive) {
-        const match = this.db.query<{ snippet: string; event_id: string }, [string, string]>(`SELECT snippet(event_fts,0,'','', ' … ',28) AS snippet,e.event_id
+        const match = this.db.query<{ snippet: string; event_id: string; raw: string }, [string, string]>(`SELECT snippet(event_fts,0,'','', ' … ',28) AS snippet,e.event_id,e.raw
           FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ? AND e.session_id=? ORDER BY rank LIMIT 1`)
           .get(ftsPhrase(positive.value), row.id);
-        if (match) { session.snippet = match.snippet; session.matchEventId = match.event_id; }
+        if (match) { session.snippet = displaySnippet(match.raw, positive.value) || match.snippet; session.matchEventId = match.event_id; }
       }
       return session;
     });
