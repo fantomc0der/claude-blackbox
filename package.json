@@ -1,6 +1,6 @@
 {
   "name": "claude-blackbox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The flight recorder for your Claude Code sessions. Replay every conversation in a clean web UI",
   "private": true,
   "bin": {
