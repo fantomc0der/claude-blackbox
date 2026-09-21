@@ -16,6 +16,7 @@
 ## Toolchain Traps
 
 - Use Bun, not Node, for scripts, builds, and tests. The lockfile is `bun.lock`; do not introduce `package-lock.json`, `yarn.lock`, or the legacy binary `bun.lockb`.
+- GitHub's current Dependabot Bun image cannot parse this repository's lockfile version 2. JavaScript updates are handled by the scheduled `Dependency Maintenance` workflow; Dependabot remains enabled for Cargo, Actions, and security alerts.
 - Solid and `@solidjs/web` are pinned to the same Solid 2 prerelease, with a matching compiler plugin. Upgrade the runtime, renderer, and plugin together.
 - Browser tests use Bun's test runner and an installed Microsoft Edge through Playwright. Do not replace them with Playwright's Node test runner without intentionally redesigning the harness.
 - `src-tauri/binaries`, `src-tauri/gen`, `src-tauri/target`, and `dist` are generated. Only the `.gitkeep`, Tauri source/configuration, Cargo lockfile, and selected desktop icons belong in git.

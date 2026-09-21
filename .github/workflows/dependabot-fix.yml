@@ -1,4 +1,4 @@
-name: Dependabot Security Fallback
+name: Dependency Maintenance
 
 on:
   schedule:
@@ -13,7 +13,20 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - name: Check unresolved alerts and existing fallback PRs
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 1
+          token: ${{ secrets.PR_AUTOMATION_PAT }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Check outdated Bun packages, unresolved alerts, and existing maintenance PRs
         id: status
         env:
           GH_TOKEN: ${{ secrets.PR_AUTOMATION_PAT }}
@@ -22,55 +35,65 @@ jobs:
           set -euo pipefail
           alerts=$(gh api --paginate "repos/$REPO/dependabot/alerts" \
             --jq '[.[] | select(.state == "open")] | length')
+          outdated_output=$(bun outdated 2>&1 || true)
+          outdated=$(printf '%s\n' "$outdated_output" | awk -F'|' '
+            NF >= 5 {
+              name=$2
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+              if (name != "" && name != "Package" && name !~ /^-+$/) count++
+            }
+            END { print count + 0 }
+          ')
           existing=$(gh pr list --repo "$REPO" --state open \
-            --search 'in:title [SECURITY-FALLBACK]' \
+            --search 'in:title [DEPENDENCY-MAINTENANCE]' \
             --json number --jq 'length')
           echo "alert_count=$alerts" >> "$GITHUB_OUTPUT"
-          if [ "$alerts" -gt 0 ] && [ "$existing" -eq 0 ]; then
+          echo "outdated_count=$outdated" >> "$GITHUB_OUTPUT"
+          if { [ "$alerts" -gt 0 ] || [ "$outdated" -gt 0 ]; } && [ "$existing" -eq 0 ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "Found $alerts unresolved alert(s) with no open fallback PR."
+            echo "Found $outdated outdated Bun package(s) and $alerts unresolved alert(s)."
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Alerts: $alerts; existing fallback PRs: $existing. Nothing to start."
+            echo "Outdated: $outdated; alerts: $alerts; existing maintenance PRs: $existing. Nothing to start."
           fi
 
-      - name: Checkout main
-        if: steps.status.outputs.should_run == 'true'
-        uses: actions/checkout@v7
-        with:
-          ref: main
-          fetch-depth: 1
-          token: ${{ secrets.PR_AUTOMATION_PAT }}
-
-      - name: Create fallback branch
+      - name: Create maintenance branch
         if: steps.status.outputs.should_run == 'true'
         run: |
-          branch="dependabot-fix/security-${{ github.run_id }}"
+          branch="dependency-maintenance/scheduled-${{ github.run_id }}"
           git checkout -b "$branch"
           echo "BRANCH=$branch" >> "$GITHUB_ENV"
 
-      - name: Resolve remaining alerts with Claude
+      - name: Install Tauri Linux dependencies
+        if: steps.status.outputs.should_run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Update Bun dependencies and resolve remaining alerts with Claude
         if: steps.status.outputs.should_run == 'true'
         uses: anthropics/claude-code-action@v1.0.183
         env:
           ALERT_COUNT: ${{ steps.status.outputs.alert_count }}
+          OUTDATED_COUNT: ${{ steps.status.outputs.outdated_count }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.PR_AUTOMATION_PAT }}
           base_branch: main
           claude_args: |
-            --allowedTools "Bash(gh api:*),Bash(bun install:*),Bash(bun run:*),Bash(cargo check:*),Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*)"
+            --allowedTools "Bash(gh api:*),Bash(bun outdated:*),Bash(bun update:*),Bash(bun install:*),Bash(bun run:*),Bash(cargo check:*),Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*)"
           prompt: |
             REPO: ${{ github.repository }}
             BRANCH: ${{ env.BRANCH }}
             OPEN ALERTS: ${{ steps.status.outputs.alert_count }}
+            OUTDATED BUN PACKAGES: ${{ steps.status.outputs.outdated_count }}
 
-            Resolve the repository's remaining open Dependabot security alerts. Read CLAUDE.md first.
+            Perform the repository's scheduled dependency maintenance. Read CLAUDE.md first.
 
-            1. Fetch the open alerts with `gh api --paginate "repos/${{ github.repository }}/dependabot/alerts" --jq '[.[] | select(.state == "open")]'`.
-            2. Make the smallest safe manifest or lockfile updates that resolve the alerts. This repository uses `package.json` plus `bun.lock` and `src-tauri/Cargo.toml` plus `src-tauri/Cargo.lock`.
-            3. Use `bun install` for JavaScript dependency changes. Do not create another package-manager lockfile.
-            4. Run `bun run check`. Then run `bun run desktop:sidecar` and `cargo check --locked --manifest-path src-tauri/Cargo.toml` when Rust, Tauri, build tooling, or transitive desktop dependencies changed.
+            1. Run `bun outdated` and update safe patch and minor JavaScript dependencies. Keep exact pins exact, update related Solid runtime/compiler packages together, and leave major upgrades for a separate human-reviewed PR.
+            2. Fetch open security alerts with `gh api --paginate "repos/${{ github.repository }}/dependabot/alerts" --jq '[.[] | select(.state == "open")]'` and make the smallest safe manifest or lockfile changes that resolve them.
+            3. This repository uses `package.json` plus `bun.lock` and `src-tauri/Cargo.toml` plus `src-tauri/Cargo.lock`. Use `bun install` for JavaScript changes and never create another package-manager lockfile.
+            4. Run `bun run check`, `bun run desktop:sidecar`, and `cargo check --locked --manifest-path src-tauri/Cargo.toml`. The pull request CI runs the Edge E2E suite on Windows.
             5. Do not remove tests, weaken security checks, add suppressions, or use type-error escape hatches to make an update pass.
-            6. Commit the complete fix, push `${{ env.BRANCH }}`, and open a pull request against `main` titled `chore: resolve Dependabot security alerts [SECURITY-FALLBACK]`.
-            7. In the PR body, list each alert, advisory identifier, affected package, and resolved version. Clearly describe any alert that could not be fixed safely.
+            6. Commit the complete maintenance change, push `${{ env.BRANCH }}`, and open a pull request against `main` titled `chore: scheduled dependency maintenance [DEPENDENCY-MAINTENANCE]`.
+            7. In the PR body, list every updated dependency and each security alert addressed. Clearly explain any alert that cannot be fixed without an unsafe major platform upgrade.

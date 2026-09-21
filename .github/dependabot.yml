@@ -1,24 +1,6 @@
 version: 2
 
 updates:
-  - package-ecosystem: bun
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "08:17"
-      timezone: America/New_York
-    open-pull-requests-limit: 10
-    groups:
-      bun-non-major:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-    commit-message:
-      prefix: deps
-
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
