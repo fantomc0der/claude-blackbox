@@ -1,10 +1,11 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-20T00:00:00-04:00",
+  "generatedAt": "2026-09-20T12:00:00-04:00",
   "title": "Design System: claude-blackbox",
   "extensions": {
     "colorMeta": {
       "dark-bg": { "role": "neutral", "displayName": "Charcoal Canvas", "canonical": "#101214", "tonalRamp": ["#101214", "#171a1c", "#1d2123", "#2a2e30", "#4b5152", "#767e7e", "#b5b9b5", "#e9eae5"] },
+      "dark-menu": { "role": "neutral", "displayName": "Menu Charcoal", "canonical": "#1b1f21", "tonalRamp": ["#101214", "#171a1c", "#1b1f21", "#252b2c", "#3d4543", "#6b7372", "#a9b0ae", "#e0e3e1"] },
       "dark-accent": { "role": "primary", "displayName": "Recorder Lime", "canonical": "#c7ee79", "tonalRamp": ["#273016", "#435027", "#62753b", "#849c50", "#a6c764", "#c7ee79", "#dbf5a9", "#effbd7"] },
       "light-bg": { "role": "neutral", "displayName": "Off-White Canvas", "canonical": "#efefed", "tonalRamp": ["#262825", "#41453f", "#5c5f5a", "#858780", "#a8aba3", "#d0d1cc", "#e4e4e1", "#f6f6f4"] },
       "light-accent": { "role": "primary", "displayName": "Graphite Active", "canonical": "#41453f", "tonalRamp": ["#262825", "#41453f", "#5c5f5a", "#858780", "#a8aba3", "#d0d1cc", "#e4e4e1", "#f6f6f4"] },
@@ -15,22 +16,34 @@
       "body": { "displayName": "Control Body", "purpose": "Default controls and interface copy." },
       "support": { "displayName": "Supporting UI", "purpose": "Compact descriptions and option labels." },
       "meta": { "displayName": "Metadata", "purpose": "Timestamps, labels, and low-priority navigation copy." },
+      "label": { "displayName": "Label Floor", "purpose": "The smallest permitted interface text: brand subtitle, version line, and demo badge." },
       "code": { "displayName": "Technical Mono", "purpose": "Keyboard material and technical UI values." },
       "replay-body": { "displayName": "Transcript Prose", "purpose": "Recorded conversation content, using the separate Inter/system-sans stack." },
       "replay-code": { "displayName": "Transcript Code", "purpose": "Tool output and code blocks, using platform monospace." }
     },
     "shadows": [
       { "name": "dark-overlay", "value": "0 30px 130px #000b", "purpose": "Dialog depth in the dark baseline." },
-      { "name": "light-overlay", "value": "0 6px 35px #2628251f", "purpose": "Toast and transient overlay depth in light mode." }
+      { "name": "dark-menu-drop", "value": "0 15px 55px #0008", "purpose": "Anchored filter and session-details menus casting downward from their trigger." },
+      { "name": "dark-sheet-lift", "value": "0 -12px 45px #0009", "purpose": "Phone bottom sheet casting upward from its top edge." },
+      { "name": "light-overlay", "value": "0 6px 35px #2628251f", "purpose": "Toast and transient overlay depth in light mode." },
+      { "name": "light-sheet-lift", "value": "0 -12px 45px #2628251f", "purpose": "Phone bottom sheet lift in light mode." }
     ],
     "motion": [
       { "name": "control-color", "value": "background .15s, color .15s", "purpose": "Compact control hover and selection feedback." },
       { "name": "mobile-drawer", "value": "transform .2s", "purpose": "Mobile navigation drawer movement." }
     ],
     "breakpoints": [
+      { "name": "narrow-desktop", "value": "1250px" },
       { "name": "compact-desktop", "value": "1050px" },
+      { "name": "single-pane", "value": "900px" },
       { "name": "mobile-drawer", "value": "680px" },
-      { "name": "wide-desktop", "value": "1600px" }
+      { "name": "wide-desktop", "value": "1600px" },
+      { "name": "short-viewport", "value": "820px height" }
+    ],
+    "anchoring": [
+      { "name": "menu-gap", "value": "9px", "purpose": "Distance between a popover trigger and its anchored menu." },
+      { "name": "viewport-inset", "value": "16px", "purpose": "Minimum clearance an anchored menu keeps from every viewport edge." },
+      { "name": "menu-height-floor", "value": "120px", "purpose": "Minimum height an anchored menu keeps when space below the trigger is short." }
     ]
   },
   "components": [
@@ -38,21 +51,109 @@
       "name": "Theme Control",
       "kind": "custom",
       "refersTo": "theme-option",
-      "description": "Persistent Dark/Light choice in the sidebar reading controls.",
-      "html": "<fieldset class=\"ds-theme-control\"><legend>Theme</legend><div class=\"ds-theme-options\"><button type=\"button\" aria-pressed=\"true\">Dark</button><button type=\"button\" aria-pressed=\"false\">Light</button></div></fieldset>",
-      "css": ".ds-theme-control { min-width: 0; margin: 0; padding: 0; border: 0; color: #e9eae5; font: .8125rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-theme-control legend { margin-bottom: 6px; color: #929a9a; font-size: .75rem; } .ds-theme-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid #2a2e30; border-radius: 7px; background: #101214; } .ds-theme-options button { min-height: 36px; padding: 6px; border: 0; border-radius: 4px; color: #929a9a; background: transparent; font: inherit; cursor: pointer; } .ds-theme-options button:hover { color: #e9eae5; background: #1d2123; } .ds-theme-options button[aria-pressed=\"true\"] { color: #c7ee79; background: #c7ee7910; } .ds-theme-options button:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; }"
+      "description": "Persistent Dark/Light choice, first control in the sidebar footer.",
+      "html": "<fieldset class=\"ds-theme-control\"><legend>Theme</legend><div class=\"ds-theme-options\"><button type=\"button\" aria-pressed=\"true\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z\"/></svg>Dark</button><button type=\"button\" aria-pressed=\"false\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/></svg>Light</button></div></fieldset>",
+      "css": ".ds-theme-control { min-width: 0; margin: 0 0 9px; padding: 0; border: 0; color: #e9eae5; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-theme-control legend { padding: 0; margin-bottom: 4px; line-height: 1.35; color: #929a9a; font-size: .75rem; } .ds-theme-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid #2a2e30; border-radius: 7px; background: #101214; } .ds-theme-options button { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; margin: 0; padding: 6px; border: 0; border-radius: 4px; color: #929a9a; background: transparent; font: inherit; font-size: .8125rem; cursor: pointer; } .ds-theme-options button:hover { color: #e9eae5; background: #1d2123; } .ds-theme-options button[aria-pressed=\"true\"] { color: #c7ee79; background: #c7ee7910; } .ds-theme-options button:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; }"
+    },
+    {
+      "name": "Sidebar Select Row",
+      "kind": "input",
+      "refersTo": "sidebar-select",
+      "description": "The shared label-and-select row used by Text size and Reading width; the label stacks above the control between 681px and 1250px.",
+      "html": "<label class=\"ds-sidebar-select\"><span>Reading width</span><select><option>Comfortable</option><option selected>Full width</option></select></label>",
+      "css": ".ds-sidebar-select { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; color: #929a9a; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-sidebar-select > span { flex: 0 0 56px; line-height: 1.3; font-size: .75rem; } .ds-sidebar-select select { flex: 1; min-width: 0; padding: 6px 9px; border: 1px solid #2a2e30; border-radius: 7px; background: #111416; color: #e9eae5; font: inherit; cursor: pointer; } .ds-sidebar-select select:hover { border-color: #3d4543; } .ds-sidebar-select select:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; } @media (max-width: 1250px) { .ds-sidebar-select { display: block; margin-bottom: 8px; } .ds-sidebar-select > span { display: block; margin-bottom: 3px; } .ds-sidebar-select select { width: 100%; } }"
+    },
+    {
+      "name": "Anchored Filter Menu",
+      "kind": "custom",
+      "refersTo": "filter-menu",
+      "description": "Popover positioned from its trigger's rectangle and clamped to the viewport; becomes a bottom sheet at 680px and below.",
+      "html": "<div class=\"ds-filter-menu\"><div class=\"ds-filter-menu-heading\"><h3>Refine your recordings</h3><button class=\"ds-filter-menu-close\" aria-label=\"Close filters\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\"><path d=\"M18 6 6 18M6 6l12 12\"/></svg></button></div><label>Model<select><option>All models</option></select></label><label>Recorded<select><option>Any time</option></select></label></div>",
+      "css": ".ds-filter-menu { width: min(300px, calc(100vw - 32px)); max-height: 65vh; overflow-y: auto; overscroll-behavior: contain; padding: 20px; background: #1b1f21; border: 1px solid #3d4543; border-radius: 10px; box-shadow: 0 15px 55px #0008; color: #e9eae5; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-filter-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 17px; } .ds-filter-menu h3 { margin: 0; font-size: .8125rem; font-weight: 550; } .ds-filter-menu-close { display: none; min-width: 40px; min-height: 40px; margin-right: -6px; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: none; color: #929a9a; cursor: pointer; } .ds-filter-menu-close:hover { color: #e9eae5; background: #ffffff09; } .ds-filter-menu label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: .75rem; color: #aeb5b1; } .ds-filter-menu select { width: 100%; padding: 8px; border: 1px solid #2a2e30; border-radius: 7px; background: #111416; color: #e9eae5; font-size: .875rem; } .ds-filter-menu select:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; } @media (max-width: 680px) { .ds-filter-menu { width: 100%; max-height: 80dvh; padding: 16px 18px calc(20px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 14px 14px 0 0; box-shadow: 0 -12px 45px #0009; } .ds-filter-menu-close { display: inline-flex; } }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Lime call to action; the replay panel's Copy resume command is its main use.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m4 17 6-6-6-6M12 19h8\"/></svg>Copy resume command</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 37px; padding: 9px 13px; border: 1px solid #c7ee79; border-radius: 6px; background: #c7ee79; color: #1b2413; font: 550 .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; white-space: nowrap; cursor: pointer; transition: background .15s, transform .15s; } .ds-btn-primary:hover { background: #d7f5a0; transform: translateY(-1px); } .ds-btn-primary:focus-visible { outline: 2px solid #c7ee79; outline-offset: 3px; } .ds-btn-primary:disabled { opacity: .42; cursor: not-allowed; transform: none; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Quiet bordered action for bookmarking, exporting, and grouping.",
+      "html": "<button class=\"ds-btn-secondary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z\"/></svg>Bookmark session</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 37px; padding: 9px 13px; border: 1px solid #383f3e; border-radius: 6px; background: #ffffff03; color: #d1d6d0; font: 550 .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; white-space: nowrap; cursor: pointer; transition: background .15s, border-color .15s; } .ds-btn-secondary:hover { background: #ffffff09; border-color: #626e5b; } .ds-btn-secondary:focus-visible { outline: 2px solid #c7ee79; outline-offset: 3px; }"
+    },
+    {
+      "name": "Search Box",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "Library search field; placeholder contrast is held above 4.5:1 against the field surface.",
+      "html": "<div class=\"ds-search-box\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m20 20-3.5-3.5\"/></svg><input placeholder=\"Search prompts, code, tool output…\" /><kbd>Ctrl K</kbd></div>",
+      "css": ".ds-search-box { display: flex; align-items: center; gap: 11px; height: 46px; padding: 0 13px; background: #1a1e20; border: 1px solid #363d3e; border-radius: 8px; color: #9ca4a4; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-search-box:focus-within { border-color: #a7c16d; box-shadow: 0 0 0 3px #c7ee7908; } .ds-search-box input { flex: 1; width: 0; padding: 11px 0; border: 0; background: transparent; color: #e9eae5; font: inherit; outline: none; } .ds-search-box input::placeholder { color: #828a8c; } .ds-search-box kbd { font: .75rem \"Cascadia Code\", Consolas, monospace; color: #929a9a; border: 1px solid #2a2e30; border-radius: 4px; padding: 2px 5px; }"
+    },
+    {
+      "name": "Filter Tab",
+      "kind": "chip",
+      "refersTo": "filter-tab",
+      "description": "Quick filter above the recordings list; active state fills with a muted olive-charcoal.",
+      "html": "<div class=\"ds-filter-tabs\"><button class=\"ds-filter-tab ds-active\">All sessions</button><button class=\"ds-filter-tab\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z\"/></svg>With edits</button></div>",
+      "css": ".ds-filter-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; } .ds-filter-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 10px; border: 1px solid transparent; border-radius: 6px; background: none; color: #9ca4a5; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; cursor: pointer; } .ds-filter-tab:hover { color: #e9eae5; background: #ffffff05; } .ds-filter-tab.ds-active { color: #d5dacd; background: #242a25; border-color: #3b4435; } .ds-filter-tab:focus-visible { outline: 2px solid #c7ee79; outline-offset: 3px; }"
+    },
+    {
+      "name": "Session Row",
+      "kind": "card",
+      "refersTo": "session-row",
+      "description": "Library list item; selection is an inset lime edge rather than a shadow.",
+      "html": "<button class=\"ds-session-row ds-selected\"><span class=\"ds-session-symbol\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z\"/></svg></span><span class=\"ds-session-main\"><span class=\"ds-session-title\">Keep the Filters menu inside the viewport</span><span class=\"ds-session-path\">claude-blackbox · main</span></span><span class=\"ds-session-time\">4m ago</span></button>",
+      "css": ".ds-session-row { display: grid; grid-template-columns: 37px minmax(0, 1fr) max-content; align-items: center; gap: 14px; width: 100%; padding: 19px 9px 19px 0; text-align: left; border: 0; border-bottom: 1px solid #252a2c; border-radius: 4px; background: none; color: #e9eae5; font-family: \"Segoe UI Variable\", \"Segoe UI\", sans-serif; cursor: pointer; transition: background .14s, box-shadow .14s; } .ds-session-row:hover { background: #ffffff03; } .ds-session-row.ds-selected { background: #c7ee7908; box-shadow: inset 2px 0 #c7ee79; } .ds-session-row:focus-visible { outline: 2px solid #c7ee79; outline-offset: 3px; } .ds-session-symbol { display: grid; place-items: center; width: 35px; height: 37px; color: #aab3a4; border: 1px solid #343d35; background: #c7ee7906; border-radius: 8px; } .ds-session-main { display: block; min-width: 0; } .ds-session-title { display: block; font-size: .875rem; font-weight: 530; line-height: 1.6; color: #d9ddd5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-session-path { display: block; margin-top: 7px; font: .75rem \"Cascadia Code\", Consolas, monospace; color: #99a298; } .ds-session-time { font: .75rem \"Cascadia Code\", Consolas, monospace; color: #9ba59d; white-space: nowrap; }"
+    },
+    {
+      "name": "Replay Event Card",
+      "kind": "card",
+      "refersTo": "replay-event",
+      "description": "Transcript event; the role label is capitalized except for tool results, which read as a sentence.",
+      "html": "<article class=\"ds-replay-event\"><header class=\"ds-replay-event-header\"><span class=\"ds-replay-role ds-tool-result\">Tool result</span><a class=\"ds-replay-event-link\" href=\"#\">14:22:08</a><code>C:\\code\\claude-blackbox</code></header><div class=\"ds-replay-event-body\"><p>Replay prose wraps to the full event width unless the Comfortable reading width is selected.</p></div></article>",
+      "css": ".ds-replay-event { margin: 12px 0; border: 1px solid #292e30; border-radius: 12px; background: #191c1e; color: #e9eae5; font-family: Inter, ui-sans-serif, system-ui, sans-serif; overflow: clip; } .ds-replay-event-header { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 14px; border-bottom: 1px solid #292e30; color: #969d9d; font: .8125rem ui-monospace, SFMono-Regular, Menlo, monospace; } .ds-replay-role { color: #c7ee79; font-weight: 700; text-transform: capitalize; } .ds-replay-role.ds-tool-result { text-transform: none; } .ds-replay-event-link { color: inherit; text-decoration: none; } .ds-replay-event-link:hover { color: #c7ee79; text-decoration: underline; } .ds-replay-event-header code { margin-left: auto; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-replay-event-body { display: grid; gap: 10px; padding: 14px; font-size: .9375rem; line-height: 1.65; } .ds-replay-event-body p { margin: 0; max-inline-size: min(80ch, 100%); }"
     }
   ],
   "narrative": {
     "northStar": "The Local Flight Recorder",
-    "overview": "A compact, pane-based recorder UI that preserves its charcoal-and-lime dark baseline while offering a muted off-white, mostly grayscale light alternate. Theme changes recolor existing surfaces and retain typography, layout, icon strokes, and responsive behavior.",
-    "keyCharacteristics": ["Dense recorder layout", "Explicit persisted theme choice", "Dark baseline preserved", "Grayscale light alternate"],
+    "overview": "claude-blackbox is a dense, practical recorder UI: structured panes, quiet dividers, compact controls, and a single unmistakable dark accent make long session histories legible without turning the workspace into a dashboard spectacle. The default dark appearance is the incumbent system and remains unchanged.\n\nThe approved light mode is a durable alternate palette, not a redesign. It retains the same type, spacing, icon strokes, hierarchy, and responsive behavior while replacing the charcoal surfaces with muted off-white and gray; semantic green and red remain reserved for meaningful status and diff states.\n\nReading comfort is a settings concern rather than a layout concern. Theme, Text size, and Reading width sit together in one compact sidebar footer, each persists explicitly, and none of them moves a pane or alters the type ramp.",
+    "keyCharacteristics": [
+      "Compact, pane-based recorder layout.",
+      "Charcoal-and-lime default with an explicit grayscale light alternate.",
+      "System sans for UI, monospace for paths and code.",
+      "Three persisted reading preferences in one sidebar footer."
+    ],
     "rules": [
       { "name": "The Preserved Dark Rule", "body": "Dark mode is the baseline visual system; alternate-theme work must not alter its tokens or appearance.", "section": "colors" },
       { "name": "The Restrained Light Rule", "body": "In light mode, ordinary navigation and controls stay grayscale; green and red communicate semantic status rather than decoration.", "section": "colors" },
-      { "name": "The Stable Frame Rule", "body": "Theme changes recolor existing surfaces; they do not move navigation, library, replay, or top-bar structure.", "section": "layout" }
+      { "name": "The Shared Scale Rule", "body": "Theme choice changes color only; it never changes the established type ramp, the larger-text preference, or the reading-width measure.", "section": "typography" },
+      { "name": "The Legible Floor Rule", "body": "No interface text is set below 11px. When a label must take less room, reduce its tracking and padding rather than its size.", "section": "typography" },
+      { "name": "The Stable Frame Rule", "body": "Theme changes recolor existing surfaces; they do not move navigation, library, replay, or top-bar structure.", "section": "layout" },
+      { "name": "The In-Viewport Menu Rule", "body": "A popover is anchored to its trigger but constrained by the viewport: 16px edge inset, 120px height floor, and a bottom sheet on phones. No menu may be positioned where it can open off-screen.", "section": "layout" },
+      { "name": "The Single Dismissal Rule", "body": "Every transient surface, including the filter menu, the session-details menu, the shortcuts popover, the mobile drawer, and the grouping dialog, closes on Escape and on an outside pointer-down, and returns focus to the control that opened it.", "section": "components" }
     ],
-    "dos": ["Do preserve the dark token set when extending light mode.", "Do use the grayscale light stack for standard light surfaces and selection.", "Do keep Theme with sidebar reading controls, including the mobile drawer."],
-    "donts": ["Don't infer theme from system appearance.", "Don't use lime as general light-mode decoration.", "Don't change typography, spacing, or responsive structure for a palette switch."]
+    "dos": [
+      "Do preserve the dark token set when extending light mode or theme controls.",
+      "Do use the grayscale light stack for standard light surfaces, borders, and selection.",
+      "Do keep Theme, Text size, and Reading width together in the sidebar footer and retain them in the mobile drawer.",
+      "Do apply saved explicit preferences before application rendering and update browser chrome to match.",
+      "Do anchor popovers from their trigger's rectangle against the viewport, with a 16px edge inset and a 120px height floor, and use the bottom sheet below 681px.",
+      "Do give every overlay the shared Escape and outside-dismissal behavior with focus return.",
+      "Do keep interface text at or above 11px, trading tracking and padding for space instead of size.",
+      "Do state an absent value plainly (\"Model not recorded\", an em dash for an unknown total), and carry the unit for assistive technology beside a bare number."
+    ],
+    "donts": [
+      "Don't infer theme from system appearance; default to dark until the user explicitly selects Light.",
+      "Don't use lime as general light-mode decoration or replace meaningful success/error colors with neutral styling.",
+      "Don't change typography, spacing, or responsive structure merely to support a palette switch.",
+      "Don't pin an overlay to its container's edge with ordinary absolute positioning; a menu that can open outside the viewport is a defect.",
+      "Don't constrain the measure of code, diffs, tables, or tool cards; the reading-width setting applies to prose blocks only."
+    ]
   }
 }
