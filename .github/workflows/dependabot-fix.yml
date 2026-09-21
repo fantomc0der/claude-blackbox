@@ -1,0 +1,76 @@
+name: Dependabot Security Fallback
+
+on:
+  schedule:
+    - cron: "17 13 * * 3"
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Check unresolved alerts and existing fallback PRs
+        id: status
+        env:
+          GH_TOKEN: ${{ secrets.PR_AUTOMATION_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          alerts=$(gh api --paginate "repos/$REPO/dependabot/alerts" \
+            --jq '[.[] | select(.state == "open")] | length')
+          existing=$(gh pr list --repo "$REPO" --state open \
+            --search 'in:title [SECURITY-FALLBACK]' \
+            --json number --jq 'length')
+          echo "alert_count=$alerts" >> "$GITHUB_OUTPUT"
+          if [ "$alerts" -gt 0 ] && [ "$existing" -eq 0 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Found $alerts unresolved alert(s) with no open fallback PR."
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Alerts: $alerts; existing fallback PRs: $existing. Nothing to start."
+          fi
+
+      - name: Checkout main
+        if: steps.status.outputs.should_run == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 1
+          token: ${{ secrets.PR_AUTOMATION_PAT }}
+
+      - name: Create fallback branch
+        if: steps.status.outputs.should_run == 'true'
+        run: |
+          branch="dependabot-fix/security-${{ github.run_id }}"
+          git checkout -b "$branch"
+          echo "BRANCH=$branch" >> "$GITHUB_ENV"
+
+      - name: Resolve remaining alerts with Claude
+        if: steps.status.outputs.should_run == 'true'
+        uses: anthropics/claude-code-action@v1.0.183
+        env:
+          ALERT_COUNT: ${{ steps.status.outputs.alert_count }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.PR_AUTOMATION_PAT }}
+          base_branch: main
+          claude_args: |
+            --allowedTools "Bash(gh api:*),Bash(bun install:*),Bash(bun run:*),Bash(cargo check:*),Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*)"
+          prompt: |
+            REPO: ${{ github.repository }}
+            BRANCH: ${{ env.BRANCH }}
+            OPEN ALERTS: ${{ steps.status.outputs.alert_count }}
+
+            Resolve the repository's remaining open Dependabot security alerts. Read CLAUDE.md first.
+
+            1. Fetch the open alerts with `gh api --paginate "repos/${{ github.repository }}/dependabot/alerts" --jq '[.[] | select(.state == "open")]'`.
+            2. Make the smallest safe manifest or lockfile updates that resolve the alerts. This repository uses `package.json` plus `bun.lock` and `src-tauri/Cargo.toml` plus `src-tauri/Cargo.lock`.
+            3. Use `bun install` for JavaScript dependency changes. Do not create another package-manager lockfile.
+            4. Run `bun run check`. Then run `bun run desktop:sidecar` and `cargo check --locked --manifest-path src-tauri/Cargo.toml` when Rust, Tauri, build tooling, or transitive desktop dependencies changed.
+            5. Do not remove tests, weaken security checks, add suppressions, or use type-error escape hatches to make an update pass.
+            6. Commit the complete fix, push `${{ env.BRANCH }}`, and open a pull request against `main` titled `chore: resolve Dependabot security alerts [SECURITY-FALLBACK]`.
+            7. In the PR body, list each alert, advisory identifier, affected package, and resolved version. Clearly describe any alert that could not be fixed safely.
