@@ -12,6 +12,8 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
+    env:
+      BUN_VERSION: 1.4.2
     steps:
       - name: Checkout main
         uses: actions/checkout@v7
@@ -21,8 +23,24 @@ jobs:
           token: ${{ secrets.PR_AUTOMATION_PAT }}
 
       - uses: oven-sh/setup-bun@v2
+        id: bun
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Verify the pinned Bun
+        env:
+          BUN_PATH: ${{ steps.bun.outputs.bun-path }}
+        run: |
+          set -euo pipefail
+          if [ ! -x "$BUN_PATH" ]; then
+            echo "::error::setup-bun did not report an executable bun-path."
+            exit 1
+          fi
+          version=$("$BUN_PATH" --version)
+          if [ "$version" != "$BUN_VERSION" ]; then
+            echo "::error::Expected Bun $BUN_VERSION at $BUN_PATH, found $version."
+            exit 1
+          fi
 
       - run: bun install --frozen-lockfile
 
@@ -80,6 +98,9 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.PR_AUTOMATION_PAT }}
           base_branch: main
+          # Without this the action installs its own bundled Bun over the pinned
+          # one, and that older Bun cannot read this repository's lockfile.
+          path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
           claude_args: |
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(gh:*),Bash(bun:*),Bash(cargo:*),Bash(git:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Bash(pwd:*),Bash(head:*),Bash(tail:*)"
           prompt: |
@@ -92,7 +113,7 @@ jobs:
 
             1. Run `bun outdated` and update safe patch and minor JavaScript dependencies. Keep exact pins exact, update related Solid runtime/compiler packages together, and leave major upgrades for a separate human-reviewed PR.
             2. Fetch open security alerts with `gh api --paginate "repos/${{ github.repository }}/dependabot/alerts" --jq '[.[] | select(.state == "open")]'` and make the smallest safe manifest or lockfile changes that resolve them.
-            3. This repository uses `package.json` plus `bun.lock` and `src-tauri/Cargo.toml` plus `src-tauri/Cargo.lock`. Use `bun install` for JavaScript changes and never create another package-manager lockfile.
+            3. This repository uses `package.json` plus `bun.lock` and `src-tauri/Cargo.toml` plus `src-tauri/Cargo.lock`. The `bun` on PATH is the pinned Bun ${{ env.BUN_VERSION }} that understands this lockfile; run `bun --version` first and stop without opening a pull request if it reports anything else. Use `bun install` for JavaScript changes, never edit `bun.lock` by hand, and never create another package-manager lockfile.
             4. Run `bun run check`, `bun run desktop:sidecar`, and `cargo check --locked --manifest-path src-tauri/Cargo.toml`. The pull request CI runs the Edge E2E suite on Windows.
             5. Do not remove tests, weaken security checks, add suppressions, or use type-error escape hatches to make an update pass.
             6. Commit the complete maintenance change, push `${{ env.BRANCH }}`, and open a pull request against `main` titled `chore: scheduled dependency maintenance [DEPENDENCY-MAINTENANCE]`.
