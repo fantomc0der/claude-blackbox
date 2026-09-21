@@ -23,10 +23,10 @@ colors:
 typography:
   display:
     fontFamily: '"Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif'
-    fontSize: "clamp(28px, 2.8vw, 40px)"
+    fontSize: "clamp(24px, 2vw, 32px)"
     fontWeight: 530
-    lineHeight: 1.2
-    letterSpacing: "-1.5px"
+    lineHeight: 1.25
+    letterSpacing: "-.8px"
   body:
     fontFamily: '"Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif'
     fontSize: ".875rem"
@@ -151,7 +151,7 @@ Replay prose wraps across the full event width by default; a Reading width contr
 **Character:** The interface uses a compact, high-legibility system sans with a modest hierarchy rather than a separate display face. Monospace is reserved for code, keyboard material, and technical content.
 
 ### Hierarchy
-- **Display:** Variable weight 530, responsive 28–40px, 1.2 line-height, tight tracking; library headings.
+- **Display:** Variable weight 530, responsive 24–32px, 1.25 line-height, -.8px tracking; library headings. Phone headings use 25px and -.6px tracking.
 - **Body:** 14px, 1.5 line-height; default controls and interface copy.
 - **Support:** 13px; descriptions and compact option labels.
 - **Meta:** 12px; timestamps, labels, and low-priority navigation metadata.
@@ -166,9 +166,11 @@ Replay prose wraps across the full event width by default; a Reading width contr
 
 ## Layout
 
-The desktop shell is a 226px sidebar beside a fluid main pane, with a 68px top bar and 38px horizontal library padding; above 1600px the sidebar relaxes to a viewport-proportional 226–252px column, and on viewports 820px and shorter the top bar compresses to 57px. The sidebar narrows to 205px at 1250px and to 190px at 1050px; at 680px and below it becomes a 250px off-canvas drawer over a blurred scrim while the main shell stays full width. The workspace list holds a real minimum height of roughly a quarter of the viewport (140–360px) so it reads as a list rather than a sliver, and the grouping shortcut below it is a single 44px row whose label truncates instead of wrapping.
+The desktop shell is a 226px sidebar beside a fluid main pane, with a 68px top bar and 38px horizontal library padding; above 1600px the sidebar relaxes to a viewport-proportional 226–252px column, and on viewports 820px and shorter the top bar compresses to 57px. The sidebar narrows to 205px at 1250px and to 190px at 1050px; at 680px and below it becomes a 250px off-canvas drawer over a blurred scrim while the main shell stays full width. The workspace list holds a real minimum height of roughly a quarter of the viewport (140–360px) so it reads as a list rather than a sliver. Its section heading has one persistent, labeled Group action; there is no duplicate library-header action or grouping promotion below the list.
 
-The sidebar footer stacks Theme, Text size, and Reading width so appearance and reading comfort stay together, above the privacy line and the version label. The two selectors put their label beside the control at full sidebar width; between 681px and 1250px, where the rail is narrowest, the label moves above the control so the selected value stays readable.
+The sidebar footer stacks Theme, Text size, and Reading width so appearance and reading comfort stay together, above the privacy line and the version label. Both selectors consistently put an unwrapped label above a full-width control, with a 4px label gap and 8px gap after each setting.
+
+The library prioritizes search and recordings over introductory content. Archive totals are a compact, unboxed definition list rather than metric tiles. Search, filters, and workspace selection remove the global summary and introduction; short screens also omit the introductory sentence. Recording rows stay in one chronological column at every viewport width, with the unsplit library capped at 1600px on wide displays. Replay still uses the full available workspace and preserves the resizable library and optional overview rail.
 
 Transient menus are placed against the viewport, not against their container. The filter menu is positioned from its trigger's rectangle with a 9px gap below it, a 16px minimum inset from every viewport edge, and a 120px minimum height; it aligns to the trigger's opposite edge rather than overflowing. At 680px and below it becomes a full-width bottom sheet with a safe-area-aware bottom pad and its own close button.
 
@@ -190,7 +192,8 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 - **Shape:** Theme options use 4px corners; primary, secondary, and icon buttons retain their existing 6px corners and system type ramp.
 - **Hover / Focus:** Hover changes foreground or raised surface; keyboard focus uses the active theme's accent with a 2px outline.
 - **Disabled:** Reduced opacity communicates unavailable actions.
-- **Touch:** Icon buttons are 36px at rest and 32px in their tiny variant; overlay-affecting controls grow to a 40–44px target at 680px and below.
+- **Touch:** Icon buttons are 36px at rest and 32px in their tiny variant; mobile navigation, grouping, filter-close, and replay icon controls have at least 44px hit areas.
+- **Hierarchy:** Creating a group uses the filled primary style. Copy resume command is a visible, bordered secondary action rather than the brightest element above a transcript.
 
 ### Inputs / Fields
 - **Style:** One-pixel divider stroke, field corner, and compact field padding.
@@ -203,7 +206,7 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 - **Mobile:** Navigation becomes the same 250px drawer at the mobile breakpoint; the three reading controls remain in its footer.
 
 ### Sidebar Footer
-- **Style:** Theme first as a segmented fieldset, then Text size and Reading width as label-and-select rows sharing one compact rhythm.
+- **Style:** Theme first as a segmented fieldset, then Text size and Reading width with consistently stacked labels and full-width selectors.
 - **Behavior:** Each preference persists independently and applies immediately; the version line closes the footer at the 11px label floor.
 
 ### Theme Control
@@ -221,7 +224,8 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 - **Dismissal:** Escape or an outside pointer-down closes it and returns focus to the Filters trigger.
 
 ### Replay Event
-- **Style:** A bordered transcript card with a monospace header carrying the role, a linked timestamp, the recorded working directory, and an error flag.
+- **Style:** A bordered transcript card with a monospace header carrying the role, a linked timestamp, and an error flag. The first known directory on each visible page is shown, followed by directory changes rather than repeated identical paths. Filtering or paging establishes the visible context again; exact per-event provenance remains in Raw event.
+- **Raw records:** The disclosure stays keyboard accessible with muted metadata emphasis and a 44px minimum hit area on phones. Expanded records retain their original data and copy controls.
 - **Role label:** Recorded roles are capitalized; a tool-result event reads "Tool result" in sentence case rather than being forced into the capitalized role pattern.
 - **Counts:** The find row states shown-versus-total only when the two differ, and shows an em dash until a total is actually known.
 

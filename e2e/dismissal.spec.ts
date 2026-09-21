@@ -58,7 +58,7 @@ test("the shortcuts popover takes focus and hands it back", async ({ page }) => 
 
 test("closing the grouping dialog returns focus to the button that opened it", async ({ page }) => {
   await page.goto("/");
-  const group = page.locator("button.heading-group");
+  const group = page.getByRole("button", { name: "Group workspaces", exact: true });
   const dialog = page.locator("dialog.workspace-dialog");
   await group.click();
   await expect(dialog).toBeVisible();

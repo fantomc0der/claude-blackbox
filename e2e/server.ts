@@ -52,6 +52,16 @@ const markdownWrapping = [
   `Unbroken token: ${"abcdefghij".repeat(50)}`,
 ].join("\n\n");
 await writeFile(join(folder, "markdown-wrapping.jsonl"), [event("Markdown wrapping verification", 0), event(markdownWrapping, 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
+const workspaceTransitions = [
+  event("Workspace transitions verification", 0),
+  event("Continuing in the original directory", 1, "assistant"),
+  { ...event("Entered a worktree", 2), cwd: "/synthetic/browser-tests-worktree" },
+  { ...event("Continuing in the worktree", 3, "assistant"), cwd: "/synthetic/browser-tests-worktree" },
+  { ...event("No working directory recorded", 4), cwd: undefined },
+  { ...event("Still in the worktree", 5, "assistant"), cwd: "/synthetic/browser-tests-worktree" },
+  event("Returned to the original directory", 6),
+];
+await writeFile(join(folder, "workspace-transitions.jsonl"), workspaceTransitions.map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);

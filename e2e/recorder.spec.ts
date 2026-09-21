@@ -163,9 +163,9 @@ test("session and event pagination remain bounded and navigable", async ({ page 
   await expect(page.locator(".session-row")).toHaveCount(50);
   await page.getByRole("button", { name: "Next recordings" }).click();
   await expect(page).toHaveURL(/offset=50/);
-  await expect(page.locator(".session-row")).toHaveCount(25);
+  await expect(page.locator(".session-row")).toHaveCount(26);
   await page.reload();
-  await expect(page.locator(".session-row")).toHaveCount(25);
+  await expect(page.locator(".session-row")).toHaveCount(26);
   await page.waitForTimeout(300);
   await expect(page).toHaveURL(/offset=50/);
   await page.getByRole("button", { name: "Previous recordings" }).click();
@@ -174,8 +174,10 @@ test("session and event pagination remain bounded and navigable", async ({ page 
   await expect(page.locator(".session-row")).toHaveCount(1);
   await page.locator(".session-row").click();
   await expect(page.locator(".replay-event")).toHaveCount(60);
+  await expect(page.locator(".replay-event-header > code")).toHaveText(["/synthetic/browser-tests"]);
   await page.getByRole("button", { name: "Next 60 events" }).click();
   await expect(page.locator(".replay-event").first()).toContainText("Long recording event 60");
+  await expect(page.locator(".replay-event-header > code")).toHaveText(["/synthetic/browser-tests"]);
   await page.getByRole("button", { name: "Previous events" }).click();
   await expect(page.locator(".replay-event").first()).toContainText("Long recording event 0");
   await page.getByRole("button", { name: "Jump to latest", exact: true }).click();
@@ -367,10 +369,10 @@ test("desktop layouts adapt from compact laptops through 4K and ultrawide monito
   const sizes = [
     { width: 1280, height: 720, columns: 1 },
     { width: 1366, height: 768, columns: 1 },
-    { width: 1920, height: 1080, columns: 2 },
-    { width: 2560, height: 1440, columns: 2 },
-    { width: 3440, height: 1440, columns: 3 },
-    { width: 3840, height: 2160, columns: 3 },
+    { width: 1920, height: 1080, columns: 1 },
+    { width: 2560, height: 1440, columns: 1 },
+    { width: 3440, height: 1440, columns: 1 },
+    { width: 3840, height: 2160, columns: 1 },
   ];
   for (const size of sizes) {
     await page.setViewportSize(size);
@@ -600,7 +602,7 @@ test("utility typography stays readable across desktop and compact viewports", a
   await expect(page.locator(".md-content").first()).toBeVisible();
   for (const width of [1920, 1024, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
-    for (const selector of [".nav-item", ".session-title", ".filter-tab", ".search-box input", ".replay-tab", ".replay-find input", ".primary-button.small"]) {
+    for (const selector of [".nav-item", ".session-title", ".filter-tab", ".search-box input", ".replay-tab", ".replay-find input", ".resume-command"]) {
       await expect(page.locator(selector).first()).toHaveCSS("font-size", "14px");
     }
     for (const selector of [".session-path", ".session-time", ".source-path", ".inspector-source .eyebrow"]) {

@@ -17,7 +17,7 @@ test("the workspace list keeps a usable height on laptop displays", async ({ pag
   const wide = await measure(page);
   expect(wide.list).toBeGreaterThanOrEqual(240);
   expect(wide.scrolls).toBe(false);
-  expect(wide.footer).toBeLessThanOrEqual(240);
+  expect(wide.footer).toBeLessThanOrEqual(280);
   await expect(theme).toBeVisible();
   await expect(size).toBeVisible();
   await expect(reading).toBeVisible();
@@ -48,23 +48,24 @@ test("every workspace row stays reachable once the list outgrows the sidebar", a
   expect(crowded.visible).toBeGreaterThanOrEqual(5);
 });
 
-test("the grouping invitation retires once worktrees are grouped", async ({ page }) => {
+test("one canonical grouping action stays available before and after grouping", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  const promo = page.locator(".group-hint");
-  await expect(promo).toBeVisible();
-  await expect(promo).toHaveText("Group worktrees");
+  const action = page.getByRole("button", { name: "Group workspaces", exact: true });
+  await expect(action).toHaveCount(1);
+  await expect(action).toBeVisible();
+  await expect(page.getByRole("button", { name: "Group worktrees", exact: true })).toHaveCount(0);
   const group = await page.evaluate(async () => {
     const response = await fetch("/api/groups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Sidebar coverage", paths: ["/synthetic/workspaces/orbit", "/synthetic/workspaces/orbit-auth"] }) });
     return await response.json() as { id: string };
   });
   try {
-    await expect(promo).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Group workspaces", exact: true }).first()).toBeVisible();
+    await expect(action).toHaveCount(1);
+    await expect(action).toBeVisible();
     expect((await measure(page)).list).toBeGreaterThanOrEqual(240);
   } finally {
     const status = await page.evaluate(id => fetch(`/api/groups/${id}`, { method: "DELETE", headers: { "Content-Type": "application/json" } }).then(response => response.status), group.id);
     expect(status).toBe(200);
   }
-  await expect(promo).toBeVisible();
+  await expect(action).toBeVisible();
 });

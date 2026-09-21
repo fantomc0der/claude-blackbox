@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-20T12:00:00-04:00",
+  "generatedAt": "2026-09-20T23:53:00-04:00",
   "title": "Design System: claude-blackbox",
   "extensions": {
     "colorMeta": {
@@ -59,9 +59,9 @@
       "name": "Sidebar Select Row",
       "kind": "input",
       "refersTo": "sidebar-select",
-      "description": "The shared label-and-select row used by Text size and Reading width; the label stacks above the control between 681px and 1250px.",
+      "description": "Text size and Reading width consistently stack an unwrapped label above a full-width selector at every viewport.",
       "html": "<label class=\"ds-sidebar-select\"><span>Reading width</span><select><option>Comfortable</option><option selected>Full width</option></select></label>",
-      "css": ".ds-sidebar-select { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; color: #929a9a; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-sidebar-select > span { flex: 0 0 56px; line-height: 1.3; font-size: .75rem; } .ds-sidebar-select select { flex: 1; min-width: 0; padding: 6px 9px; border: 1px solid #2a2e30; border-radius: 7px; background: #111416; color: #e9eae5; font: inherit; cursor: pointer; } .ds-sidebar-select select:hover { border-color: #3d4543; } .ds-sidebar-select select:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; } @media (max-width: 1250px) { .ds-sidebar-select { display: block; margin-bottom: 8px; } .ds-sidebar-select > span { display: block; margin-bottom: 3px; } .ds-sidebar-select select { width: 100%; } }"
+      "css": ".ds-sidebar-select { display: grid; gap: 4px; margin-bottom: 8px; color: #929a9a; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-sidebar-select > span { line-height: 1.35; font-size: .75rem; } .ds-sidebar-select select { width: 100%; min-width: 0; padding: 6px 9px; border: 1px solid #2a2e30; border-radius: 7px; background: #111416; color: #e9eae5; font: inherit; cursor: pointer; } .ds-sidebar-select select:hover { border-color: #3d4543; } .ds-sidebar-select select:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; }"
     },
     {
       "name": "Anchored Filter Menu",
@@ -69,21 +69,21 @@
       "refersTo": "filter-menu",
       "description": "Popover positioned from its trigger's rectangle and clamped to the viewport; becomes a bottom sheet at 680px and below.",
       "html": "<div class=\"ds-filter-menu\"><div class=\"ds-filter-menu-heading\"><h3>Refine your recordings</h3><button class=\"ds-filter-menu-close\" aria-label=\"Close filters\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\"><path d=\"M18 6 6 18M6 6l12 12\"/></svg></button></div><label>Model<select><option>All models</option></select></label><label>Recorded<select><option>Any time</option></select></label></div>",
-      "css": ".ds-filter-menu { width: min(300px, calc(100vw - 32px)); max-height: 65vh; overflow-y: auto; overscroll-behavior: contain; padding: 20px; background: #1b1f21; border: 1px solid #3d4543; border-radius: 10px; box-shadow: 0 15px 55px #0008; color: #e9eae5; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-filter-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 17px; } .ds-filter-menu h3 { margin: 0; font-size: .8125rem; font-weight: 550; } .ds-filter-menu-close { display: none; min-width: 40px; min-height: 40px; margin-right: -6px; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: none; color: #929a9a; cursor: pointer; } .ds-filter-menu-close:hover { color: #e9eae5; background: #ffffff09; } .ds-filter-menu label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: .75rem; color: #aeb5b1; } .ds-filter-menu select { width: 100%; padding: 8px; border: 1px solid #2a2e30; border-radius: 7px; background: #111416; color: #e9eae5; font-size: .875rem; } .ds-filter-menu select:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; } @media (max-width: 680px) { .ds-filter-menu { width: 100%; max-height: 80dvh; padding: 16px 18px calc(20px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 14px 14px 0 0; box-shadow: 0 -12px 45px #0009; } .ds-filter-menu-close { display: inline-flex; } }"
+      "css": ".ds-filter-menu { width: min(300px, calc(100vw - 32px)); max-height: 65vh; overflow-y: auto; overscroll-behavior: contain; padding: 20px; background: #1b1f21; border: 1px solid #3d4543; border-radius: 10px; box-shadow: 0 15px 55px #0008; color: #e9eae5; font: .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; } .ds-filter-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 17px; } .ds-filter-menu h3 { margin: 0; font-size: .8125rem; font-weight: 550; } .ds-filter-menu-close { display: none; min-width: 44px; min-height: 44px; margin-right: -6px; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: none; color: #929a9a; cursor: pointer; } .ds-filter-menu-close:hover { color: #e9eae5; background: #ffffff09; } .ds-filter-menu label { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: .75rem; color: #aeb5b1; } .ds-filter-menu select { width: 100%; padding: 8px; border: 1px solid #2a2e30; border-radius: 7px; background: #111416; color: #e9eae5; font-size: .875rem; } .ds-filter-menu select:focus-visible { outline: 2px solid #c7ee79; outline-offset: 0; } @media (max-width: 680px) { .ds-filter-menu { width: 100%; max-height: 80dvh; padding: 16px 18px calc(20px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 14px 14px 0 0; box-shadow: 0 -12px 45px #0009; } .ds-filter-menu-close { display: inline-flex; } }"
     },
     {
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "Lime call to action; the replay panel's Copy resume command is its main use.",
-      "html": "<button class=\"ds-btn-primary\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m4 17 6-6-6-6M12 19h8\"/></svg>Copy resume command</button>",
+      "description": "Filled action for creating a workspace group; resume-command copying uses the quieter secondary style.",
+      "html": "<button class=\"ds-btn-primary\">Create group</button>",
       "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 37px; padding: 9px 13px; border: 1px solid #c7ee79; border-radius: 6px; background: #c7ee79; color: #1b2413; font: 550 .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; white-space: nowrap; cursor: pointer; transition: background .15s, transform .15s; } .ds-btn-primary:hover { background: #d7f5a0; transform: translateY(-1px); } .ds-btn-primary:focus-visible { outline: 2px solid #c7ee79; outline-offset: 3px; } .ds-btn-primary:disabled { opacity: .42; cursor: not-allowed; transform: none; }"
     },
     {
       "name": "Secondary Button",
       "kind": "button",
       "refersTo": "button-secondary",
-      "description": "Quiet bordered action for bookmarking, exporting, and grouping.",
+      "description": "Quiet bordered action for copying resume commands, bookmarking, exporting, and recovery.",
       "html": "<button class=\"ds-btn-secondary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z\"/></svg>Bookmark session</button>",
       "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 37px; padding: 9px 13px; border: 1px solid #383f3e; border-radius: 6px; background: #ffffff03; color: #d1d6d0; font: 550 .875rem \"Segoe UI Variable\", \"Segoe UI\", sans-serif; white-space: nowrap; cursor: pointer; transition: background .15s, border-color .15s; } .ds-btn-secondary:hover { background: #ffffff09; border-color: #626e5b; } .ds-btn-secondary:focus-visible { outline: 2px solid #c7ee79; outline-offset: 3px; }"
     },
@@ -127,7 +127,7 @@
       "Compact, pane-based recorder layout.",
       "Charcoal-and-lime default with an explicit grayscale light alternate.",
       "System sans for UI, monospace for paths and code.",
-      "Three persisted reading preferences in one sidebar footer."
+      "Three persisted reading preferences with consistently stacked labels in one sidebar footer."
     ],
     "rules": [
       { "name": "The Preserved Dark Rule", "body": "Dark mode is the baseline visual system; alternate-theme work must not alter its tokens or appearance.", "section": "colors" },

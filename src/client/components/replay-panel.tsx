@@ -121,6 +121,17 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const shown = visibleEvents().length;
     return shown === total ? `${total} records` : `${shown} shown · ${total} records`;
   };
+  const workspaceChanges = createMemo(() => {
+    const changed = new Set<string>();
+    let directory = "";
+    for (const event of visibleEvents()) {
+      if (event.cwd && event.cwd !== directory) {
+        changed.add(event.id);
+        directory = event.cwd;
+      }
+    }
+    return changed;
+  });
   const copy = async (value: string, label: string) => {
     try { await navigator.clipboard.writeText(value); props.notify(`${label} copied`); }
     catch { props.notify("Clipboard access failed. Use your browser’s clipboard permission setting."); }
@@ -151,7 +162,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       </div>
       <div class="replay-actions">
         <Show when={props.session}>{session => <>
-          <button class="primary-button small" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button>
+          <button class="secondary-button resume-command" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button>
           <SessionActions session={session()} onBookmark={() => void bookmark()} />
           <details class="session-details" ref={setDetails}>
             <summary class="text-button"><span class="session-actions-label">Session actions</span><span class="session-details-label">Session details</span><Icon name="down" size={14} /></summary>
@@ -197,7 +208,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{page()?.offset ? `CONTINUED · EVENT ${page()!.offset + 1}` : "BEGINNING OF RECORDING"}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { setOffset(Math.max(0, page()!.offset - 60)); setUpdated(false); props.navigate({ event: null }, true); }}><Icon name="back" size={14} />Previous events</button></Show>
-        <For each={visibleEvents()} keyed={event => event.id} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match.</h3><p>Choose another event type or search phrase.</p></div>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} />}</For>
+        <For each={visibleEvents()} keyed={event => event.id} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match.</h3><p>Choose another event type or search phrase.</p></div>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} showWorkspace={workspaceChanges().has(event().id)} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />You're all caught up.<small>New activity appears here automatically.</small></div>}><button class="load-events" onClick={() => { setOffset(page()!.offset + page()!.limit); setUpdated(false); props.navigate({ event: null }, true); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">

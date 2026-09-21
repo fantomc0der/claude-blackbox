@@ -35,24 +35,22 @@
 
   .sidebar { background: var(--light-sidebar); }
   .library-split { background: var(--light-inset); }
-  .overview { background: var(--light-inset); }
   .replay-panel { background: var(--bg); }
   .brand-mark { color: var(--light-on-accent); box-shadow: none; }
   .nav-section-label, .nav-count, .workspace-nav-item > svg, .workspace-nav-item small,
   .sidebar-footer .version-label, .breadcrumb-divider, .connection-state,
-  .stat-label, .stat-label svg, .stat-note, .filter-tab,
+  .filter-tab,
   .list-caption, .list-caption select, .session-path, .row-branch, .meta-dot,
   .session-model, .session-activity, .session-time, .row-chevron, .session-snippet,
   .empty-source, .source-path, .session-details-menu dt, .session-details-menu p,
   .replay-tab, .replay-find, .timeline-marker, .timeline-end, .timeline-end small,
   .source-option > svg, .dialog-footer > span, .shortcut-popover p,
   .inspector-source p, .inspector-date, .replay-outline button, .replay-outline small, .inspector-note { color: var(--muted); }
-  .nav-item, .breadcrumbs strong, .archive-note p, .filter-popover > summary,
+  .nav-item, .breadcrumbs strong, .filter-popover > summary,
   .filter-menu label, .session-title, .field-label { color: var(--text); }
-  .nav-item:hover, .icon-button:hover, .filter-tab:hover, .session-row:hover, .group-hint:hover { background: var(--light-hover); color: var(--text); }
+  .nav-item:hover, .icon-button:hover, .filter-tab:hover, .session-row:hover { background: var(--light-hover); color: var(--text); }
   .nav-item.selected { color: var(--accent); background: var(--light-selected); border-color: var(--line); }
   .nav-item.selected .nav-count, .replay-tab.active { color: var(--accent); }
-  .group-hint { border-color: var(--line); background: transparent; }
   .live-dot { box-shadow: none; }
   .disconnected { color: var(--light-warning); }
   .disconnected .live-dot { background: var(--light-warning); }
@@ -61,8 +59,6 @@
   .primary-button:hover:not(:disabled) { background: var(--text); }
   .secondary-button { background: transparent; color: var(--text); border-color: var(--light-line-strong); }
   .secondary-button:hover:not(:disabled) { background: var(--raised); border-color: var(--muted); }
-  .archive-note { background-image: radial-gradient(var(--line) .6px, transparent .6px); }
-  .signal-art span { background: linear-gradient(var(--muted), var(--line)); }
   .search-box { background: var(--surface); border-color: var(--light-line-strong); color: var(--muted); }
   .search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
   .search-box input, .replay-find input, .list-caption select { background: transparent; }
@@ -96,7 +92,7 @@
   .replay-event-error, .tool-card-error { border-color: var(--light-error-line); }
   .replay-event-header { color: var(--muted); border-color: var(--line); }
   .replay-role, .replay-copy, .replay-text-button, .tool-checklist span,
-  .tool-thinking summary, .replay-raw summary, .md-content a, .replay-event-link:hover { color: var(--accent); }
+  .tool-thinking summary, .md-content a, .replay-event-link:hover { color: var(--accent); }
   .replay-event-system .replay-role, .replay-muted, .tool-preview, .tool-disclosure,
   .tool-code header, .tool-checklist [data-status="completed"], .tool-questions li, .tool-unknown { color: var(--muted); }
   .replay-error-label { color: var(--danger); }
@@ -122,10 +118,5 @@
 
   @media (max-width: 680px) {
     .filter-menu { box-shadow: 0 -12px 45px var(--light-shadow); }
-  }
-  @media (min-width: 1800px) {
-    .library:not(.library-split) .session-row { background: var(--surface); border-color: var(--line); }
-    .library:not(.library-split) .session-row:hover { background: var(--light-inset); border-color: var(--light-line-strong); }
-    .library:not(.library-split) .session-row.selected { background: var(--light-selected); }
   }
 }

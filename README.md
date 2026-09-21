@@ -50,8 +50,8 @@ All source recordings, including subagents, are included initially. Uncheck **In
 ### Desktop And Responsive Layout
 
 - Dark is the default theme. Choose **Dark** or **Light** in the sidebar footer; the muted, gray-scale light theme and text size preferences are saved in your browser. On mobile, open navigation to find these controls.
-- Compact laptop displays use a single recording list and space-conscious headers.
-- Wide desktops use two recording columns; ultrawide and 4K displays use three.
+- Every display uses one chronological recording list, with compact archive totals and space-conscious headers. Searching or filtering puts results first and hides the global summary.
+- Wide and ultrawide displays keep a bounded reading list rather than switching to a card grid; the replay workspace can still fill the available width.
 - The replay workspace adapts pane widths, and replay prose fills the conversation pane by default. Set **Reading width** to **Comfortable** in the sidebar footer to hold prose to about 80 characters per line while code, diffs, and tables keep the full width; the choice is saved in your browser beside Theme and Text size. Large displays also show recording metadata and an event outline.
 - Short displays get reduced vertical chrome rather than smaller conversation text.
 - Tablet/mobile layouts prioritize one pane, with an accessible navigation drawer.

@@ -10,7 +10,7 @@ import { Highlight } from "./highlight";
 interface LibraryProps {
   catalog: Catalog | null; page: SessionPage | null; pending: boolean; params: URLSearchParams;
   navigate: Navigate; query: string; setQuery: (query: string) => void;
-  searchRef: (element: HTMLInputElement) => void; group: () => void;
+  searchRef: (element: HTMLInputElement) => void;
 }
 
 export function Library(props: LibraryProps) {
@@ -31,14 +31,14 @@ export function Library(props: LibraryProps) {
   const bookmarksOnly = () => props.params.get("bookmarked") === "1" && !props.params.get("q") && !props.query && chips().length === 1;
   const countUnit = () => `${props.query ? " result" : " recording"}${props.page?.total === 1 ? "" : "s"}`;
   const openSession = (session: Session) => props.navigate({ session: session.id, event: session.matchEventId || null });
+  const discovering = () => Boolean(props.query.trim() || props.params.get("q") || props.params.get("workspace") || chips().length);
   return <section id="session-library" class={['library', { 'library-split': Boolean(selected()) }]} aria-label="Session library">
-    <header class="library-heading"><div><p class="eyebrow">YOUR DEVELOPMENT, DOCUMENTED</p><h1>{selected() ? "Session library" : props.params.get("bookmarked") ? "Worth coming back to." : workspace() ? workspace()!.name : <>Good work leaves <span>a trail.</span></>}</h1><p class="library-description">Every prompt, every breakthrough, every detour. All right here.</p></div><button class="secondary-button heading-group" onClick={props.group}><Icon name="merge" size={16} />Group workspaces</button></header>
-    <Show when={!selected()}><div class="overview">
-      <div class="stat"><span class="stat-label"><Icon name="library" size={15} />RECORDED SESSIONS</span><strong>{compact(props.catalog?.sessions || 0)}</strong><span class="stat-note">Your complete local history</span></div>
-      <div class="stat"><span class="stat-label"><Icon name="folder" size={15} />WORKSPACES</span><strong>{props.catalog?.workspaces.length || 0}</strong><span class="stat-note">Across projects & worktrees</span></div>
-      <div class="stat"><span class="stat-label"><Icon name="terminal" size={15} />TOOL CALLS</span><strong>{compact(props.catalog?.tools || 0)}</strong><span class="stat-note">Every step of the process</span></div>
-      <div class="archive-note"><div class="signal-art" aria-hidden="true"><For each={[15, 27, 18, 40, 29, 54, 34, 45, 25, 36, 17, 24]}>{height => <span style={{ height: `${height}px` }} />}</For></div><div><span class="eyebrow">NOTHING LOST.</span><p>Pick up the thread.<br />Find your next idea.</p></div></div>
-    </div></Show>
+    <header class="library-heading"><div><h1>{selected() ? "Session library" : props.params.get("bookmarked") ? "Worth coming back to." : workspace() ? workspace()!.name : discovering() ? "Session library" : <>Good work leaves <span>a trail.</span></>}</h1><Show when={!selected() && !discovering()}><p class="library-description">Every prompt, every breakthrough, every detour. All right here.</p></Show></div></header>
+    <Show when={!selected() && !discovering()}><dl class="overview" aria-label="Archive totals">
+      <div class="stat"><dt>Recordings</dt><dd>{compact(props.catalog?.sessions || 0)}</dd></div>
+      <div class="stat"><dt>Workspaces</dt><dd>{props.catalog?.workspaces.length || 0}</dd></div>
+      <div class="stat"><dt>Tool calls</dt><dd>{compact(props.catalog?.tools || 0)}</dd></div>
+    </dl></Show>
     <div class="discovery-controls">
       <div class="search-box"><Icon name="search" size={19} /><input ref={props.searchRef} aria-label="Search all recordings" placeholder="Search prompts, code, tool output…" value={props.query} onInput={event => props.setQuery(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Escape") { props.setQuery(""); filter({ q: null }); }
@@ -67,9 +67,7 @@ export function Library(props: LibraryProps) {
       if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
       const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".session-row")];
       const index = rows.indexOf(document.activeElement as HTMLButtonElement);
-      const style = getComputedStyle(event.currentTarget);
-      const columns = style.display === "grid" ? style.gridTemplateColumns.split(" ").length : 1;
-      const step = event.key === "ArrowDown" ? columns : event.key === "ArrowUp" ? -columns : event.key === "ArrowRight" ? 1 : -1;
+      const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
       if (index !== -1) { event.preventDefault(); rows[Math.max(0, Math.min(rows.length - 1, index + step))]?.focus(); }
     }}>
       <Show when={props.page} fallback={<div class="skeleton-list"><For each={[1, 2, 3, 4, 5]}>{() => <div class="skeleton-row" />}</For></div>}>

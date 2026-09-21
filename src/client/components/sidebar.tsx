@@ -22,11 +22,10 @@ export function Sidebar(props: { catalog: Catalog | null; params: URLSearchParam
       <button class={['nav-item', { selected: props.params.get("bookmarked") === "1" }]} onClick={() => select({ bookmarked: "1" })}><Icon name="bookmark" /><span>Bookmarked</span><Show when={props.catalog?.bookmarked}><span class="nav-count">{props.catalog?.bookmarked}</span></Show></button>
       <button class={['nav-item', { selected: props.params.get("days") === "7" && !props.params.get("workspace") }]} onClick={() => select({ days: "7" })}><Icon name="clock" /><span>Last 7 days</span></button>
     </nav>
-    <div class="nav-section-label workspace-label"><span>WORKSPACES</span><button class="icon-button tiny" title="Group workspaces" aria-label="Group workspaces" onClick={props.group}><Icon name="plus" size={16} /></button></div>
+    <div class="nav-section-label workspace-label"><span>WORKSPACES</span><button class="text-button workspace-group" title="Group workspaces" aria-label="Group workspaces" onClick={props.group}><Icon name="merge" size={14} /><span>Group</span></button></div>
     <nav class="workspace-nav" aria-label="Workspaces"><For each={props.catalog?.workspaces || []}>{workspace => <button title={workspace.paths.join("\n")} class={['nav-item workspace-nav-item', { selected: props.params.get("workspace") === workspace.id }]} onClick={() => select({ workspace: workspace.id })}>
       <Icon name={workspace.grouped ? "merge" : "folder"} size={16} /><span>{workspace.name}<Show when={workspace.grouped}><small>{workspace.paths.length} folders, one history</small></Show></span><span class="nav-count">{workspace.count}</span>
     </button>}</For><Show when={props.catalog && !props.catalog.workspaces.length}><p class="nav-empty">Your projects will appear here once a session is recorded.</p></Show></nav>
-    <Show when={props.catalog && !props.catalog.groups.length && props.catalog.workspaces.length > 1}><button class="group-hint" title="Group worktrees together" onClick={props.group}><Icon name="merge" size={16} /><span>Group worktrees</span><Icon name="chevron" size={14} /></button></Show>
     <div class="sidebar-footer"><ThemeControl /><TextSizeControl /><ReadingWidthControl /><div><Icon name="shield" size={17} /><span title="No cloud. No telemetry.">Local. Private. Yours.</span><button class="icon-button tiny" title="Rescan recordings" aria-label="Rescan recordings" onClick={props.refresh}><Icon name="refresh" size={15} /></button></div><span class="version-label">CLAUDE-BLACKBOX <span>V0.1.0</span></span></div>
   </aside>;
 }
