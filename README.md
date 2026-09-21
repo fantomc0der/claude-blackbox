@@ -129,6 +129,8 @@ The command uses SemVer to increment the current synchronized version. PowerShel
 
 It updates the package, Tauri, and Cargo versions; runs the application and Rust checks; commits and tags the version; pushes `main` and the tag; creates a draft GitHub release with generated notes; dispatches `.github/workflows/desktop-release.yml`; waits for Windows, Linux, and macOS bundles; and publishes the release only after every desktop build succeeds. Versions containing a hyphen are published as prereleases. macOS CI builds use ad-hoc signing; configure normal platform signing credentials before presenting the artifacts as trusted production installers.
 
+The workflow's manual **Version tag** input is primarily a retry mechanism. Enter an existing tag such as `v0.2.0` only after a draft GitHub release for that tag already exists. The workflow builds and uploads assets but deliberately leaves the release as a draft; after every matrix job succeeds, publish it with `gh release edit v0.2.0 --draft=false --latest`. Normal releases should use `bun run release`, which performs and watches these steps automatically.
+
 ## Privacy And Storage
 
 - Binds to **loopback only**. Foreign origins, unsafe mutation requests, and non-loopback hostnames are rejected. There is no permissive CORS mode, account, telemetry, or cloud service.
