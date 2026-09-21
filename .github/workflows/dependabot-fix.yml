@@ -81,7 +81,7 @@ jobs:
           github_token: ${{ secrets.PR_AUTOMATION_PAT }}
           base_branch: main
           claude_args: |
-            --allowedTools "Bash(gh api:*),Bash(bun outdated:*),Bash(bun update:*),Bash(bun install:*),Bash(bun run:*),Bash(cargo check:*),Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr create:*)"
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(gh:*),Bash(bun:*),Bash(cargo:*),Bash(git:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Bash(pwd:*),Bash(head:*),Bash(tail:*)"
           prompt: |
             REPO: ${{ github.repository }}
             BRANCH: ${{ env.BRANCH }}
@@ -97,3 +97,18 @@ jobs:
             5. Do not remove tests, weaken security checks, add suppressions, or use type-error escape hatches to make an update pass.
             6. Commit the complete maintenance change, push `${{ env.BRANCH }}`, and open a pull request against `main` titled `chore: scheduled dependency maintenance [DEPENDENCY-MAINTENANCE]`.
             7. In the PR body, list every updated dependency and each security alert addressed. Clearly explain any alert that cannot be fixed without an unsafe major platform upgrade.
+
+      - name: Require the maintenance pull request
+        if: steps.status.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PR_AUTOMATION_PAT }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --repo "$REPO" --state open --base main --head "$BRANCH" \
+            --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "::error::Claude completed without opening the required maintenance PR from $BRANCH."
+            exit 1
+          fi
+          echo "Maintenance PR #$pr is open."
