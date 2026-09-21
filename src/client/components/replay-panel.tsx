@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
 import type { ContentBlock, EventPage, Session } from "../../shared/types";
 import { isAbort, request } from "../lib/api";
+import { dismissableDetails } from "../lib/dismissable";
 import { dateTime, modelName, resumeCommand } from "../lib/format";
 import type { Navigate } from "../lib/location";
 import { Icon } from "./icon";
@@ -15,7 +16,7 @@ function SessionActions(props: { session: Session; onBookmark: () => void }) {
   </div>;
 }
 
-export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; navigate: Navigate; changed: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void }) {
+export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; navigate: Navigate; changed: () => void; close: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void }) {
   let scroll!: HTMLDivElement;
   const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : "conversation");
   const [query, setQuery] = createSignal("");
@@ -27,11 +28,14 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const [updated, setUpdated] = createSignal(false);
   const [retry, setRetry] = createSignal(0);
   const [overview, setOverview] = createSignal(true);
+  const [details, setDetails] = createSignal<HTMLDetailsElement>();
   let atBottom = false;
   let initial = true;
   let lastKey = "";
   let jumpBottom = false;
   let requestSequence = 0;
+
+  createEffect(() => details(), element => element && dismissableDetails(element));
 
   createEffect(() => props.anchor, value => {
     if (value) { setKind("all"); setOffset(0); }
@@ -39,7 +43,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
 
   createEffect(() => query(), value => {
     if (value === untrack(search)) return;
-    const timer = setTimeout(() => { setSearch(value); setOffset(0); }, 180);
+    const timer = setTimeout(() => { setSearch(value); setOffset(0); setUpdated(false); }, 180);
     return () => clearTimeout(timer);
   });
 
@@ -57,7 +61,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     setError("");
     void request<ReplayPage>(`/api/sessions/${state.id}/events?${params}`, { signal: controller.signal }).then(next => {
       if (controller.signal.aborted || sequence !== requestSequence) return;
-      const grew = Boolean(page() && next.total > page()!.total);
+      const grew = !navigation && !initial && Boolean(page()) && next.total > page()!.total;
       const follow = !navigation && !initial && atBottom && (page()!.offset + page()!.limit >= page()!.total);
       const existing = new Map(page()?.items.map(event => [event.id, event]) || []);
       next.items = next.items.map(event => {
@@ -92,7 +96,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     try { await request(`/api/sessions/${props.id}/bookmark`, { method: "PUT", body: JSON.stringify({ bookmarked: !props.session.bookmarked }) }); props.changed(); }
     catch (error) { props.notify(error instanceof Error ? error.message : "Could not update bookmark"); }
   };
-  const changeKind = (value: string) => { setKind(value); setOffset(0); props.navigate({ event: null }, true); };
+  const changeKind = (value: string) => { setKind(value); setOffset(0); setUpdated(false); props.navigate({ event: null }, true); };
   const latest = () => {
     const target = Math.max(0, (page()?.total || 0) - 60);
     jumpBottom = true;
@@ -109,18 +113,13 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     <header class="replay-panel-heading">
       <div class="replay-title-row">
         <Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <h2 title={session().title}>{session().title}</h2>}</Show>
-        <button class="icon-button replay-close" aria-label="Close replay" title="Back to session library" onClick={() => props.navigate({ session: null, event: null })}><Icon name="close" size={18} /></button>
+        <button class="icon-button replay-close" aria-label="Close replay" title="Back to session library" onClick={props.close}><Icon name="close" size={18} /></button>
       </div>
       <div class="replay-actions">
         <Show when={props.session}>{session => <>
           <button class="primary-button small" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button>
           <SessionActions session={session()} onBookmark={() => void bookmark()} />
-          <details class="session-details" onKeyDown={event => {
-            if (event.key !== "Escape") return;
-            event.stopPropagation();
-            event.currentTarget.open = false;
-            event.currentTarget.querySelector("summary")?.focus();
-          }}>
+          <details class="session-details" ref={setDetails}>
             <summary class="text-button"><span class="session-actions-label">Session actions</span><span class="session-details-label">Session details</span><Icon name="down" size={14} /></summary>
             <div class="session-details-menu" role="region" aria-label="Session details">
               <SessionActions session={session()} onBookmark={() => void bookmark()} />

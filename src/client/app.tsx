@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
 import type { Catalog, Session, SessionPage } from "../shared/types";
 import { isAbort, request } from "./lib/api";
+import { dismissable, rememberFocus } from "./lib/dismissable";
 import { createLocation } from "./lib/location";
 import { Sidebar } from "./components/sidebar";
 import { Library } from "./components/library";
@@ -8,6 +9,17 @@ import { LibraryDivider } from "./components/library-divider";
 import { ReplayPanel } from "./components/replay-panel";
 import { WorkspaceDialog } from "./components/workspace-dialog";
 import { Icon } from "./components/icon";
+
+function ShortcutPopover(props: { close: () => void }) {
+  let panel!: HTMLDivElement;
+  const restore = rememberFocus();
+  onSettled(() => {
+    panel.querySelector("button")?.focus();
+    const release = dismissable(panel, props.close);
+    return () => { release(); restore(panel); };
+  });
+  return <div class="shortcut-popover" role="dialog" aria-label="Keyboard shortcuts" ref={panel}><div><h3>Move a little faster.</h3><button class="icon-button tiny" aria-label="Close shortcuts" onClick={props.close}><Icon name="close" size={15} /></button></div><p><span>Search every recording</span><kbd>Ctrl / ⌘ K</kbd></p><p><span>Quick search</span><kbd>/</kbd></p><p><span>Move through recordings</span><kbd>↑ ↓</kbd></p><p><span>Open focused recording</span><kbd>Enter</kbd></p><p><span>Clear search / close overlay</span><kbd>Esc</kbd></p><p><span>Show these shortcuts</span><kbd>?</kbd></p></div>;
+}
 
 export function App() {
   const { params, navigate } = createLocation();
@@ -28,6 +40,14 @@ export function App() {
   const [libraryWidth, setLibraryWidth] = createSignal<number>();
   let searchInput!: HTMLInputElement;
   const changed = () => setRevision(value => value + 1);
+  const closeReplay = () => {
+    const id = params().get("session");
+    navigate({ session: null, event: null });
+    requestAnimationFrame(() => {
+      const row = id ? document.querySelector<HTMLElement>(`.session-row[data-session-id="${CSS.escape(id)}"]`) : null;
+      (row?.getClientRects().length ? row : searchInput).focus();
+    });
+  };
   const listQuery = createMemo(() => {
     const next = new URLSearchParams(params()); next.delete("session"); next.delete("event"); return next.toString();
   });
@@ -105,7 +125,10 @@ export function App() {
         if (matchMedia("(max-width: 900px)").matches) navigate({ session: null, event: null });
         requestAnimationFrame(() => { searchInput.focus(); searchInput.select(); });
       }
-      if (event.key === "Escape" && !editing && !groupOpen()) { setHelp(false); setNavOpen(false); }
+      if (event.key === "Escape" && !editing && !groupOpen()) {
+        if (navOpen()) setNavOpen(false);
+        else if (params().get("session")) closeReplay();
+      }
       if (event.key === "?" && !editing) setHelp(value => !value);
     };
     window.addEventListener("keydown", keyboard);
@@ -126,11 +149,11 @@ export function App() {
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>
       <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} group={() => setGroupOpen(true)} />
         <Show when={params().get("session") && !libraryCollapsed()}><LibraryDivider resize={setLibraryWidth} /></Show>
-        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} navigate={navigate} changed={changed} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} />}</Show>
+        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} navigate={navigate} changed={changed} close={closeReplay} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} />}</Show>
       </div>
     </main>
     <Show when={groupOpen() && catalog()}><WorkspaceDialog catalog={catalog()!} onClose={() => setGroupOpen(false)} onSaved={changed} /></Show>
-    <Show when={help()}><div class="shortcut-popover" role="dialog" aria-label="Keyboard shortcuts"><div><h3>Move a little faster.</h3><button class="icon-button tiny" aria-label="Close shortcuts" onClick={() => setHelp(false)}><Icon name="close" size={15} /></button></div><p><span>Search every recording</span><kbd>Ctrl / ⌘ K</kbd></p><p><span>Quick search</span><kbd>/</kbd></p><p><span>Move through recordings</span><kbd>↑ ↓</kbd></p><p><span>Open focused recording</span><kbd>Enter</kbd></p><p><span>Clear search / close overlay</span><kbd>Esc</kbd></p><p><span>Show these shortcuts</span><kbd>?</kbd></p></div></Show>
+    <Show when={help()}><ShortcutPopover close={() => setHelp(false)} /></Show>
     <Show when={toast()}><div class="toast" role="status"><Icon name="check" size={16} />{toast()}</div></Show>
   </div>;
 }

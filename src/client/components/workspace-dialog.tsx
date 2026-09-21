@@ -1,17 +1,19 @@
 import { createSignal, For, onSettled, Show } from "solid-js";
 import type { Catalog, WorkspaceGroup } from "../../shared/types";
 import { request } from "../lib/api";
+import { rememberFocus } from "../lib/dismissable";
 import { Icon } from "./icon";
 
 export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; onSaved: () => void }) {
   let dialog!: HTMLDialogElement;
+  const restore = rememberFocus();
   const [name, setName] = createSignal("");
   const [paths, setPaths] = createSignal<string[]>([]);
   const [editing, setEditing] = createSignal("");
   const [error, setError] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const sources = () => props.catalog.workspaces.flatMap(workspace => workspace.paths.map(path => ({ path, group: workspace.grouped ? workspace.id : "" }))).sort((left, right) => left.path.localeCompare(right.path));
-  onSettled(() => { dialog.showModal(); });
+  onSettled(() => { dialog.showModal(); return () => restore(dialog); });
   const reset = () => { setName(""); setPaths([]); setEditing(""); setError(""); };
   const edit = (group: WorkspaceGroup) => { setName(group.name); setPaths([...group.paths]); setEditing(group.id); setError(""); };
   const save = async (event: SubmitEvent) => {
@@ -31,7 +33,7 @@ export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; 
     } catch (error) { setError(String(error instanceof Error ? error.message : error)); }
     finally { setSaving(false); }
   };
-  return <dialog ref={dialog} class="workspace-dialog" onClose={props.onClose} onCancel={props.onClose} aria-label="Group workspaces">
+  return <dialog ref={dialog} class="workspace-dialog" onClose={props.onClose} aria-label="Group workspaces">
     <div class="dialog-heading"><span class="dialog-symbol"><Icon name="merge" size={22} /></span><button class="icon-button" aria-label="Close workspace settings" onClick={() => dialog.close()}><Icon name="close" /></button></div>
     <p class="eyebrow">ONE PROJECT. EVERY PERSPECTIVE.</p>
     <h2 id="workspace-title">Bring your workspaces together.</h2>

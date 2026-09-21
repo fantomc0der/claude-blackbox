@@ -1,5 +1,6 @@
-import { For, Show } from "solid-js";
+import { For, onSettled, Show } from "solid-js";
 import type { Catalog, Session, SessionPage } from "../../shared/types";
+import { dismissableDetails } from "../lib/dismissable";
 import { compact, dateTime, modelName, searchHighlight, timeAgo } from "../lib/format";
 import type { Navigate } from "../lib/location";
 import { Icon } from "./icon";
@@ -12,6 +13,8 @@ interface LibraryProps {
 }
 
 export function Library(props: LibraryProps) {
+  let filters!: HTMLDetailsElement;
+  onSettled(() => dismissableDetails(filters));
   const selected = () => props.params.get("session");
   const workspace = () => props.catalog?.workspaces.find(workspace => workspace.id === props.params.get("workspace"));
   const filter = (values: Record<string, string | null>) => props.navigate({ offset: null, ...values });
@@ -41,7 +44,7 @@ export function Library(props: LibraryProps) {
         <button class={['filter-tab', { active: !props.params.get("edits") && !props.params.get("errors") }]} onClick={() => filter({ edits: null, errors: null })}>All sessions</button>
         <button class={['filter-tab', { active: props.params.get("edits") === "1" }]} onClick={() => filter({ edits: props.params.get("edits") ? null : "1" })}><Icon name="edit" size={14} />With edits</button>
         <button class={['filter-tab', { active: props.params.get("errors") === "1" }]} onClick={() => filter({ errors: props.params.get("errors") ? null : "1" })}><Icon name="alert" size={14} />With errors</button>
-      </div><details class="filter-popover"><summary aria-label="Filter recordings"><Icon name="sliders" size={16} /><span>Filters</span><Show when={chips().length}><span class="filter-count">{chips().length}</span></Show></summary><div class="filter-menu">
+      </div><details class="filter-popover" ref={filters}><summary aria-label="Filter recordings"><Icon name="sliders" size={16} /><span>Filters</span><Show when={chips().length}><span class="filter-count">{chips().length}</span></Show></summary><div class="filter-menu">
         <h3>Refine your recordings</h3>
         <label>Model<select value={props.params.get("model") || ""} onChange={event => filter({ model: event.currentTarget.value || null })}><option value="">All models</option><For each={props.catalog?.models || []}>{model => <option value={model}>{modelName(model)}</option>}</For></select></label>
         <label>Recorded<select value={props.params.get("days") || ""} onChange={event => filter({ days: event.currentTarget.value || null })}><option value="">Any time</option><option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label>
@@ -67,7 +70,7 @@ export function Library(props: LibraryProps) {
     }}>
       <Show when={props.page} fallback={<div class="skeleton-list"><For each={[1, 2, 3, 4, 5]}>{() => <div class="skeleton-row" />}</For></div>}>
         <For each={props.page?.items || []} fallback={<div class="empty-state"><span class="empty-icon"><Icon name={props.catalog?.sessions ? "search" : "box"} size={32} /></span><h2>{props.catalog?.sessions ? "No trails match this search." : "Your next session starts the story."}</h2><p>{props.catalog?.sessions ? "Try a different phrase or give your filters a little more room." : "Use Claude Code in a project, then come back. Your recordings will appear here automatically."}</p><Show when={props.catalog?.sessions} fallback={<code class="empty-source">{props.catalog?.dataDir}</code>}><button class="secondary-button" onClick={clear}>Clear search & filters</button></Show></div>}>
-          {session => <button class={['session-row', { selected: selected() === session.id }]} aria-current={selected() === session.id ? "true" : undefined} onClick={() => openSession(session)}>
+          {session => <button class={['session-row', { selected: selected() === session.id }]} data-session-id={session.id} aria-current={selected() === session.id ? "true" : undefined} onClick={() => openSession(session)}>
             <span class={['session-symbol', { 'has-error': session.errorCount > 0 }]}><Icon name={session.isAgent ? "branch" : session.hasEdits ? "edit" : "message"} size={18} /></span>
             <span class="session-main"><span class="session-title"><Highlight text={session.title} term={searchHighlight(props.query)} /><Show when={session.bookmarked}><Icon name="bookmark" size={13} /></Show></span><Show when={session.snippet} fallback={<span class="session-path" title={session.cwd}><Icon name="folder" size={12} />{session.workspace}<span class="meta-dot">·</span><span class="row-branch"><Icon name="branch" size={12} />{session.branch || "No branch recorded"}</span></span>}><span class="session-snippet"><Highlight text={session.snippet!} term={searchHighlight(props.query)} /></span></Show></span>
             <span class="session-model" title={session.model}><span class="model-dot" />{modelName(session.model)}</span>

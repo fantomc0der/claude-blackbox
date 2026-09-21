@@ -66,7 +66,7 @@ Verified viewport sizes include **1280×720**, **1366×768**, **1920×1080**, **
 | `Ctrl/⌘ K` or `/` | Focus full-record search |
 | Arrow keys | Move between focused recordings, including the desktop grid |
 | `Enter` | Open the focused recording |
-| `Esc` | Clear the focused search or dismiss navigation/help |
+| `Esc` | Clear the focused search, dismiss navigation/help, or close the replay |
 | `?` | Show shortcuts |
 
 ## Demo
