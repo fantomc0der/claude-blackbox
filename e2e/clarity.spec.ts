@@ -7,8 +7,8 @@ test("replay counts describe the cards on screen and the records behind them", a
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   const counts = page.locator(".replay-find > span");
   const cards = page.locator(".replay-event");
-  await expect(counts).toHaveText(/^\d+ shown · \d+ records$/);
-  const [shown, records] = (await counts.textContent())!.match(/\d+/g)!.map(Number);
+  await expect(counts).toHaveText(/^\d+ shown · \d+\/\d+ records$/);
+  const [shown, records, total] = (await counts.textContent())!.match(/\d+/g)!.map(Number);
   expect(shown).toBeLessThan(records);
   await expect(cards).toHaveCount(shown);
   await expect(page.locator(".replay-footer")).toContainText(`of ${records} records`);
@@ -16,6 +16,7 @@ test("replay counts describe the cards on screen and the records behind them", a
   await expect(counts).toHaveText(/^\d+ records$/);
   const everything = Number((await counts.textContent())!.match(/\d+/)![0]);
   expect(everything).toBeGreaterThan(records);
+  expect(everything).toBe(total);
   await expect(cards).toHaveCount(everything);
   await expect(page.locator(".replay-footer")).toContainText(`1–${everything} of ${everything} records`);
 });

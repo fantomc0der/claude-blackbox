@@ -239,7 +239,7 @@ describe("indexed usage", () => {
     const before = await setup.open();
     const expected = before.list(new URLSearchParams());
     before.bookmark(expected.items[0].id, true);
-    before.db.exec("ALTER TABLE usage_records DROP COLUMN model; ALTER TABLE usage_records DROP COLUMN effort; PRAGMA user_version=3;");
+    before.db.exec("DROP INDEX usage_efforts; ALTER TABLE usage_records DROP COLUMN model; ALTER TABLE usage_records DROP COLUMN effort; PRAGMA user_version=3;");
     await before.close();
     const after = await setup.open();
     const page = after.list(new URLSearchParams());

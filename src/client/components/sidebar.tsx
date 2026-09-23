@@ -35,15 +35,16 @@ export function Sidebar(props: { catalog: Catalog | null; params: URLSearchParam
     props.navigate({ workspace: null, cwd: null, bookmarked: null, days: null, session: null, event: null, offset: null, ...values });
     props.close();
   };
+  const reset = () => select({ ...Object.fromEntries(["q", "errors", "edits", "model", "effort", "effortMissing", "tool", "branch", "after", "before", "agents", "active", "pricing", "minCost", "maxCost", "minTokens", "maxTokens", "minRecords", "maxRecords"].map(key => [key, null])) });
   const all = () => !props.params.get("workspace") && !props.params.get("bookmarked") && !props.params.get("days");
   return <aside class="sidebar" aria-label="Workspace navigation" inert={props.hidden}>
-    <a class="brand" href="/" onClick={event => { event.preventDefault(); select({ q: null, errors: null, edits: null, model: null, tool: null, branch: null, after: null, before: null, agents: null, active: null }); }}><span class="brand-mark"><Icon name="box" size={23} /></span><span>blackbox<small>FOR CLAUDE CODE</small></span></a>
+    <a class="brand" href="/" onClick={event => { event.preventDefault(); reset(); }}><span class="brand-mark"><Icon name="box" size={23} /></span><span>blackbox<small>FOR CLAUDE CODE</small></span></a>
     <button class="sidebar-mobile-close icon-button" onClick={props.close} aria-label="Close navigation"><Icon name="close" /></button>
     <div class="nav-section-label">FLIGHT RECORDER</div>
     <nav class="primary-nav" aria-label="Recordings">
       <button class={['nav-item', { selected: all() }]} aria-current={all() ? "page" : undefined} onClick={() => select({})}><Icon name="library" /><span>All sessions</span><span class="nav-count">{compact(props.catalog?.sessions || 0)}</span></button>
       <button class={['nav-item', { selected: props.params.get("bookmarked") === "1" }]} onClick={() => select({ bookmarked: "1" })}><Icon name="bookmark" /><span>Bookmarked</span><Show when={props.catalog?.bookmarked}><span class="nav-count">{props.catalog?.bookmarked}</span></Show></button>
-      <button class={['nav-item', { selected: props.params.get("days") === "7" && !props.params.get("workspace") }]} onClick={() => select({ days: "7" })}><Icon name="clock" /><span>Last 7 days</span></button>
+      <button class={['nav-item', { selected: props.params.get("days") === "7" && !props.params.get("workspace") }]} onClick={() => select({ days: "7", after: null, before: null })}><Icon name="clock" /><span>Last 7 days</span></button>
     </nav>
     <div class="nav-section-label workspace-label"><span>WORKSPACES</span><button class="text-button workspace-group" title="Group workspaces" aria-label="Group workspaces" onClick={props.group}><Icon name="merge" size={14} /><span>Group</span></button></div>
     <div class="workspace-controls">

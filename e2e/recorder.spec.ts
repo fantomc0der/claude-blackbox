@@ -31,7 +31,7 @@ test("structured tools, bookmarks, resume clipboard and JSONL export work", asyn
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.getByRole("heading", { name: DEMO_HERO_TITLE })).toBeVisible();
   await page.getByRole("button", { name: "Copy resume command" }).click();
-  await expect(page.getByRole("status")).toContainText("Resume command copied");
+  await expect(page.locator(".toast")).toContainText("Resume command copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("cd -- '/synthetic/workspaces/orbit-auth' && claude --resume");
   await expect(page.locator(".session-details > summary")).toHaveText("Session details", { useInnerText: true });
   await expect(page.locator(".session-details-menu")).toBeHidden();
@@ -159,13 +159,15 @@ test("workspace groups persist and retain the original source filter", async ({ 
 });
 
 test("session and event pagination remain bounded and navigable", async ({ page }) => {
+  const listing = await (await page.request.get("/api/sessions")).json();
+  const secondPageCount = Math.min(listing.limit, listing.total - listing.limit);
   await page.goto("/");
   await expect(page.locator(".session-row")).toHaveCount(50);
   await page.getByRole("button", { name: "Next recordings" }).click();
   await expect(page).toHaveURL(/offset=50/);
-  await expect(page.locator(".session-row")).toHaveCount(26);
+  await expect(page.locator(".session-row")).toHaveCount(secondPageCount);
   await page.reload();
-  await expect(page.locator(".session-row")).toHaveCount(26);
+  await expect(page.locator(".session-row")).toHaveCount(secondPageCount);
   await page.waitForTimeout(300);
   await expect(page).toHaveURL(/offset=50/);
   await page.getByRole("button", { name: "Previous recordings" }).click();
@@ -351,7 +353,8 @@ test("event permalinks and open tool disclosures survive metadata refresh", asyn
   await page.goto(href!);
   await expect(page.locator(".replay-event").first()).toHaveAttribute("data-event-id", eventId!);
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("retryBudget");
-  await expect(page.locator(".tool-code mark")).toHaveText("retryBudget");
+  await expect(page).toHaveURL(/replayQ=retryBudget/);
+  await expect(page.locator(".tool-code mark").first()).toHaveText("retryBudget");
 });
 
 test("mobile navigation removes hidden controls from keyboard focus", async ({ page }) => {
@@ -553,7 +556,7 @@ test("session details preserve context and keyboard access without shifting the 
   await expect(details).toContainText("3 messages · 7 tools");
   const copyPath = details.getByRole("button", { name: /synthetic\/workspaces\/orbit-auth/ });
   await copyPath.click();
-  await expect(page.getByRole("status")).toContainText("Source path copied");
+  await expect(page.locator(".toast")).toContainText("Source path copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("/synthetic/workspaces/orbit-auth");
   expect(await page.locator(".replay-scroll").boundingBox()).toEqual(transcript);
   await page.keyboard.press("Escape");

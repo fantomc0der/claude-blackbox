@@ -1,5 +1,6 @@
 import type { UsageSummary } from "../shared/types";
 import { object, string } from "./normalize";
+import { isFacetValue } from "./facets";
 
 interface Price { input: number; output: number; cacheRead?: number; longContext?: boolean; fast?: number }
 
@@ -46,6 +47,11 @@ function count(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+export function normalizeModel(model: string): string {
+  return model.replace(/\[[^\]]*\]$/, "").replace(/^(?:(?:us|eu|apac|global)\.)?anthropic\./, "")
+    .replace(/-v\d+:\d+$/, "").replace(/[-@]\d{8}$/, "").replace(/-latest$/, "").replace(/^(claude-(?:sonnet|opus)-4)-0$/, "$1");
+}
+
 export function readUsage(raw: Record<string, unknown>, sessionId: string, eventId: string): UsageRecord | null {
   const message = object(raw.message);
   if (raw.type !== "assistant" || message.model === "<synthetic>") return null;
@@ -61,11 +67,10 @@ export function readUsage(raw: Record<string, unknown>, sessionId: string, event
   const requestId = string(raw.requestId) || string(raw.request_id);
   const key = messageId ? JSON.stringify(["message", messageId, requestId || string(raw.sessionId) || sessionId])
     : JSON.stringify(["event", string(raw.sessionId) || sessionId, string(raw.uuid) || eventId]);
-  const model = string(message.model).replace(/\[[^\]]*\]$/, "").replace(/^(?:(?:us|eu|apac|global)\.)?anthropic\./, "")
-    .replace(/-v\d+:\d+$/, "").replace(/[-@]\d{8}$/, "").replace(/-latest$/, "").replace(/^(claude-(?:sonnet|opus)-4)-0$/, "$1");
+  const model = normalizeModel(string(message.model));
   const price = Object.hasOwn(prices, model) ? prices[model] : undefined;
   const effort = [message.effort, raw.effort, object(message.output_config).effort, object(raw.output_config).effort]
-    .map(value => string(value).trim().toLowerCase()).find(value => value.length > 0 && value.length <= 80) || null;
+    .map(value => string(value).trim().toLowerCase()).find(value => isFacetValue(value, 80)) || null;
   let cost = recordedCost;
   if (cost === null && price) {
     const fast = usage.speed === "fast" || raw.speed === "fast";
