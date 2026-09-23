@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "claude-blackbox",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.fantomc0der.claude-blackbox",
   "build": {
     "frontendDist": "../dist",
