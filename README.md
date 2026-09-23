@@ -43,7 +43,11 @@ bun run desktop
 bun run desktop:build
 ```
 
-Desktop bundles include the Bun runtime, so they are substantially larger than a typical Tauri application. The backend still listens on a dynamically selected loopback TCP port; the existing hostname, origin, request-shape, and cross-site checks remain active. Closing the desktop window stops the sidecar process.
+Desktop bundles include the Bun runtime, so they are substantially larger than a typical Tauri application. The backend still listens on a dynamically selected loopback TCP port; the existing hostname, origin, request-shape, and cross-site checks remain active.
+
+While the desktop app is running, claude-blackbox also lives in the system tray. Closing the window keeps the recorder available in the tray by default; left-click the tray icon to reopen it, or right-click for updates, release downloads, settings, and a full quit. Under **Settings**, clear **Keep running when window is closed** if the window close button should exit the app instead.
+
+Install the first release that includes the tray updater manually. Earlier builds do not yet know how to check for updates; after that one-time upgrade, future signed releases can be installed from the tray menu.
 
 ## Explore
 
@@ -157,7 +161,9 @@ bun run release --major
 
 The command uses SemVer to increment the current synchronized version. PowerShell-style aliases `-BumpPatch`, `-BumpMinor`, and `-BumpMajor` are also accepted. Use `bun run release 1.0.0` for an exact SemVer target, including prereleases such as `1.0.0-rc.1`, or add `--dry-run` to preview the selected version.
 
-It updates the package, Tauri, and Cargo versions; runs the application and Rust checks; commits and tags the version; pushes `main` and the tag; creates a draft GitHub release with generated notes; dispatches `.github/workflows/desktop-release.yml`; waits for Windows, Linux, and macOS bundles; and publishes the release only after every desktop build succeeds. Versions containing a hyphen are published as prereleases. macOS CI builds use ad-hoc signing; configure normal platform signing credentials before presenting the artifacts as trusted production installers.
+It updates the package, Tauri, and Cargo versions; runs the application and Rust checks; commits and tags the version; pushes `main` and the tag; creates a draft GitHub release with generated notes; dispatches `.github/workflows/desktop-release.yml`; waits for Windows, Linux, and macOS bundles; and publishes the release only after every desktop build succeeds. The release workflow signs updater bundles and publishes `latest.json`, which powers **Check for updates…** in the tray menu. Versions containing a hyphen are published as prereleases. macOS CI builds use ad-hoc signing; configure normal platform signing credentials before presenting the artifacts as trusted production installers.
+
+Updater signing depends on the repository Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep the matching private key backed up securely: changing or losing it prevents installed copies from trusting future updates.
 
 The workflow's manual **Version tag** input is primarily a retry mechanism. Enter an existing tag such as `v0.2.0` only after a draft GitHub release for that tag already exists. The workflow builds and uploads assets but deliberately leaves the release as a draft; after every matrix job succeeds, publish it with `gh release edit v0.2.0 --draft=false --latest`. Normal releases should use `bun run release`, which performs and watches these steps automatically.
 
