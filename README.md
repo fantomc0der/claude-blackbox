@@ -45,7 +45,7 @@ bun run desktop:build
 
 Desktop bundles include the Bun runtime, so they are substantially larger than a typical Tauri application. The backend still listens on a dynamically selected loopback TCP port; the existing hostname, origin, request-shape, and cross-site checks remain active.
 
-While the desktop app is running, claude-blackbox also lives in the system tray. Closing the window keeps the recorder available in the tray by default; left-click the tray icon to reopen it, or right-click for updates, release downloads, settings, and a full quit. Under **Settings**, clear **Keep running when window is closed** if the window close button should exit the app instead.
+While the desktop app is running, claude-blackbox also lives in the system tray. Closing the window keeps the session archive available in the tray by default; left-click the tray icon to reopen it, or right-click for updates, release downloads, settings, and a full quit. Under **Settings**, clear **Keep running when window is closed** if the window close button should exit the app instead.
 
 Install the first release that includes the tray updater manually. Earlier builds do not yet know how to check for updates; after that one-time upgrade, future signed releases can be installed from the tray menu.
 

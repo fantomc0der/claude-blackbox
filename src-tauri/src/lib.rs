@@ -110,9 +110,10 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building claude-blackbox")
-        .run(|app, event| {
-            if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
-                stop_sidecar(app);
-            }
+        .run(|app, event| match event {
+            RunEvent::Exit | RunEvent::ExitRequested { .. } => stop_sidecar(app),
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => desktop::show_main_window(app),
+            _ => {}
         });
 }

@@ -2,6 +2,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
@@ -18,6 +20,7 @@ const MENU_UPDATE: &str = "tray-update";
 const MENU_RELEASES: &str = "tray-releases";
 const MENU_CLOSE_TO_TRAY: &str = "tray-close-to-tray";
 const MENU_QUIT: &str = "tray-quit";
+const MENU_UPDATE_LABEL: &str = "Check for updates…";
 const RELEASES_URL: &str = "https://github.com/fantomc0der/claude-blackbox/releases/latest";
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -47,6 +50,10 @@ impl DesktopState {
 
     pub fn mark_quitting(&self) {
         self.quitting.store(true, Ordering::Relaxed);
+    }
+
+    fn disable_close_to_tray(&self) {
+        self.close_to_tray.store(false, Ordering::Relaxed);
     }
 
     fn set_close_to_tray(&self, close_to_tray: bool) -> std::io::Result<()> {
@@ -84,16 +91,34 @@ pub fn mark_quitting(app: &AppHandle) {
     app.state::<DesktopState>().mark_quitting();
 }
 
+fn show_temporary_update_status(update_item: MenuItem<tauri::Wry>, status: impl AsRef<str>) {
+    let _ = update_item.set_text(status);
+    thread::spawn(move || {
+        thread::sleep(Duration::from_secs(5));
+        let _ = update_item.set_text(MENU_UPDATE_LABEL);
+        let _ = update_item.set_enabled(true);
+    });
+}
+
 fn check_for_updates(app: AppHandle, update_item: MenuItem<tauri::Wry>) {
     let _ = update_item.set_enabled(false);
     let _ = update_item.set_text("Checking for updates…");
 
     tauri::async_runtime::spawn(async move {
         let result = async {
-            let Some(update) = app.updater()?.check().await? else {
-                let _ =
-                    update_item.set_text(format!("Up to date · v{}", app.package_info().version));
-                let _ = update_item.set_enabled(true);
+            let before_exit_app = app.clone();
+            let updater = app
+                .updater_builder()
+                .on_before_exit(move || {
+                    crate::stop_sidecar(&before_exit_app);
+                    before_exit_app.cleanup_before_exit();
+                })
+                .build()?;
+            let Some(update) = updater.check().await? else {
+                show_temporary_update_status(
+                    update_item.clone(),
+                    format!("Up to date · v{}", app.package_info().version),
+                );
                 return Ok::<(), tauri_plugin_updater::Error>(());
             };
 
@@ -128,8 +153,7 @@ fn check_for_updates(app: AppHandle, update_item: MenuItem<tauri::Wry>) {
 
         if let Err(error) = result {
             eprintln!("update failed: {error}");
-            let _ = update_item.set_text("Update failed · try again");
-            let _ = update_item.set_enabled(true);
+            show_temporary_update_status(update_item, "Update failed · try again");
         }
     });
 }
@@ -137,15 +161,24 @@ fn check_for_updates(app: AppHandle, update_item: MenuItem<tauri::Wry>) {
 pub fn setup(app: &mut App) -> tauri::Result<()> {
     let preferences_path = app.path().app_config_dir()?.join("desktop.json");
     let preferences = load_preferences(&preferences_path);
+    let close_to_tray = preferences.close_to_tray;
     app.manage(DesktopState {
-        close_to_tray: AtomicBool::new(preferences.close_to_tray),
+        close_to_tray: AtomicBool::new(close_to_tray),
         quitting: AtomicBool::new(false),
         preferences_path,
     });
 
+    if let Err(error) = setup_tray(app, close_to_tray) {
+        app.state::<DesktopState>().disable_close_to_tray();
+        eprintln!("system tray unavailable; window close will exit the app: {error}");
+    }
+
+    Ok(())
+}
+
+fn setup_tray(app: &mut App, close_to_tray: bool) -> tauri::Result<()> {
     let open_item = MenuItem::with_id(app, MENU_OPEN, "Open claude-blackbox", true, None::<&str>)?;
-    let update_item =
-        MenuItem::with_id(app, MENU_UPDATE, "Check for updates…", true, None::<&str>)?;
+    let update_item = MenuItem::with_id(app, MENU_UPDATE, MENU_UPDATE_LABEL, true, None::<&str>)?;
     let releases_item = MenuItem::with_id(
         app,
         MENU_RELEASES,
@@ -158,7 +191,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
         MENU_CLOSE_TO_TRAY,
         "Keep running when window is closed",
         true,
-        preferences.close_to_tray,
+        close_to_tray,
         None::<&str>,
     )?;
     let settings_menu = Submenu::with_items(app, "Settings", true, &[&close_to_tray_item])?;
@@ -231,6 +264,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::DesktopPreferences;
+    use serde_json::Value;
 
     #[test]
     fn close_to_tray_is_enabled_by_default() {
@@ -241,5 +275,24 @@ mod tests {
     fn missing_fields_use_safe_defaults() {
         let preferences: DesktopPreferences = serde_json::from_str("{}").unwrap();
         assert!(preferences.close_to_tray);
+    }
+
+    #[test]
+    fn updater_configuration_stays_wired() {
+        let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            config.pointer("/bundle/createUpdaterArtifacts"),
+            Some(&Value::Bool(true))
+        );
+        assert!(config
+            .pointer("/plugins/updater/pubkey")
+            .and_then(Value::as_str)
+            .is_some_and(|pubkey| !pubkey.is_empty()));
+        assert_eq!(
+            config
+                .pointer("/plugins/updater/endpoints/0")
+                .and_then(Value::as_str),
+            Some("https://github.com/fantomc0der/claude-blackbox/releases/latest/download/latest.json")
+        );
     }
 }
