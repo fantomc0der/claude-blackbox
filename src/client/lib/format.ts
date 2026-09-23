@@ -1,4 +1,25 @@
-import type { Session } from "../../shared/types";
+import type { Session, UsageSummary } from "../../shared/types";
+
+export function dollars(value: number): string {
+  if (value > 0 && value < 0.01) return "<$0.01";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+}
+
+export function usageCost(usage: UsageSummary): string {
+  if (!usage.requests) return "Not recorded";
+  if (usage.unpricedRequests === usage.requests) return "Unavailable";
+  return dollars(usage.costUSD) + (usage.unpricedRequests ? "+" : "");
+}
+
+export function tokenCount(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+export function effortName(effort: string | null): string {
+  if (!effort) return "Not recorded";
+  const labels: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", auto: "Auto" };
+  return Object.hasOwn(labels, effort) ? labels[effort] : effort;
+}
 
 export function compact(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);

@@ -2,10 +2,11 @@ import { For, onSettled, Show } from "solid-js";
 import type { Catalog, Session, SessionPage } from "../../shared/types";
 import { anchoredMenu } from "../lib/anchor";
 import { dismissableDetails } from "../lib/dismissable";
-import { compact, dateTime, modelName, searchHighlight, timeAgo } from "../lib/format";
+import { compact, dateTime, modelName, searchHighlight, timeAgo, tokenCount, usageCost } from "../lib/format";
 import type { Navigate } from "../lib/location";
 import { Icon } from "./icon";
 import { Highlight } from "./highlight";
+import { UsagePanel } from "./usage-panel";
 
 interface LibraryProps {
   catalog: Catalog | null; page: SessionPage | null; pending: boolean; params: URLSearchParams;
@@ -39,6 +40,7 @@ export function Library(props: LibraryProps) {
       <div class="stat"><dt>Workspaces</dt><dd>{props.catalog?.workspaces.length || 0}</dd></div>
       <div class="stat"><dt>Tool calls</dt><dd>{compact(props.catalog?.tools || 0)}</dd></div>
     </dl></Show>
+    <UsagePanel page={props.page} pending={props.pending} filterDirectory={cwd => filter({ cwd })} />
     <div class="discovery-controls">
       <div class="search-box"><Icon name="search" size={19} /><input ref={props.searchRef} aria-label="Search all recordings" placeholder="Search prompts, code, tool output…" value={props.query} onInput={event => props.setQuery(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Escape") { props.setQuery(""); filter({ q: null }); }
@@ -77,7 +79,7 @@ export function Library(props: LibraryProps) {
             <span class="session-main"><span class="session-title"><Highlight text={session.title} term={searchHighlight(props.query)} /><Show when={session.bookmarked}><Icon name="bookmark" size={13} /></Show></span><Show when={session.snippet} fallback={<span class="session-path" title={session.cwd}><Icon name="folder" size={12} />{session.workspace}<span class="meta-dot">·</span><span class="row-branch"><Icon name="branch" size={12} />{session.branch || "No branch recorded"}</span></span>}><span class="session-snippet"><Highlight text={session.snippet!} term={searchHighlight(props.query)} /></span></Show></span>
             <span class="session-model" title={session.model}><span class="model-dot" />{modelName(session.model)}</span>
             <span class="session-activity"><span title="Messages"><Icon name="message" size={13} />{session.messageCount}</span><span title="Tool calls"><Icon name="terminal" size={13} />{session.toolCount}</span></span>
-            <span class="session-time" title={dateTime(session.updatedAt)}><Show when={session.active}><span class="live-dot" /></Show>{timeAgo(session.updatedAt)}</span><Icon name="chevron" size={15} class="row-chevron" />
+            <span class="session-trailing"><span class="session-time" title={dateTime(session.updatedAt)}><Show when={session.active}><span class="live-dot" /></Show>{timeAgo(session.updatedAt)}</span><Show when={session.usage.requests}><span class="session-usage" title={`${tokenCount(session.usage.totalTokens)} tokens · ${usageCost(session.usage)} estimated USD API cost${session.usage.unpricedRequests ? ' (incomplete)' : ''}`}><span class="session-usage-tokens">{compact(session.usage.totalTokens)} tokens · </span>{usageCost(session.usage)}<span class="session-cost-label"> est.</span></span></Show></span><Icon name="chevron" size={15} class="row-chevron" />
           </button>}
         </For>
       </Show>

@@ -3,7 +3,9 @@ import type { ContentBlock, EventPage, ReplayEvent, Session } from "../../shared
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
-import { dateTime, modelName, resumeCommand } from "../lib/format";
+import { compact, dateTime, modelName, resumeCommand, tokenCount, usageCost } from "../lib/format";
+import { TokenBreakdown, UsageNote } from "./usage-panel";
+import { anchoredMenu } from "../lib/anchor";
 import type { Navigate } from "../lib/location";
 import { Icon } from "./icon";
 import { EventCard } from "./event-card";
@@ -57,6 +59,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const [retry, setRetry] = createSignal(0);
   const [overview, setOverview] = createSignal(true);
   const [details, setDetails] = createSignal<HTMLDetailsElement>();
+  const [detailsMenu, setDetailsMenu] = createSignal<HTMLDivElement>();
   let atBottom = false;
   let initial = true;
   let lastKey = "";
@@ -64,6 +67,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   let requestSequence = 0;
 
   createEffect(() => details(), element => element && dismissableDetails(element));
+  createEffect(() => ({ details: details(), menu: detailsMenu() }), elements => elements.details && elements.menu && anchoredMenu(elements.details, elements.menu));
 
   createEffect(() => props.anchor, value => {
     if (value) { setKind("all"); setOffset(0); }
@@ -157,7 +161,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   return <section class={['replay-panel', { 'overview-hidden': !overview() }]} aria-label="Session replay">
     <header class="replay-panel-heading">
       <div class="replay-title-row">
-        <Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <h2 title={session().title}>{session().title}</h2>}</Show>
+        <div class="replay-heading-content"><Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <><h2 title={session().title}>{session().title}</h2><div class="replay-usage" aria-label="Session usage"><Show when={session().usage.requests} fallback="No token usage recorded"><span title={tokenCount(session().usage.totalTokens)}>{compact(session().usage.totalTokens)} tokens</span><span>{usageCost(session().usage)} estimated API cost</span><Show when={session().usage.unpricedRequests}><span class="usage-warning">Incomplete pricing</span></Show></Show></div></>}</Show></div>
         <button class="icon-button replay-close" aria-label="Close replay" title="Back to session library" onClick={props.close}><Icon name="close" size={18} /></button>
       </div>
       <div class="replay-actions">
@@ -166,7 +170,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
           <SessionActions session={session()} onBookmark={() => void bookmark()} />
           <details class="session-details" ref={setDetails}>
             <summary class="text-button"><span class="session-actions-label">Session actions</span><span class="session-details-label">Session details</span><Icon name="down" size={14} /></summary>
-            <div class="session-details-menu" role="region" aria-label="Session details">
+            <div class="session-details-menu" ref={setDetailsMenu} role="region" aria-label="Session details">
               <SessionActions session={session()} onBookmark={() => void bookmark()} />
               <h3>Session details</h3>
               <dl>
@@ -175,12 +179,15 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
                 <dt>Branch</dt><dd>{session().branch || "No branch"}</dd>
                 <dt>Model</dt><dd>{modelName(session().model)}</dd>
                 <dt>Activity</dt><dd>{session().messageCount} messages · {session().toolCount} tools</dd>
+                <dt>Est. API cost</dt><dd>{usageCost(session().usage)}</dd>
+                <dt>Total tokens</dt><dd>{session().usage.requests ? tokenCount(session().usage.totalTokens) : "Not recorded"}</dd>
                 <dt>Session ID</dt><dd><button class="text-button mono" onClick={() => void copy(session().sessionId, "Session ID")}>{session().sessionId}</button></dd>
                 <dt>First recorded</dt><dd>{dateTime(session().startedAt)}</dd>
                 <dt>Last recorded</dt><dd>{dateTime(session().updatedAt)}</dd>
                 <dt>Original transcript</dt><dd class="mono">{session().source}</dd>
                 <dt>Source type</dt><dd>{session().isAgent ? "Subagent recording" : "Main recording"}</dd>
               </dl>
+              <Show when={session().usage.requests}><TokenBreakdown usage={session().usage} /><UsageNote usage={session().usage} /></Show>
               <p>Read-only replay. Commands are only copied, never executed.</p>
             </div>
           </details>

@@ -31,6 +31,30 @@ export interface ReplayEvent {
   raw: Record<string, unknown>;
 }
 
+export interface UsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  requests: number;
+  unpricedRequests: number;
+  recordedCostRequests: number;
+}
+
+export interface DirectoryUsage {
+  cwd: string;
+  sessions: number;
+  usage: UsageSummary;
+}
+
+export interface ModelUsage {
+  model: string;
+  effort: string | null;
+  usage: UsageSummary;
+}
+
 export interface Session {
   id: string;
   sessionId: string;
@@ -51,6 +75,7 @@ export interface Session {
   active: boolean;
   isAgent: boolean;
   source: string;
+  usage: UsageSummary;
   snippet?: string;
   matchEventId?: string;
 }
@@ -89,6 +114,10 @@ export interface SessionPage {
   total: number;
   offset: number;
   limit: number;
+  usage: UsageSummary;
+  directories: DirectoryUsage[];
+  modelUsage: ModelUsage[];
+  sessionsWithUsage: number;
 }
 
 export interface EventPage {
