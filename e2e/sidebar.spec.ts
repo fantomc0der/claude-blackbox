@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import packageJson from "../package.json";
 import { expect, test } from "./harness";
 
 const measure = (page: Page) => page.locator(".sidebar").evaluate(sidebar => ({
@@ -6,6 +7,11 @@ const measure = (page: Page) => page.locator(".sidebar").evaluate(sidebar => ({
   scrolls: sidebar.scrollHeight > sidebar.clientHeight,
   footer: Math.round((sidebar.querySelector(".sidebar-footer") as HTMLElement).getBoundingClientRect().height),
 }));
+
+test("the sidebar displays the current application version", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".version-label > span")).toHaveText(`V${packageJson.version}`);
+});
 
 test("the workspace list keeps a usable height on laptop displays", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
