@@ -50,6 +50,7 @@ Desktop bundles include the Bun runtime, so they are substantially larger than a
 - **Full-record search:** prompts, assistant responses, reasoning, file paths, commands, tool inputs/results, and recorded metadata. Matching snippets link directly to their events.
 - **Combine filters:** workspace group, original folder, model, branch, date, tool, file changes, errors, recent activity, bookmarks, and subagent inclusion.
 - **Reversible workspace groups:** give worktrees or clones one shared history without moving files. Original working directories remain visible and filterable. Grouping is explicit—not guessed from similar folder names.
+- **Workspace navigation:** sort the sidebar by most sessions (default), highest estimated cost, or folder name A–Z. Name sorting uses natural order (for example, `project-2` before `project-10`) and a group's display name. The choice stays in this browser. Use the sidebar search button to filter workspace names or any original folder path without changing session-search filters.
 - **Usage and estimated cost:** see tokens and USD API-equivalent cost for each recording, source folder, or workspace group. Expand **Usage** for input/output/cache totals and a clickable folder breakdown. Totals cover every matching page and follow the existing filters.
 - **Structured replay:** Markdown, tables, code, bounded line diffs, terminal output, file reads/writes, checklists, questions, delegated tasks, reasoning, and errors. Tool results are linked across event boundaries. Unknown records stay available under **All events** and **Raw event**.
 - **Live updates:** the local index reconciles every 2.5 seconds. Reconnection refreshes the view. New events do not pull you away from older content; use **Jump to latest** when ready.
@@ -68,6 +69,8 @@ Transcript search uses Unicode word/phrase tokenization, not regular expressions
 All source recordings, including subagents, are included initially. Uncheck **Include subagent recordings** to focus on main sessions. **Conversation** hides internal metadata/context records; **All events** retains them. “Recently active” means a recording changed within two minutes, not that a Claude process has been independently verified as running.
 
 ### Usage And Cost
+
+The sidebar's **Highest cost (est.)** order covers every session and folder in each workspace, independently of the current date, search, bookmark, or other session filters. Copied requests count once within a workspace group; separate, ungrouped workspaces each show their own total. Missing or entirely unpriced usage sorts after known costs, including a recorded zero. Partial totals carry `+`; they rank by the known amount, not an assumed final cost.
 
 Expand **Usage** and choose **Model & effort** to compare estimated expenses within the selected workspace group or filtered recordings. Each row shows a model/effort pair, unique request count, tokens, and estimated USD, ordered by cost; the total reconciles with the group summary. **Folders** returns to the original-folder breakdown. A single-folder selection shows the model matrix directly.
 

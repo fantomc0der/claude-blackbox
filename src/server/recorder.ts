@@ -89,6 +89,7 @@ export class Recorder {
   private timer?: ReturnType<typeof setInterval>;
   private stopped = false;
   private scanWarnings = 0;
+  private workspaceUsage: Map<string, UsageSummary> | null = null;
 
   private constructor(dataDir: string, stateDir: string, db: Database) {
     this.dataDir = resolve(dataDir);
@@ -271,6 +272,7 @@ export class Recorder {
   }
 
   emit(ids: string[] = []): void {
+    this.workspaceUsage = null;
     for (const listener of this.listeners) listener(ids);
   }
 
@@ -451,9 +453,20 @@ export class Recorder {
       "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings FROM sessions").get()!;
     const sources = this.db.query<{ cwd: string; count: number }, []>("SELECT cwd,count(*) AS count FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
     const groups = this.groups();
-    const workspaces = groups.map(group => ({ ...group, grouped: true, count: sources.filter(row => group.paths.includes(row.cwd)).reduce((sum, row) => sum + row.count, 0) }));
+    if (!this.workspaceUsage) {
+      const usageRows = this.db.query<UsageSummary & { workspace: string }, []>(`WITH ranked AS (
+        SELECT usage.*, coalesce(gp.group_id,s.cwd) AS workspace,
+          row_number() OVER (PARTITION BY coalesce(gp.group_id,s.cwd),request_key ORDER BY sidechain,
+            input+output+cache_creation+cache_read DESC, recorded DESC, cost DESC, effort IS NULL, s.started, s.id) AS position
+        FROM usage_records usage JOIN sessions s ON s.id=usage.session_id
+        LEFT JOIN group_paths gp ON gp.path=s.cwd
+      ) SELECT workspace,${usageColumns} FROM ranked WHERE position=1 GROUP BY workspace`).all();
+      this.workspaceUsage = new Map(usageRows.map(({ workspace, ...usage }) => [workspace, usage]));
+    }
+    const usageByWorkspace = this.workspaceUsage;
+    const workspaces = groups.map(group => ({ ...group, grouped: true, count: sources.filter(row => group.paths.includes(row.cwd)).reduce((sum, row) => sum + row.count, 0), usage: usageByWorkspace.get(group.id) || emptyUsage() }));
     for (const source of sources) if (!groups.some(group => group.paths.includes(source.cwd))) {
-      workspaces.push({ id: source.cwd || "unknown", name: pathName(source.cwd), paths: [source.cwd], count: source.count, grouped: false });
+      workspaces.push({ id: source.cwd || "unknown", name: pathName(source.cwd), paths: [source.cwd], count: source.count, grouped: false, usage: usageByWorkspace.get(source.cwd) || emptyUsage() });
     }
     return {
       ...totals, warnings: totals.warnings + this.scanWarnings, groups, workspaces: workspaces.sort((left, right) => right.count - left.count),

@@ -86,6 +86,7 @@ export interface Workspace {
   paths: string[];
   count: number;
   grouped: boolean;
+  usage: UsageSummary;
 }
 
 export interface WorkspaceGroup {
