@@ -31,7 +31,7 @@ test("structured tools, bookmarks, resume clipboard and JSONL export work", asyn
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.getByRole("heading", { name: DEMO_HERO_TITLE })).toBeVisible();
   await page.getByRole("button", { name: "Copy resume command" }).click();
-  await expect(page.getByRole("status")).toContainText("Resume command copied");
+  await expect(page.locator(".toast")).toContainText("Resume command copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("cd -- '/synthetic/workspaces/orbit-auth' && claude --resume");
   await expect(page.locator(".session-details > summary")).toHaveText("Session details", { useInnerText: true });
   await expect(page.locator(".session-details-menu")).toBeHidden();
@@ -553,7 +553,7 @@ test("session details preserve context and keyboard access without shifting the 
   await expect(details).toContainText("3 messages · 7 tools");
   const copyPath = details.getByRole("button", { name: /synthetic\/workspaces\/orbit-auth/ });
   await copyPath.click();
-  await expect(page.getByRole("status")).toContainText("Source path copied");
+  await expect(page.locator(".toast")).toContainText("Source path copied");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("/synthetic/workspaces/orbit-auth");
   expect(await page.locator(".replay-scroll").boundingBox()).toEqual(transcript);
   await page.keyboard.press("Escape");

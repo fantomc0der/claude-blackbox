@@ -28,6 +28,12 @@
   .usage-matrix tbody th { color: var(--text); font-weight: 500; }
   .usage-matrix small { display: block; margin-top: 3px; font-size: var(--text-meta); font-weight: 400; }
   .usage-matrix th small, .usage-effort-missing { color: var(--muted); }
+  .usage-breakdown-sort { display: flex; justify-content: flex-end; margin: -2px 0 5px; }
+  .usage-breakdown-sort label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--text-meta); }
+  .usage-breakdown-sort select { min-height: 28px; padding-block: 3px; font-size: var(--text-meta); }
+  .usage-drilldown { display: block; min-height: 28px; padding: 2px 0; color: inherit; text-align: inherit; }
+  .usage-drilldown:hover { color: var(--accent); }
+  .usage-drilldown:focus-visible { outline-offset: 2px; }
   .usage-matrix tfoot th, .usage-matrix tfoot td { color: var(--text); font-weight: 550; border-bottom: 0; padding-top: 12px; }
   .usage-matrix tfoot td { text-align: right; }
   .usage-directories th:first-child, .usage-directories td:first-child { width: 60%; padding-left: 0; text-align: left; }
@@ -62,6 +68,9 @@
     .usage-panel > summary { min-height: 36px; padding-block: 7px; }
   }
   @media (max-width: 680px) {
+    .usage-breakdown-sort { justify-content: flex-start; }
+    .usage-breakdown-sort label { flex-wrap: wrap; }
+    .usage-breakdown-sort select, .usage-drilldown { min-height: 44px; }
     .usage-view-switch button { min-height: 44px; }
     .usage-matrix th, .usage-matrix td { padding-left: 8px; }
     .library .overview { margin-bottom: 2px; }

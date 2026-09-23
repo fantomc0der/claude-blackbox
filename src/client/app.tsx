@@ -3,6 +3,7 @@ import type { Catalog, Session, SessionPage } from "../shared/types";
 import { isAbort, request } from "./lib/api";
 import { dismissable, rememberFocus } from "./lib/dismissable";
 import { createLocation } from "./lib/location";
+import { replayKeys } from "./lib/replay-filters";
 import { Sidebar } from "./components/sidebar";
 import { Library } from "./components/library";
 import { LibraryDivider } from "./components/library-divider";
@@ -42,14 +43,14 @@ export function App() {
   const changed = () => setRevision(value => value + 1);
   const closeReplay = () => {
     const id = params().get("session");
-    navigate({ session: null, event: null });
+    navigate({ session: null, event: null, context: null, ...Object.fromEntries(replayKeys.map(key => [key, null])) });
     requestAnimationFrame(() => {
       const row = id ? document.querySelector<HTMLElement>(`.session-row[data-session-id="${CSS.escape(id)}"]`) : null;
       (row?.getClientRects().length ? row : searchInput).focus();
     });
   };
   const listQuery = createMemo(() => {
-    const next = new URLSearchParams(params()); next.delete("session"); next.delete("event"); return next.toString();
+    const next = new URLSearchParams(params()); next.delete("session"); next.delete("event"); next.delete("context"); for (const key of replayKeys) next.delete(key); return next.toString();
   });
 
   createEffect(() => ({ catalog: catalog(), workspace: params().get("workspace") }), ({ catalog, workspace }) => {
@@ -113,7 +114,7 @@ export function App() {
     source.addEventListener("change", changed);
     const keyboard = (event: KeyboardEvent) => {
       if (navOpen() && mobile() && event.key === "Tab") {
-        const targets = [...document.querySelectorAll<HTMLElement>(".sidebar a,.sidebar button:not([disabled])")].filter(element => element.getClientRects().length);
+        const targets = [...document.querySelectorAll<HTMLElement>(".sidebar a[href],.sidebar button:not([disabled]),.sidebar input:not([disabled]),.sidebar select:not([disabled]),.sidebar textarea:not([disabled]),.sidebar summary,.sidebar [tabindex]:not([tabindex='-1'])")].filter(element => element.getClientRects().length && !element.closest("[inert]"));
         if (event.shiftKey && document.activeElement === targets[0]) { event.preventDefault(); targets.at(-1)?.focus(); }
         else if (!event.shiftKey && document.activeElement === targets.at(-1)) { event.preventDefault(); targets[0]?.focus(); }
       }
@@ -149,7 +150,7 @@ export function App() {
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>
       <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} />
         <Show when={params().get("session") && !libraryCollapsed()}><LibraryDivider resize={setLibraryWidth} /></Show>
-        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} navigate={navigate} changed={changed} close={closeReplay} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} />}</Show>
+        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} params={params()} navigate={navigate} changed={changed} close={closeReplay} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} />}</Show>
       </div>
     </main>
     <Show when={groupOpen() && catalog()}><WorkspaceDialog catalog={catalog()!} onClose={() => setGroupOpen(false)} onSaved={changed} /></Show>

@@ -6,6 +6,11 @@ export function createLocation() {
   const [params, setParams] = createSignal(new URLSearchParams(location.search));
   const navigate: Navigate = (values, replace = false) => {
     const next = new URL(location.href);
+    const changingSession = Object.hasOwn(values, "session") && values.session !== next.searchParams.get("session");
+    if (changingSession) {
+      for (const key of [...next.searchParams.keys()]) if (key.startsWith("replay")) next.searchParams.delete(key);
+      next.searchParams.delete("context");
+    }
     for (const [key, value] of Object.entries(values)) {
       if (value) next.searchParams.set(key, value);
       else next.searchParams.delete(key);

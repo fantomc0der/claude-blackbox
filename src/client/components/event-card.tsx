@@ -17,12 +17,18 @@ import {
 } from "../lib/content";
 import { Markdown } from "./markdown";
 import { Highlight } from "./highlight";
+import { Icon } from "./icon";
+import { modelName } from "../lib/format";
 
 export interface EventCardProps {
   event: ReplayEvent;
   results?: Record<string, ContentBlock>;
   highlight?: string;
   showWorkspace?: boolean;
+  sessionId?: string;
+  filtered?: boolean;
+  selected?: boolean;
+  onShowContext?: (id: string) => void;
 }
 
 function CopyButton(props: { value: string; label?: string }) {
@@ -163,15 +169,19 @@ export function EventCard(props: EventCardProps) {
   const presentation = createMemo(() => isToolResultEvent(props.event) ? "tool-result" : role());
   const roleLabel = createMemo(() => presentation() === "tool-result" ? "Tool result" : role());
   const hasBlocks = createMemo(() => props.event.blocks.length > 0);
+  const recordedModel = () => isRecord(props.event.raw.message) ? getString(props.event.raw.message.model) : undefined;
   const permalink = () => {
     const url = new URL(location.href);
-    url.searchParams.set("session", props.event.id.slice(0, 24));
+    for (const key of [...url.searchParams.keys()]) if (key.startsWith("replay")) url.searchParams.delete(key);
+    url.searchParams.set("session", props.sessionId || props.event.id.slice(0, 24));
     url.searchParams.set("event", props.event.id);
+    url.searchParams.delete("context");
     return url.pathname + url.search;
   };
-  return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
-    <header class="replay-event-header"><span class="replay-role">{roleLabel()}</span><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
+  return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
+    <header class="replay-event-header"><span class="replay-role">{roleLabel()}</span><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${recordedModel()}`}>{modelName(recordedModel()!)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
     <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} highlight={props.highlight} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
+    <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} /></Show></details>
   </article>;
 }

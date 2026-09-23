@@ -5,7 +5,7 @@ test("filters close on Escape and outside clicks", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".session-row").first()).toBeVisible();
   const filters = page.locator("details.filter-popover");
-  const summary = filters.locator("summary");
+  const summary = filters.locator(":scope > summary");
   await summary.click();
   await expect(filters).toHaveJSProperty("open", true);
   await page.keyboard.press("Escape");

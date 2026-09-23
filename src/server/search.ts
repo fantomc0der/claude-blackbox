@@ -19,3 +19,19 @@ export function pageNumber(value: string | null, fallback: number, maximum: numb
   if (!value || !/^\d+$/.test(value)) return fallback;
   return Math.min(Number(value), maximum);
 }
+
+export function numericBound(value: string | null, integer = false): number | null {
+  if (!value || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number <= Number.MAX_SAFE_INTEGER && (!integer || Number.isSafeInteger(number)) ? number : null;
+}
+
+export function dateBound(value: string | null, end = false): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) return null;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return null;
+  const date = new Date(time);
+  if (value.length === 10 && date.toISOString().slice(0, 10) !== value) return null;
+  if (end && value.length === 10) date.setUTCMilliseconds(86399999);
+  return date.toISOString();
+}
