@@ -50,6 +50,7 @@ Desktop bundles include the Bun runtime, so they are substantially larger than a
 - **Full-record search:** prompts, assistant responses, reasoning, file paths, commands, tool inputs/results, and recorded metadata. Matching snippets link directly to their events.
 - **Combine filters:** workspace group, original folder, model, branch, date, tool, file changes, errors, recent activity, bookmarks, and subagent inclusion.
 - **Reversible workspace groups:** give worktrees or clones one shared history without moving files. Original working directories remain visible and filterable. Grouping is explicit—not guessed from similar folder names.
+- **Usage and estimated cost:** see tokens and USD API-equivalent cost for each recording, source folder, or workspace group. Expand **Usage** for input/output/cache totals and a clickable folder breakdown. Totals cover every matching page and follow the existing filters.
 - **Structured replay:** Markdown, tables, code, bounded line diffs, terminal output, file reads/writes, checklists, questions, delegated tasks, reasoning, and errors. Tool results are linked across event boundaries. Unknown records stay available under **All events** and **Raw event**.
 - **Live updates:** the local index reconciles every 2.5 seconds. Reconnection refreshes the view. New events do not pull you away from older content; use **Jump to latest** when ready.
 - **Return to your work:** bookmark a recording, copy its source path or safely quoted resume command, use an event permalink, or export the original parsed records as JSONL.
@@ -65,6 +66,16 @@ src/auth.ts
 Transcript search uses Unicode word/phrase tokenization, not regular expressions or fuzzy matching. Session titles and workspace metadata also support substring matches. Search within a recording uses literal substring matching. Calendar date bounds use UTC; displayed event times use your browser's local timezone.
 
 All source recordings, including subagents, are included initially. Uncheck **Include subagent recordings** to focus on main sessions. **Conversation** hides internal metadata/context records; **All events** retains them. “Recently active” means a recording changed within two minutes, not that a Claude process has been independently verified as running.
+
+### Usage And Cost
+
+Usage comes directly from assistant `message.usage` records in the indexed JSONL transcripts; no account, network request, or ccusage installation is required. Recorded nonnegative `costUSD` values take precedence. Otherwise, the bundled per-model [Anthropic API pricing](https://platform.claude.com/docs/en/about-claude/pricing) snapshot (September 23, 2026) estimates input, output, cache writes (5-minute and 1-hour), and cache reads. Recognized fast-mode and US-inference metadata are applied, along with legacy Sonnet 4/4.5 long-context rates. Unknown models or unsupported fast-mode rates remain unpriced; their tokens still count and the UI marks the cost incomplete. Costs are **API-equivalent estimates, not Claude Pro/Max subscription charges or a billing statement**. Historical prices, provider discounts, batch pricing and server-side tool fees may differ.
+
+Repeated assistant messages are deduplicated by message/request identity, including across selected recordings. More complete streaming usage replaces earlier samples. Distinct subagent requests count once and follow **Include subagent recordings**. Shared history is assigned to one source folder within an aggregate, so adding individual recording totals can exceed the deduplicated selection total. Records without stable IDs cannot reliably be deduplicated across files.
+
+Folder attribution follows each recording's original working directory, consistent with workspace grouping; it does not split a recording when later events change directory. Date, model, search and other filters select **whole recordings**, not individual usage requests (date filters use the recording's last activity). Missing usage is not zero spend: the expanded summary shows how many matching recordings report usage. Partial-cent costs display as `<$0.01` rather than `$0.00`.
+
+The derived index upgrades automatically and rebuilds usage from existing recordings on first launch after this update. Source transcripts, bookmarks and workspace groups are preserved. Pricing is offline and versioned with the application; changing bundled rates requires reindexing existing usage.
 
 ### Desktop And Responsive Layout
 

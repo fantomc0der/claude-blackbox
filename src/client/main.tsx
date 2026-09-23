@@ -4,6 +4,7 @@ import { App } from "./app";
 import "./styles/app.css";
 import "./styles/replay.css";
 import "./styles/theme-control.css";
+import "./styles/usage.css";
 import "./styles/light.css";
 
 render(() => (

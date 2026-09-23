@@ -350,7 +350,9 @@ function userMessage(blocks: ContentBlock[], model: string): JsonRecord {
 }
 
 function assistantMessage(blocks: ContentBlock[], model: string): JsonRecord {
-  return { message: { role: "assistant", content: blocks, model } };
+  return { message: { role: "assistant", content: blocks, model, usage: {
+    input_tokens: 2400, output_tokens: 850, cache_creation_input_tokens: 1200, cache_read_input_tokens: 16000,
+  } } };
 }
 
 function analysisMarkdown(session: DemoSession): string {

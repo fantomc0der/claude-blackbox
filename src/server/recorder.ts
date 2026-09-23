@@ -2,10 +2,11 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, EventPage, ReplayEvent, Session, SessionPage, WorkspaceGroup } from "../shared/types";
+import type { Catalog, DirectoryUsage, EventPage, ReplayEvent, Session, SessionPage, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { ftsPhrase, pageNumber, parseSearch } from "./search";
+import { emptyUsage, readUsage, usageColumns } from "./usage";
 
 interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
@@ -35,6 +36,13 @@ const schema = `
     error INTEGER NOT NULL, tools TEXT NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS events_session ON events(session_id, sequence);
+  CREATE TABLE IF NOT EXISTS usage_records (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    request_key TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL,
+    cache_creation INTEGER NOT NULL, cache_read INTEGER NOT NULL, cost REAL,
+    recorded INTEGER NOT NULL, sidechain INTEGER NOT NULL,
+    PRIMARY KEY(session_id, request_key)
+  );
   CREATE TABLE IF NOT EXISTS tool_results (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     tool_id TEXT NOT NULL, raw TEXT NOT NULL,
@@ -86,13 +94,13 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 2) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 3) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     db.exec(schema);
     const fields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all().map(row => row.name));
     if (!fields.has("identity")) db.exec("ALTER TABLE sessions ADD COLUMN identity TEXT NOT NULL DEFAULT ''");
     if (!fields.has("tailprint")) db.exec("ALTER TABLE sessions ADD COLUMN tailprint TEXT NOT NULL DEFAULT ''");
-    if (!hasResults || version < 2) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=2;");
+    if (!hasResults || version < 3) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=3;");
     const interrupted = db.query<{ id: string }, []>("SELECT id FROM sessions WHERE events != (SELECT count(*) FROM events WHERE session_id=sessions.id)").all();
     for (const row of interrupted) db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(row.id);
   }
@@ -178,6 +186,7 @@ export class Recorder {
           .run(id, basename(path, ".jsonl"), path, Number(path.includes(`${sep}subagents${sep}`) || basename(path).startsWith("agent-")));
         if (reset) this.db.transaction(() => {
           this.db.query("DELETE FROM events WHERE session_id = ?").run(id);
+          this.db.query("DELETE FROM usage_records WHERE session_id = ?").run(id);
           this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
             messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0 WHERE id=?`).run(id);
         })();
@@ -187,9 +196,19 @@ export class Recorder {
           const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text)
             VALUES (?,?,?,?,?,?,?,?,?,?)`);
           const insertResult = this.db.query("INSERT OR REPLACE INTO tool_results(session_id,tool_id,raw,event_row) VALUES (?,?,?,?)");
+          const insertUsage = this.db.query(`INSERT INTO usage_records VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(session_id,request_key) DO UPDATE SET input=excluded.input, output=excluded.output,
+              cache_creation=excluded.cache_creation, cache_read=excluded.cache_read, cost=excluded.cost,
+              recorded=excluded.recorded, sidechain=excluded.sidechain
+            WHERE excluded.sidechain < usage_records.sidechain OR (excluded.sidechain = usage_records.sidechain AND
+              (excluded.input+excluded.output+excluded.cache_creation+excluded.cache_read > usage_records.input+usage_records.output+usage_records.cache_creation+usage_records.cache_read
+              OR (excluded.input+excluded.output+excluded.cache_creation+excluded.cache_read = usage_records.input+usage_records.output+usage_records.cache_creation+usage_records.cache_read
+                AND (excluded.recorded > usage_records.recorded OR (excluded.recorded = usage_records.recorded AND coalesce(excluded.cost,-1) > coalesce(usage_records.cost,-1))))))`);
           for (const event of events) {
             const inserted = insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
               Number(event.error), event.toolNames.join("\n"), JSON.stringify(event.raw), event.text);
+            const usage = readUsage(event.raw, id, event.id);
+            if (usage) insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain));
             if (inserted.changes) for (const block of event.blocks) {
               if (block.type === "tool_result" && typeof block.tool_use_id === "string") insertResult.run(id, block.tool_use_id, JSON.stringify(block), inserted.lastInsertRowid);
             }
@@ -254,6 +273,7 @@ export class Recorder {
       hasEdits: Boolean(row.edits), bookmarked: Boolean(row.bookmarked), isAgent: Boolean(row.agent),
       active: Date.now() - Date.parse(row.updated) < 120_000 && Date.now() - row.mtime < 120_000,
       source: relative(this.dataDir, row.source),
+      usage: this.db.query<UsageSummary, [string]>(`SELECT ${usageColumns} FROM usage_records WHERE session_id=?`).get(row.id)!,
     };
   }
 
@@ -320,7 +340,21 @@ export class Recorder {
       }
       return session;
     });
-    return { items, total, offset, limit };
+    const directoryRows = this.db.query<UsageSummary & { cwd: string }, SQLQueryBindings[]>(`WITH ranked AS (
+      SELECT usage.*, s.cwd, row_number() OVER (PARTITION BY request_key ORDER BY sidechain,
+        input+output+cache_creation+cache_read DESC, recorded DESC, cost DESC, s.started, s.id) AS position
+      FROM usage_records usage JOIN sessions s ON s.id=usage.session_id
+      LEFT JOIN group_paths gp ON gp.path=s.cwd LEFT JOIN groups g ON g.id=gp.group_id
+      LEFT JOIN bookmarks b ON b.session_id=s.id ${where}
+    ) SELECT cwd, ${usageColumns} FROM ranked WHERE position=1 GROUP BY cwd`).all(...bindings);
+    const directoryCounts = this.db.query<{ cwd: string; sessions: number; withUsage: number }, SQLQueryBindings[]>(
+      `SELECT s.cwd, count(*) AS sessions, sum(EXISTS(SELECT 1 FROM usage_records WHERE session_id=s.id)) AS withUsage ${joins} ${where} GROUP BY s.cwd`).all(...bindings);
+    const byDirectory = new Map(directoryRows.map(({ cwd, ...usage }) => [cwd, usage]));
+    const directories: DirectoryUsage[] = directoryCounts.map(directory => ({ ...directory, usage: byDirectory.get(directory.cwd) || emptyUsage() }))
+      .sort((left, right) => right.usage.costUSD - left.usage.costUSD || right.usage.totalTokens - left.usage.totalTokens || left.cwd.localeCompare(right.cwd));
+    const usage = emptyUsage();
+    for (const directory of directories) for (const key of Object.keys(usage) as (keyof UsageSummary)[]) usage[key] += directory.usage[key];
+    return { items, total, offset, limit, usage, directories, sessionsWithUsage: directoryCounts.reduce((sum, directory) => sum + directory.withUsage, 0) };
   }
 
   events(id: string, params: URLSearchParams): EventPage {
