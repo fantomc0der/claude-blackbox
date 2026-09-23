@@ -76,12 +76,20 @@
   .nav-item.selected { color: var(--accent); background: var(--accent-dim); border-color: #c7ee7913; }
   .nav-count { font: var(--text-meta) var(--mono); color: #8d9695; margin-left: auto; }
   .nav-item.selected .nav-count { color: var(--accent); }
-  .workspace-label { display: flex; justify-content: space-between; align-items: center; gap: 4px; padding-inline: 8px; margin-top: 34px; margin-bottom: 8px; }
+  .workspace-label { display: flex; justify-content: space-between; align-items: center; gap: 4px; padding-inline: 8px; margin-top: 20px; margin-bottom: 8px; }
+  .workspace-controls { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+  .workspace-controls select { flex: 1; width: 0; padding: 6px 8px; font-size: var(--text-control); min-height: 34px; }
+  .workspace-filter-toggle { width: 34px; height: 34px; }
+  .workspace-filter-toggle[aria-expanded="true"] { color: var(--accent); background: var(--accent-dim); }
+  .workspace-filter { margin-bottom: 6px; }
+  .workspace-filter input { width: 100%; padding: 7px 9px; font-size: var(--text-control); }
   .workspace-nav { overflow-y: auto; min-height: clamp(140px, 24dvh, 360px); flex: 1; }
-  .workspace-nav-item { min-height: 41px; font-size: var(--text-control); }
+  .workspace-nav-item { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 0 10px; min-height: 41px; font-size: var(--text-control); }
+  .workspace-nav-item .nav-count { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .workspace-nav-item > svg { color: #777f7e; }
-  .workspace-nav-item small { display: block; font-size: var(--text-control); margin-top: 4px; color: #8e9887; }
+  .workspace-nav-item small { grid-column: 2 / -1; font-size: var(--text-meta); margin-top: 4px; color: #8e9887; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nav-empty { padding: 5px 12px; color: var(--muted); font-size: var(--text-support); line-height: 1.7; }
+  .nav-empty p { margin-bottom: 4px; }
   .workspace-label .workspace-group { gap: 4px; padding-inline: 4px; font-size: var(--text-meta); letter-spacing: 0; flex-shrink: 0; }
   .sidebar-footer { border-top: 1px solid var(--line); padding: 12px 5px 11px; }
   .sidebar-select { display: grid; gap: 4px; margin-bottom: 8px; color: var(--muted); }
@@ -456,7 +464,8 @@
     .replay-panel-heading h2 { font-size: 20px; }
   }
   @media (max-width: 680px) {
-    .replay-actions .icon-button, .mobile-menu, .sidebar-mobile-close, .workspace-group { min-width: 44px; min-height: 44px; }
+    .replay-actions .icon-button, .mobile-menu, .sidebar-mobile-close, .workspace-group, .workspace-filter-toggle { min-width: 44px; min-height: 44px; }
+    .workspace-controls select, .workspace-filter input { min-height: 44px; }
     .source-option { min-height: 44px; }
   }
 }

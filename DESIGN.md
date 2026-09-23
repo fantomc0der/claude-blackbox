@@ -138,6 +138,14 @@ Dark mode is the default surface system; lime is its active accent. Light mode i
 
 **The Restrained Light Rule.** In light mode, ordinary navigation and controls stay grayscale; green and red communicate semantic status rather than decoration.
 
+## Workspace Navigation Controls
+
+Preserve the compact sidebar and its single Group action. A native select immediately above the workspace list offers Most sessions, Highest cost (est.), and Folder name (A–Z). Session count remains the default; the browser remembers the choice independently of recording filters. Name order is case-insensitive and natural, using the display name for groups.
+
+A search-icon button reveals an inline name/path filter and moves focus into it. Match all member paths without splitting groups; Escape clears and closes the filter, returning focus to its trigger. No matches offers Clear filter rather than the new-user empty state. Sorting or filtering never changes the selected recording. Cost mode replaces row counts with all-time recorded/estimated USD, retaining session totals and full paths in tooltips. Unknown usage is never presented as free; partial totals retain the existing `+` convention.
+
+Controls reuse theme tokens, native focus rings, and existing type sizes. Mobile controls have 44px minimum targets; the workspace list keeps its independent scroll area and the footer remains available on compact laptops.
+
 ## Typography
 
 **Display Font:** Segoe UI Variable with Segoe UI and system-sans fallbacks.

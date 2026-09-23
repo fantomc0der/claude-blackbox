@@ -110,6 +110,46 @@ describe("usage extraction and pricing", () => {
 });
 
 describe("indexed usage", () => {
+  test("catalog costs cover each workspace and deduplicate copied requests within a group", async () => {
+    const setup = await fixture();
+    const shared = record("shared", { costUSD: 10 });
+    await setup.write("original", [shared]);
+    await setup.write("same-folder-copy", [shared]);
+    await setup.write("clone", [{ ...shared, cwd: "C:\\work\\clone" }, record("unique", { cwd: "C:\\work\\clone", costUSD: 3 })]);
+    await setup.write("outside", [{ ...shared, cwd: "C:\\work\\outside" }]);
+    const recorder = await setup.open();
+    const ungrouped = (await recorder.catalog()).workspaces;
+    expect(ungrouped.find(workspace => workspace.name === "orbit")).toMatchObject({ count: 2, usage: { requests: 1, costUSD: 10 } });
+    expect(ungrouped.find(workspace => workspace.name === "clone")?.usage.costUSD).toBe(13);
+    for (const workspace of ungrouped) expect(workspace.usage).toEqual(recorder.list(new URLSearchParams({ workspace: workspace.id })).usage);
+    const group = recorder.saveGroup({ name: "Orbit together", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
+    const grouped = (await recorder.catalog()).workspaces;
+    expect(grouped).toHaveLength(2);
+    expect(grouped.find(workspace => workspace.id === group.id)).toMatchObject({ count: 3, usage: { requests: 2, costUSD: 13 } });
+    expect(grouped.find(workspace => workspace.name === "outside")?.usage.costUSD).toBe(10);
+    for (const workspace of grouped) expect(workspace.usage).toEqual(recorder.list(new URLSearchParams({ workspace: workspace.id, limit: "1" })).usage);
+    recorder.deleteGroup(group.id);
+    expect((await recorder.catalog()).workspaces).toEqual(ungrouped);
+  });
+
+  test("catalog preserves missing, unpriced, partial and zero costs and refreshes after indexing", async () => {
+    const setup = await fixture();
+    await setup.write("missing", [record("missing", { cwd: "/work/missing", message: { role: "assistant", content: "No usage" } })]);
+    await setup.write("unpriced", [record("unknown", { cwd: "/work/unpriced", message: { model: "future-model", usage: { input_tokens: 10 } } })]);
+    const zeroFile = await setup.write("zero", [record("zero", { cwd: "/work/zero", costUSD: 0 })]);
+    await setup.write("no-directory", [record("no-directory", { cwd: "", costUSD: 2 })]);
+    const recorder = await setup.open();
+    const catalog = await recorder.catalog();
+    expect(catalog.workspaces.find(workspace => workspace.name === "missing")?.usage).toEqual(emptyUsage());
+    expect(catalog.workspaces.find(workspace => workspace.name === "unpriced")?.usage).toMatchObject({ requests: 1, unpricedRequests: 1, costUSD: 0 });
+    expect(catalog.workspaces.find(workspace => workspace.name === "zero")?.usage).toMatchObject({ requests: 1, unpricedRequests: 0, costUSD: 0 });
+    expect(catalog.workspaces.find(workspace => workspace.id === "unknown")?.usage.costUSD).toBe(2);
+    const group = recorder.saveGroup({ name: "Partial", paths: ["/work/unpriced", "/work/zero"] });
+    await appendFile(zeroFile, JSON.stringify(record("added", { cwd: "/work/zero", costUSD: 4 })) + "\n");
+    await recorder.scan();
+    expect((await recorder.catalog()).workspaces.find(workspace => workspace.id === group.id)?.usage).toMatchObject({ requests: 3, unpricedRequests: 1, costUSD: 4 });
+  });
+
   test("model and effort expenses use each request and reconcile across grouped folders and pages", async () => {
     const setup = await fixture();
     const high = record("opus-high"), low = record("opus-low");
