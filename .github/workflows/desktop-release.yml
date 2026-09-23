@@ -53,7 +53,38 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ inputs.tag }}
           releaseDraft: true
+          updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+  verify-updater-manifest:
+    name: verify updater manifest
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Download and verify latest.json
+        shell: bash
+        run: |
+          release_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | .id" | head -n 1)
+          test -n "$release_id"
+          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --jq '.[] | select(.name == "latest.json") | .id')
+          test -n "$asset_id"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > latest.json
+          jq -e --arg version "${RELEASE_TAG#v}" '
+            .version == $version and
+            ([
+              "darwin-aarch64",
+              "darwin-x86_64",
+              "linux-aarch64",
+              "linux-x86_64",
+              "windows-x86_64"
+            ] - (.platforms | keys) | length == 0) and
+            ([.platforms[] | select((.signature | length) == 0 or (.url | length) == 0)] | length == 0)
+          ' latest.json

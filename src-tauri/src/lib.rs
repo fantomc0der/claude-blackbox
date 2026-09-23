@@ -5,8 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_shell::{process::CommandChild, ShellExt};
+
+mod desktop;
 
 struct Sidecar(Mutex<Option<CommandChild>>);
 
@@ -27,7 +29,7 @@ fn wait_for_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     Err("the claude-blackbox server did not start within 120 seconds".into())
 }
 
-fn stop_sidecar(app: &tauri::AppHandle) {
+pub(crate) fn stop_sidecar(app: &tauri::AppHandle) {
     if let Some(child) = app
         .state::<Sidecar>()
         .0
@@ -39,10 +41,18 @@ fn stop_sidecar(app: &tauri::AppHandle) {
     }
 }
 
+pub(crate) fn quit(app: &tauri::AppHandle) {
+    desktop::mark_quitting(app);
+    stop_sidecar(app);
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let port = reserve_port()?;
             let port_argument = port.to_string();
@@ -79,14 +89,31 @@ pub fn run() {
                         && destination.port_or_known_default() == Some(port)
                 })
                 .build()?;
+            desktop::setup(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
-                stop_sidecar(window.app_handle());
-                window.app_handle().exit(0);
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    if window
+                        .app_handle()
+                        .state::<desktop::DesktopState>()
+                        .should_close_to_tray()
+                    {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    } else {
+                        quit(window.app_handle());
+                    }
+                }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running claude-blackbox");
+        .build(tauri::generate_context!())
+        .expect("error while building claude-blackbox")
+        .run(|app, event| match event {
+            RunEvent::Exit | RunEvent::ExitRequested { .. } => stop_sidecar(app),
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => desktop::show_main_window(app),
+            _ => {}
+        });
 }
