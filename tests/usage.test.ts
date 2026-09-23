@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
 import { emptyUsage, readUsage } from "../src/server/usage";
-import { dollars, usageCost } from "../src/client/lib/format";
+import { dollars, effortName, usageCost } from "../src/client/lib/format";
 import { removeTestDirectory } from "./helpers";
 
 function record(id: string, extra: Record<string, unknown> = {}) {
@@ -42,6 +42,25 @@ async function fixture() {
 }
 
 describe("usage extraction and pricing", () => {
+  test("retains explicit effort and normalizes model identities without inferring effort", () => {
+    const original = record("effort");
+    for (const entry of [
+      { ...original, effort: " HIGH " },
+      { ...original, message: { ...original.message, effort: "high" } },
+      { ...original, output_config: { effort: "high" } },
+      { ...original, message: { ...original.message, output_config: { effort: "high" } } },
+    ]) {
+      expect(readUsage(entry, "source", "event")).toMatchObject({ model: "claude-sonnet-4-5", effort: "high" });
+      expect(readUsage(entry, "source", "event")?.cost).toBe(readUsage(original, "source", "event")?.cost);
+    }
+    expect(sample("claude-opus-4-5", { output_tokens: 50000, speed: "fast" }, { thinking: { budget_tokens: 10000 } })?.effort).toBeNull();
+    expect(sample("claude-opus-4-5", { input_tokens: 3 }, { effort: { level: "high" } })?.effort).toBeNull();
+    expect(sample("claude-opus-4-5", { input_tokens: 3 }, { effort: " ", output_config: { effort: "max" } })?.effort).toBe("max");
+    expect(effortName(null)).toBe("Not recorded");
+    expect(effortName("xhigh")).toBe("Extra high");
+    expect(effortName("future-effort")).toBe("future-effort");
+  });
+
   test("prices input, output and both cache durations without double counting writes", () => {
     const usage = sample("claude-sonnet-4-5", {
       input_tokens: 1000, output_tokens: 200, cache_creation_input_tokens: 300, cache_read_input_tokens: 400,
@@ -91,6 +110,80 @@ describe("usage extraction and pricing", () => {
 });
 
 describe("indexed usage", () => {
+  test("model and effort expenses use each request and reconcile across grouped folders and pages", async () => {
+    const setup = await fixture();
+    const high = record("opus-high"), low = record("opus-low");
+    await setup.write("session-a", [
+      { ...high, message: { ...high.message, model: "claude-opus-4-5-20251101", effort: "high" } },
+      { ...low, message: { ...low.message, model: "claude-opus-4-5", effort: "low" } },
+      record("sonnet-missing-effort"),
+    ]);
+    await setup.write("session-b", [record("unknown-model", { cwd: "C:\\work\\clone", message: { model: "future-model", effort: "high", usage: { input_tokens: 40 } } })]);
+    const recorder = await setup.open();
+    const group = recorder.saveGroup({ name: "Expenses", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
+    const params = new URLSearchParams({ workspace: group.id, limit: "1" });
+    const page = recorder.list(params);
+    expect(page.modelUsage).toHaveLength(4);
+    expect(page.modelUsage.map(row => [row.model, row.effort])).toContainEqual(["claude-opus-4-5", "high"]);
+    expect(page.modelUsage.map(row => [row.model, row.effort])).toContainEqual(["claude-opus-4-5", "low"]);
+    expect(page.modelUsage.map(row => [row.model, row.effort])).toContainEqual(["claude-sonnet-4-5", null]);
+    expect(page.modelUsage.find(row => row.model === "future-model")?.usage.unpricedRequests).toBe(1);
+    for (const key of ["requests", "totalTokens", "inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens", "unpricedRequests", "costUSD"] as const) {
+      expect(page.modelUsage.reduce((sum, row) => sum + row.usage[key], 0)).toBeCloseTo(page.usage[key], 9);
+    }
+    expect(page.modelUsage.map(row => row.usage.costUSD)).toEqual(page.modelUsage.map(row => row.usage.costUSD).toSorted((left, right) => right - left));
+    params.set("offset", "1");
+    expect(recorder.list(params).modelUsage).toEqual(page.modelUsage);
+    params.set("cwd", "C:\\work\\clone");
+    expect(recorder.list(params).modelUsage).toHaveLength(1);
+    expect(recorder.list(new URLSearchParams({ q: "sonnet-missing-effort" })).modelUsage).toHaveLength(3);
+    expect(recorder.list(new URLSearchParams({ q: "no-such-request" })).modelUsage).toEqual([]);
+  });
+
+  test("deduplicates model aliases and copied requests while keeping recorded effort", async () => {
+    const setup = await fixture();
+    const original = record("shared");
+    await setup.write("session-a", [original]);
+    await setup.write("session-b", [{ ...original, cwd: "C:\\work\\clone", message: { ...original.message, model: "claude-sonnet-4-5", effort: "high" } }]);
+    const recorder = await setup.open();
+    const page = recorder.list(new URLSearchParams());
+    expect(page.usage.requests).toBe(1);
+    expect(page.modelUsage).toEqual([{ model: "claude-sonnet-4-5", effort: "high", usage: page.usage }]);
+  });
+
+  test("streamed usage retains effort when larger updates omit it or smaller updates add it", async () => {
+    const setup = await fixture();
+    const original = record("streaming");
+    const file = await setup.write("session-a", [original]);
+    const recorder = await setup.open();
+    const metadata = { ...original, uuid: "smaller-update", effort: "high", message: { ...original.message, usage: { ...original.message.usage, output_tokens: 10 } } };
+    await appendFile(file, JSON.stringify(metadata) + "\n");
+    await recorder.scan();
+    expect(recorder.list(new URLSearchParams()).modelUsage[0]).toMatchObject({ effort: "high", usage: { totalTokens: 1900 } });
+    const larger = { ...original, uuid: "larger-update", message: { ...original.message, usage: { ...original.message.usage, output_tokens: 800 } } };
+    await appendFile(file, JSON.stringify(larger) + "\n");
+    await recorder.scan();
+    expect(recorder.list(new URLSearchParams()).modelUsage[0]).toMatchObject({ effort: "high", usage: { requests: 1, totalTokens: 2500 } });
+  });
+
+  test("upgrades version 3 usage indexes and backfills per-request model and effort", async () => {
+    const setup = await fixture();
+    const file = await setup.write("session-a", [record("backfill", { effort: "medium" })]);
+    const original = await Bun.file(file).text();
+    const before = await setup.open();
+    const expected = before.list(new URLSearchParams());
+    before.bookmark(expected.items[0].id, true);
+    before.db.exec("ALTER TABLE usage_records DROP COLUMN model; ALTER TABLE usage_records DROP COLUMN effort; PRAGMA user_version=3;");
+    await before.close();
+    const after = await setup.open();
+    const page = after.list(new URLSearchParams());
+    expect(page.usage).toEqual(expected.usage);
+    expect(page.modelUsage).toEqual(expected.modelUsage);
+    expect(page.modelUsage[0].effort).toBe("medium");
+    expect(page.items[0].bookmarked).toBe(true);
+    expect(await Bun.file(file).text()).toBe(original);
+  });
+
   test("deduplicates streaming updates, stays idempotent and follows appended usage", async () => {
     const setup = await fixture();
     const original = record("first");

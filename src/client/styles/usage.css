@@ -15,10 +15,21 @@
   .token-breakdown { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 20px; margin: 12px 0 18px; }
   .token-breakdown dt { color: var(--muted); font-size: var(--text-meta); }
   .token-breakdown dd { margin: 3px 0 0; color: var(--text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-  .usage-directories { width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 16px; font-size: var(--text-meta); }
-  .usage-directories caption { text-align: left; font-size: var(--text-support); font-weight: 550; padding-bottom: 8px; }
-  .usage-directories th { font-weight: 400; color: var(--muted); }
-  .usage-directories th, .usage-directories td { padding: 7px 0 7px 14px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .usage-view-switch { display: inline-flex; max-width: 100%; padding: 3px; margin-bottom: 14px; gap: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+  .usage-view-switch button { min-height: 36px; padding: 5px 12px; color: var(--muted); border-radius: 4px; }
+  .usage-view-switch button:hover { color: var(--text); background: var(--raised); }
+  .usage-view-switch button[aria-pressed="true"] { color: var(--accent); background: var(--accent-dim); }
+  .usage-directories, .usage-matrix { width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 16px; font-size: var(--text-meta); }
+  .usage-directories caption, .usage-matrix caption { text-align: left; font-size: var(--text-support); font-weight: 550; padding-bottom: 8px; }
+  .usage-directories th, .usage-matrix th { font-weight: 400; color: var(--muted); }
+  .usage-directories th, .usage-directories td, .usage-matrix th, .usage-matrix td { padding: 7px 0 7px 14px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .usage-matrix th:first-child { width: 34%; padding-left: 0; text-align: left; }
+  .usage-matrix th:nth-child(2), .usage-matrix td:nth-child(2) { width: 24%; text-align: left; }
+  .usage-matrix tbody th { color: var(--text); font-weight: 500; }
+  .usage-matrix small { display: block; margin-top: 3px; font-size: var(--text-meta); font-weight: 400; }
+  .usage-matrix th small, .usage-effort-missing { color: var(--muted); }
+  .usage-matrix tfoot th, .usage-matrix tfoot td { color: var(--text); font-weight: 550; border-bottom: 0; padding-top: 12px; }
+  .usage-matrix tfoot td { text-align: right; }
   .usage-directories th:first-child, .usage-directories td:first-child { width: 60%; padding-left: 0; text-align: left; }
   .usage-directories button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 32px; padding: 2px; text-align: left; }
   .usage-directories button span { overflow-wrap: anywhere; }
@@ -51,6 +62,8 @@
     .usage-panel > summary { min-height: 36px; padding-block: 7px; }
   }
   @media (max-width: 680px) {
+    .usage-view-switch button { min-height: 44px; }
+    .usage-matrix th, .usage-matrix td { padding-left: 8px; }
     .library .overview { margin-bottom: 2px; }
     .usage-panel { margin-bottom: 0; }
     .usage-panel > summary { gap: 6px 13px; }

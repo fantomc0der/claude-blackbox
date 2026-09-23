@@ -31,6 +31,8 @@ const prices: Record<string, Price> = {
 
 export interface UsageRecord {
   key: string;
+  model: string;
+  effort: string | null;
   input: number;
   output: number;
   cacheCreation: number;
@@ -62,6 +64,8 @@ export function readUsage(raw: Record<string, unknown>, sessionId: string, event
   const model = string(message.model).replace(/\[[^\]]*\]$/, "").replace(/^(?:(?:us|eu|apac|global)\.)?anthropic\./, "")
     .replace(/-v\d+:\d+$/, "").replace(/[-@]\d{8}$/, "").replace(/-latest$/, "").replace(/^(claude-(?:sonnet|opus)-4)-0$/, "$1");
   const price = Object.hasOwn(prices, model) ? prices[model] : undefined;
+  const effort = [message.effort, raw.effort, object(message.output_config).effort, object(raw.output_config).effort]
+    .map(value => string(value).trim().toLowerCase()).find(value => value.length > 0 && value.length <= 80) || null;
   let cost = recordedCost;
   if (cost === null && price) {
     const fast = usage.speed === "fast" || raw.speed === "fast";
@@ -74,7 +78,7 @@ export function readUsage(raw: Record<string, unknown>, sessionId: string, event
         + cacheHour * inputRate * 2 + cacheRead * inputRate * (price.cacheRead ?? 0.1)) / 1_000_000 * (fast ? price.fast! : 1) * geography;
     }
   }
-  return { key, input, output, cacheCreation, cacheRead, cost, recorded: recordedCost !== null, sidechain: raw.isSidechain === true };
+  return { key, model, effort, input, output, cacheCreation, cacheRead, cost, recorded: recordedCost !== null, sidechain: raw.isSidechain === true };
 }
 
 export function emptyUsage(): UsageSummary {

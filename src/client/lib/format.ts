@@ -15,6 +15,12 @@ export function tokenCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+export function effortName(effort: string | null): string {
+  if (!effort) return "Not recorded";
+  const labels: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", auto: "Auto" };
+  return Object.hasOwn(labels, effort) ? labels[effort] : effort;
+}
+
 export function compact(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }

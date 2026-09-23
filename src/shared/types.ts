@@ -49,6 +49,12 @@ export interface DirectoryUsage {
   usage: UsageSummary;
 }
 
+export interface ModelUsage {
+  model: string;
+  effort: string | null;
+  usage: UsageSummary;
+}
+
 export interface Session {
   id: string;
   sessionId: string;
@@ -110,6 +116,7 @@ export interface SessionPage {
   limit: number;
   usage: UsageSummary;
   directories: DirectoryUsage[];
+  modelUsage: ModelUsage[];
   sessionsWithUsage: number;
 }
 

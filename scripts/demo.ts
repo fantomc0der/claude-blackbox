@@ -350,7 +350,8 @@ function userMessage(blocks: ContentBlock[], model: string): JsonRecord {
 }
 
 function assistantMessage(blocks: ContentBlock[], model: string): JsonRecord {
-  return { message: { role: "assistant", content: blocks, model, usage: {
+  const effort = model.startsWith("claude-opus") ? blocks.some(block => block.type === "thinking") ? "high" : "low" : undefined;
+  return { message: { role: "assistant", content: blocks, model, effort, usage: {
     input_tokens: 2400, output_tokens: 850, cache_creation_input_tokens: 1200, cache_read_input_tokens: 16000,
   } } };
 }
