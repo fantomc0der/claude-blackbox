@@ -28,6 +28,9 @@ export function numericBound(value: string | null, integer = false): number | nu
 
 export function dateBound(value: string | null, end = false): string | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) return null;
+  if (value.length > 10 && !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return null;
+  const calendar = Date.parse(value.slice(0, 10));
+  if (!Number.isFinite(calendar) || new Date(calendar).toISOString().slice(0, 10) !== value.slice(0, 10)) return null;
   const time = Date.parse(value);
   if (!Number.isFinite(time)) return null;
   const date = new Date(time);

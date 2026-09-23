@@ -1,5 +1,6 @@
 import type { UsageSummary } from "../shared/types";
 import { object, string } from "./normalize";
+import { isFacetValue } from "./facets";
 
 interface Price { input: number; output: number; cacheRead?: number; longContext?: boolean; fast?: number }
 
@@ -69,7 +70,7 @@ export function readUsage(raw: Record<string, unknown>, sessionId: string, event
   const model = normalizeModel(string(message.model));
   const price = Object.hasOwn(prices, model) ? prices[model] : undefined;
   const effort = [message.effort, raw.effort, object(message.output_config).effort, object(raw.output_config).effort]
-    .map(value => string(value).trim().toLowerCase()).find(value => value.length > 0 && value.length <= 80) || null;
+    .map(value => string(value).trim().toLowerCase()).find(value => isFacetValue(value, 80)) || null;
   let cost = recordedCost;
   if (cost === null && price) {
     const fast = usage.speed === "fast" || raw.speed === "fast";

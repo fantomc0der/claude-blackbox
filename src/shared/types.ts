@@ -105,6 +105,7 @@ export interface Catalog {
   models: string[];
   toolsUsed: string[];
   efforts: string[];
+  facetsLimited: boolean;
   groups: WorkspaceGroup[];
   dataDir: string;
   indexedAt: string;
@@ -129,5 +130,5 @@ export interface EventPage {
   offset: number;
   limit: number;
   unfilteredTotal: number;
-  facets: { tools: string[]; models: string[]; directories: string[] };
+  facets: { tools: string[]; models: string[]; directories: string[]; limited: boolean };
 }

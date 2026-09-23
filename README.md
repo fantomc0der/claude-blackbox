@@ -78,6 +78,8 @@ Replay filters select **records inside one recording**, across every page. Mixed
 
 Cost bounds use only recordings with complete pricing coverage, so a partial estimate cannot silently qualify as a known final amount. Token bounds exclude recordings without usage. A recorded zero remains distinct from missing or entirely unpriced usage. Invalid numeric bounds are ignored by the API; reversed valid bounds match nothing. All filters and sorts are read-only and never modify source transcripts.
 
+Resetting filters preserves your chosen recording order. Compact counts in the replay toolbar have exact totals in their tooltip and footer. Date-only API bounds use UTC; timestamp bounds must include `Z` or an explicit offset. Filter choices show up to 200 values per dimension and indicate when that list is limited. Malformed or oversized metadata stays available in raw records and full-record search rather than becoming misleading filter choices.
+
 ### Usage And Cost
 
 The sidebar's **Highest cost (est.)** order covers every session and folder in each workspace, independently of the current date, search, bookmark, or other session filters. Copied requests count once within a workspace group; separate, ungrouped workspaces each show their own total. Missing or entirely unpriced usage sorts after known costs, including a recorded zero. Partial totals carry `+`; they rank by the known amount, not an assumed final cost.

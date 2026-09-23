@@ -42,12 +42,11 @@
 .replay-raw summary:hover { color: var(--text); }
 .replay-raw summary:focus-visible { outline-offset: -3px; }
 @media (max-width: 680px) { .replay-raw summary { min-height: 44px; padding: 12px 11px; } }
-.replay-filters { position: relative; }
+.replay-filters { position: relative; grid-column: 2; }
 .replay-controls { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: 0 10px; }
 .replay-tabs { grid-column: 1 / -1; }
 .replay-find { min-width: 0; grid-column: 1; }
 .replay-find input { min-width: 60px; }
-.replay-filters { grid-column: 2; }
 .replay-filters summary { cursor: pointer; color: var(--muted); font-size: var(--text-meta); min-height: 32px; display: inline-flex; align-items: center; gap: 6px; }
 .replay-filters .filter-count { color: var(--accent); font-weight: 700; }
 .replay-filter-menu { position: fixed; z-index: 15; left: var(--menu-left, 16px); top: var(--menu-top, 16px); width: min(360px, calc(100vw - 32px)); max-height: var(--menu-height, 65vh); display: grid; gap: 10px; overflow-y: auto; overscroll-behavior: contain; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 15px 55px color-mix(in srgb, var(--text) 18%, transparent); }

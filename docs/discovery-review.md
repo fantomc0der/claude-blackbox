@@ -1,5 +1,7 @@
 # Sorting and filtering review
 
+This is the requested critique and review process record; user-facing behavior is documented in README.
+
 Reviewed September 23, 2026. Target: `src/client`, in Operate mode. Independent design assessment and detector assessment, followed by implementation and browser verification.
 
 ## Baseline
@@ -57,4 +59,6 @@ The requested independent Sol review found three in-scope issues, all resolved a
 
 The review also discussed pre-existing bundled pricing modifiers. This feature does not change those rates or eligibility rules: it extracts the existing model normalizer and preserves the pricing snapshot. Pricing-policy changes need a separate, sourced update.
 
-Validation: `bun run check` passes with 59 unit tests; `bun run test:e2e` passes with 90 browser tests. Remote Edge confirmation covers desktop and mobile, dark and light themes, library/replay filters, and surrounding-context navigation with no page errors or horizontal overflow. Existing export, bookmark, grouping, origin-security, live-update, keyboard, and accessibility regressions remain covered.
+Claude PR feedback also led to restored default-conversation copy, incrementally indexed/cached and bounded filter choices, unambiguous missing-effort filtering, offset-explicit timestamp bounds, and isolated live-update fixtures. Raw metadata remains available even when it is unsuitable for a filter choice.
+
+Validation: `bun run check` passes with 62 unit tests; `bun run test:e2e` passes with 91 browser tests. Remote Edge confirmation covers desktop and mobile, dark and light themes, library/replay filters, and surrounding-context navigation with no page errors or horizontal overflow. Existing export, bookmark, grouping, origin-security, live-update, keyboard, and accessibility regressions remain covered.

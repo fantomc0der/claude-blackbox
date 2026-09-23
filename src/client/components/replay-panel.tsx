@@ -8,6 +8,7 @@ import { TokenBreakdown, UsageNote } from "./usage-panel";
 import { anchoredMenu } from "../lib/anchor";
 import type { Navigate } from "../lib/location";
 import { clearReplayFilters, replayFilters } from "../lib/replay-filters";
+import { withSelectedOption } from "../lib/filter-options";
 import { Icon } from "./icon";
 import { EventCard } from "./event-card";
 
@@ -50,7 +51,7 @@ function SessionActions(props: { session: Session; onBookmark: () => void }) {
 export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; params: URLSearchParams; navigate: Navigate; changed: () => void; close: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void }) {
   let scroll!: HTMLDivElement;
   const initialFilters = untrack(() => replayFilters(props.params));
-  const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : initialFilters.errors ? initialFilters.kind : initialFilters.kind);
+  const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : initialFilters.kind);
   const [query, setQuery] = createSignal(initialFilters.q);
   const [search, setSearch] = createSignal(initialFilters.q);
   const [offset, setOffset] = createSignal(initialFilters.offset);
@@ -124,7 +125,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     void request<ReplayPage>(`/api/sessions/${state.id}/events?${params}`, { signal: controller.signal }).then(next => {
       if (controller.signal.aborted || sequence !== requestSequence) return;
       next.unfilteredTotal ??= next.total;
-      next.facets ??= { tools: [], models: [], directories: [] };
+      next.facets ??= { tools: [], models: [], directories: [], limited: false };
       const previousPage = page();
       const grew = !navigation && !initial && Boolean(previousPage) && next.unfilteredTotal > previousPage!.unfilteredTotal;
       const narrowed = Boolean(state.q || state.tool || state.model || state.cwd || state.after || state.before || state.errors || !["conversation", "all"].includes(state.kind));
@@ -219,7 +220,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const timelineLabel = () => {
     const first = page()?.items[0];
     if (page()?.offset) return `CONTINUED · EVENT ${page()!.offset + 1}`;
-    if (isFiltered() && first && first.sequence > 0) return `FIRST MATCH · EVENT ${first.sequence + 1}`;
+    if (extraFilterCount() > 0 && first && first.sequence > 0) return `FIRST MATCH · EVENT ${first.sequence + 1}`;
     return "BEGINNING OF RECORDING";
   };
   const latest = () => {
@@ -294,10 +295,11 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         <span class="replay-count" role="status" title={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : undefined} aria-label={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : "Loading recording"}>{countLabel()}</span>
       </div>
       <details class="replay-filters" ref={setFilterDetails}><summary title="Filter this recording"><Icon name="sliders" size={14} />Filters<Show when={extraFilterCount()}><span class="filter-count">{extraFilterCount()}</span></Show></summary><div class="replay-filter-menu" ref={setFilterMenu} role="region" aria-label="Replay filters"><div class="replay-filter-menu-heading"><h3>Replay filters</h3><button class="icon-button tiny replay-filter-menu-close" aria-label="Close replay filters" onClick={() => { const element = filterDetails(); if (!element) return; element.open = false; element.querySelector<HTMLElement>("summary")?.focus(); }}><Icon name="close" size={15} /></button></div><p class="search-help">{page() ? `${page()!.total} matching of ${page()!.unfilteredTotal} recorded events.` : "Loading recording…"} Filters combine; records stay in their original order.</p>
-        <label for="replay-focused-view">Focused view<select id="replay-focused-view" aria-label="Focused replay view" value={kind()} onChange={event => changeKind(event.currentTarget.value)}><For each={[["conversation", "Conversation"], ["all", "All events"], ["tool", "Tools"], ["prompts", "Prompts"], ["responses", "Responses"], ["edits", "Edits"], ["thinking", "Thinking"], ["system", "System"]]}>{([value, label]) => <option value={value}>{label}</option>}</For></select></label>
-        <label for="replay-tool">Observed tool<select id="replay-tool" aria-label="Observed tool" value={tool()} onChange={event => changeFilter("replayTool", event.currentTarget.value)}><option value="">Any tool</option><For each={page()?.facets.tools || []}>{value => <option value={value}>{value}</option>}</For></select></label>
-        <label for="replay-model">Recorded model<select id="replay-model" aria-label="Recorded model" value={model()} onChange={event => changeFilter("replayModel", event.currentTarget.value)}><option value="">Any model</option><For each={page()?.facets.models || []}>{value => <option value={value}>{value}</option>}</For></select></label>
-        <label for="replay-cwd">Working directory<select id="replay-cwd" aria-label="Working directory" value={cwd()} onChange={event => changeFilter("replayCwd", event.currentTarget.value)}><option value="">Any directory</option><For each={page()?.facets.directories || []}>{value => <option value={value}>{value}</option>}</For></select></label>
+        <Show when={page()?.facets.limited}><p class="search-help">Up to 200 values per filter are shown. Search still covers all recorded content.</p></Show>
+        <label for="replay-focused-view">Focused replay view<select id="replay-focused-view" aria-label="Focused replay view" value={kind()} onChange={event => changeKind(event.currentTarget.value)}><For each={[["conversation", "Conversation"], ["all", "All events"], ["tool", "Tools"], ["prompts", "Prompts"], ["responses", "Responses"], ["edits", "Edits"], ["thinking", "Thinking"], ["system", "System"]]}>{([value, label]) => <option value={value}>{label}</option>}</For></select></label>
+        <label for="replay-tool">Observed tool<select id="replay-tool" aria-label="Observed tool" value={tool()} onChange={event => changeFilter("replayTool", event.currentTarget.value)}><option value="">Any tool</option><For each={withSelectedOption(page()?.facets.tools || [], tool())}>{value => <option value={value}>{value}</option>}</For></select></label>
+        <label for="replay-model">Recorded model<select id="replay-model" aria-label="Recorded model" value={model()} onChange={event => changeFilter("replayModel", event.currentTarget.value)}><option value="">Any model</option><For each={withSelectedOption(page()?.facets.models || [], model())}>{value => <option value={value}>{value}</option>}</For></select></label>
+        <label for="replay-cwd">Working directory<select id="replay-cwd" aria-label="Working directory" value={cwd()} onChange={event => changeFilter("replayCwd", event.currentTarget.value)}><option value="">Any directory</option><For each={withSelectedOption(page()?.facets.directories || [], cwd())}>{value => <option value={value}>{value}</option>}</For></select></label>
         <label class="replay-errors"><input aria-label="Only errors" type="checkbox" checked={errorsOnly()} onChange={event => changeErrors(event.currentTarget.checked)} />Only errors</label>
         <div class="replay-date-range"><label for="replay-after">After UTC<input id="replay-after" aria-label="After UTC" type="date" value={after()} onChange={event => changeDate("replayAfter", event.currentTarget.value)} /></label><label for="replay-before">Before UTC<input id="replay-before" aria-label="Before UTC" type="date" value={before()} onChange={event => changeDate("replayBefore", event.currentTarget.value)} /></label></div>
         <button class="text-button" onClick={resetReplay}>Reset replay filters</button>
@@ -309,7 +311,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
         <For each={visibleEvents()} keyed={event => event.id} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the full chronological recording.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={event().id === props.anchor} onShowContext={revealContext} />}</For>
-        <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{isFiltered() ? "End of matching records." : "You're all caught up."}<small>{isFiltered() ? "Reset filters for the full chronology." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
+        <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{extraFilterCount() ? "End of matching records." : "You're all caught up."}<small>{extraFilterCount() ? "Reset filters for the full chronology." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">
       <p class="eyebrow">AT A GLANCE</p>

@@ -1,10 +1,11 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
 import { dateBound, numericBound } from "../src/server/search";
 import { removeTestDirectory } from "./helpers";
+import { withSelectedOption } from "../src/client/lib/filter-options";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -72,6 +73,7 @@ test("pricing coverage and numeric bounds preserve unknown and partial semantics
   expect(list("minCost=0&maxCost=0").items.map(session => session.title)).toEqual(["Zero"]);
   expect(list("maxCost=100").total).toBe(2);
   expect(list("minTokens=0").total).toBe(4);
+  expect(list("pricing=missing&minTokens=0").total).toBe(0);
   expect(list("minTokens=2400&maxRecords=3").items[0].title).toBe("Partial");
   expect(list("minRecords=2&maxRecords=2").total).toBe(3);
   expect(list("minCost=11&maxCost=10").total).toBe(0);
@@ -134,7 +136,7 @@ test("replay views include mixed records, paired results and independent failure
   expect(events("model=model-a").items.map(event => event.sequence)).toEqual([1]);
   expect(events("cwd=%2Fsynthetic%2Fworktree").items.map(event => event.sequence)).toEqual([3]);
   expect(events("q=nonexistent").unfilteredTotal).toBe(5);
-  expect(events("q=nonexistent").facets).toEqual({ tools: ["Edit"], models: ["model-a", "model-b"], directories: ["/synthetic/project", "/synthetic/worktree"] });
+  expect(events("q=nonexistent").facets).toEqual({ tools: ["Edit"], models: ["model-a", "model-b"], directories: ["/synthetic/project", "/synthetic/worktree"], limited: false });
 });
 
 test("full-session replay filters precede pagination and context keeps original sequence", async () => {
@@ -187,7 +189,12 @@ test("numeric and UTC date bounds reject malformed and impossible values", () =>
   expect(numericBound("1.5", true)).toBeNull();
   expect(dateBound("2026-09-20", true)).toBe("2026-09-20T23:59:59.999Z");
   expect(dateBound("2026-02-30")).toBeNull();
+  expect(dateBound("2026-02-30T12:00:00Z")).toBeNull();
+  expect(dateBound("2026-09-20T12:00:00")).toBeNull();
+  expect(dateBound("2026-09-20T12:00:00+02:00")).toBe("2026-09-20T10:00:00.000Z");
   expect(dateBound("yesterday")).toBeNull();
+  expect(withSelectedOption(["Read", "Write"], "Custom")).toEqual(["Custom", "Read", "Write"]);
+  expect(withSelectedOption(["Read", "Write"], "Read")).toEqual(["Read", "Write"]);
 });
 
 test("investigation sorts rank recorded span, failures, tool calls and titles deterministically", async () => {
@@ -206,4 +213,74 @@ test("investigation sorts rank recorded span, failures, tool calls and titles de
   const list = recorder.list(new URLSearchParams("sort=activity&limit=1&offset=1"));
   expect(list.items[0].title).toBe("Beta");
   expect(list.total).toBe(3);
+});
+
+test("facet queries reuse bounded caches and index changes invalidate only changed recordings", async () => {
+  const setup = await fixture();
+  const source = await setup.write("first", [record("First"), request("first", 1, "model-a")]);
+  await setup.write("second", [record("Second"), request("second", 1, "model-b")]);
+  const recorder = await setup.open();
+  const sessions = recorder.list(new URLSearchParams("sort=title")).items;
+  const query = spyOn(recorder.db, "query");
+  const facetQueries = () => query.mock.calls.filter(([sql]) => sql.includes("SELECT DISTINCT value FROM session_facets")).length;
+  try {
+    await recorder.catalog();
+    recorder.events(sessions[0].id, new URLSearchParams());
+    recorder.events(sessions[1].id, new URLSearchParams());
+    const initial = facetQueries();
+    recorder.bookmark(sessions[0].id, true);
+    await recorder.catalog();
+    recorder.events(sessions[0].id, new URLSearchParams("q=absent"));
+    expect(facetQueries()).toBe(initial);
+    await appendFile(source, JSON.stringify(request("new", 1, "model-new")) + "\n");
+    await recorder.scan();
+    recorder.events(sessions[1].id, new URLSearchParams());
+    expect(facetQueries()).toBe(initial);
+    expect((await recorder.catalog()).models).toContain("model-new");
+    expect(recorder.events(sessions[0].id, new URLSearchParams()).facets.models).toContain("model-new");
+    expect(facetQueries()).toBe(initial + 5);
+    await writeFile(source, JSON.stringify(record("Replacement")) + "\n");
+    await recorder.scan();
+    expect((await recorder.catalog()).models).toEqual(["model-b"]);
+    expect(recorder.events(sessions[0].id, new URLSearchParams()).facets.models).toEqual([]);
+  } finally { query.mockRestore(); }
+});
+
+test("facets bound untrusted metadata without rewriting raw records or inventing tool names", async () => {
+  const setup = await fixture();
+  const records = Array.from({ length: 230 }, (_, index) => record("", { type: "assistant", message: {
+    model: `model-${String(index).padStart(3, "0")}`, content: [{ type: "tool_use", id: `call-${index}`, name: `Tool-${String(index).padStart(3, "0")}`, input: {} }],
+  } }));
+  records.push(record("", { type: "assistant", message: { model: "x".repeat(1000), content: [
+    { type: "tool_use", id: "malformed", name: "Read\nWrite" }, { type: "tool_use", id: "oversized", name: "X".repeat(1000) },
+  ] } }));
+  const source = await setup.write("bounded", records);
+  const original = await Bun.file(source).text();
+  const recorder = await setup.open();
+  const catalog = await recorder.catalog();
+  expect(catalog.models).toHaveLength(200);
+  expect(catalog.toolsUsed).toHaveLength(200);
+  expect(catalog.facetsLimited).toBe(true);
+  expect(catalog.toolsUsed).not.toContain("Read");
+  expect(recorder.list(new URLSearchParams("tool=Read")).total).toBe(0);
+  expect(recorder.list(new URLSearchParams({ tool: "Read\nWrite" })).total).toBe(0);
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const events = recorder.events(session.id, new URLSearchParams());
+  expect(events.facets.limited).toBe(true);
+  expect(events.facets.tools).toHaveLength(200);
+  expect(recorder.events(session.id, new URLSearchParams({ tool: "Read\nWrite" })).total).toBe(0);
+  expect(recorder.events(session.id, new URLSearchParams("tool=Tool-229")).total).toBe(1);
+  expect(recorder.events(session.id, new URLSearchParams("q=malformed")).items[0].toolNames).toContain("Read\nWrite");
+  expect(await Bun.file(source).text()).toBe(original);
+});
+
+test("literal missing-effort text never aliases the separate missing-data filter", async () => {
+  const setup = await fixture();
+  await setup.write("missing", [record("Missing"), request("missing", 1)]);
+  await setup.write("literal", [record("Literal"), request("literal", 1, "unknown-model", "__missing__")]);
+  const recorder = await setup.open();
+  expect(recorder.list(new URLSearchParams("effort=__missing__")).items.map(session => session.title)).toEqual(["Literal"]);
+  expect(recorder.list(new URLSearchParams("effortMissing=1")).items.map(session => session.title)).toEqual(["Missing"]);
+  expect(recorder.list(new URLSearchParams("effortMissing=1&effort=__missing__")).total).toBe(0);
+  expect((await recorder.catalog()).efforts).toEqual(["__missing__"]);
 });

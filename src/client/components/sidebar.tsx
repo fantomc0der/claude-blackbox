@@ -35,9 +35,10 @@ export function Sidebar(props: { catalog: Catalog | null; params: URLSearchParam
     props.navigate({ workspace: null, cwd: null, bookmarked: null, days: null, session: null, event: null, offset: null, ...values });
     props.close();
   };
+  const reset = () => select({ ...Object.fromEntries(["q", "errors", "edits", "model", "effort", "effortMissing", "tool", "branch", "after", "before", "agents", "active", "pricing", "minCost", "maxCost", "minTokens", "maxTokens", "minRecords", "maxRecords"].map(key => [key, null])) });
   const all = () => !props.params.get("workspace") && !props.params.get("bookmarked") && !props.params.get("days");
   return <aside class="sidebar" aria-label="Workspace navigation" inert={props.hidden}>
-    <a class="brand" href="/" onClick={event => { event.preventDefault(); select({ q: null, workspace: null, cwd: null, days: null, bookmarked: null, errors: null, edits: null, model: null, effort: null, tool: null, branch: null, after: null, before: null, agents: null, active: null, pricing: null, minCost: null, maxCost: null, minTokens: null, maxTokens: null, minRecords: null, maxRecords: null }); }}><span class="brand-mark"><Icon name="box" size={23} /></span><span>blackbox<small>FOR CLAUDE CODE</small></span></a>
+    <a class="brand" href="/" onClick={event => { event.preventDefault(); reset(); }}><span class="brand-mark"><Icon name="box" size={23} /></span><span>blackbox<small>FOR CLAUDE CODE</small></span></a>
     <button class="sidebar-mobile-close icon-button" onClick={props.close} aria-label="Close navigation"><Icon name="close" /></button>
     <div class="nav-section-label">FLIGHT RECORDER</div>
     <nav class="primary-nav" aria-label="Recordings">

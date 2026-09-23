@@ -15,6 +15,14 @@ async function openFilters(page: Page) {
   await expect(page.locator(".replay-filter-menu")).toBeVisible();
 }
 
+test("default conversation retains its beginning and live-update end copy", async ({ page }) => {
+  await openReplay(page);
+  await expect(page.locator(".timeline-marker")).toContainText("BEGINNING OF RECORDING");
+  await expect(page.locator(".timeline-end")).toContainText("You're all caught up.");
+  await expect(page.locator(".timeline-end")).toContainText("New activity appears here automatically.");
+  await expect(page.locator(".replay-context-button").first()).toBeVisible();
+});
+
 test("replay filters persist through reload and browser history on desktop", async ({ page }) => {
   await openReplay(page);
   await openFilters(page);
@@ -122,13 +130,13 @@ test("an anchored recording does not pull a reader back on metadata refresh", as
 });
 
 test("filtered live updates explicitly open the latest unfiltered records", async ({ page }) => {
-  await page.goto("/?q=Live+update+verification");
+  await page.goto("/?q=Filtered+live+verification");
   await page.locator(".session-row").click();
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("not-a-matching-record");
   await expect(page.locator(".replay-event")).toHaveCount(0);
   await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
   const text = `Filtered update ${crypto.randomUUID()}`;
-  await appendFile(resolve(".blackbox/e2e/projects/browser-regressions/live-recording.jsonl"), JSON.stringify({ type: "user", timestamp: new Date().toISOString(), message: { content: text } }) + "\n");
+  await appendFile(resolve(".blackbox/e2e/projects/browser-regressions/filtered-live-recording.jsonl"), JSON.stringify({ type: "user", timestamp: new Date().toISOString(), message: { content: text } }) + "\n");
   await page.getByRole("button", { name: "Recording updated · Show latest unfiltered" }).click();
   await expect(page).not.toHaveURL(/replayQ=/);
   await expect(page).toHaveURL(/replayKind=all/);

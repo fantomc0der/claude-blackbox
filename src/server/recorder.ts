@@ -7,6 +7,7 @@ import { readJsonLines } from "./jsonl";
 import { displaySnippet, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { emptyUsage, normalizeModel, readUsage, usageColumns } from "./usage";
+import { facetLimit, isFacetValue } from "./facets";
 
 interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
@@ -60,6 +61,12 @@ const schema = `
     PRIMARY KEY(session_id,tool_id)
   );
   CREATE INDEX IF NOT EXISTS tool_calls_event ON tool_calls(event_row);
+  CREATE TABLE IF NOT EXISTS session_facets (
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL, value TEXT NOT NULL,
+    PRIMARY KEY(session_id,kind,value)
+  );
+  CREATE INDEX IF NOT EXISTS facet_values ON session_facets(kind,value);
   CREATE INDEX IF NOT EXISTS sessions_cwd ON sessions(cwd);
   CREATE INDEX IF NOT EXISTS sessions_updated ON sessions(updated DESC);
   CREATE VIRTUAL TABLE IF NOT EXISTS event_fts USING fts5(text, content='events', content_rowid='rowid', tokenize='unicode61');
@@ -107,6 +114,8 @@ export class Recorder {
   private stopped = false;
   private scanWarnings = 0;
   private workspaceUsage: Map<string, UsageSummary> | null = null;
+  private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "facetsLimited"> | null = null;
+  private replayFacets = new Map<string, EventPage["facets"]>();
 
   private constructor(dataDir: string, stateDir: string, db: Database) {
     this.dataDir = resolve(dataDir);
@@ -115,6 +124,7 @@ export class Recorder {
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version > 5) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
+    const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
     const fields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all().map(row => row.name));
     if (!fields.has("identity")) db.exec("ALTER TABLE sessions ADD COLUMN identity TEXT NOT NULL DEFAULT ''");
@@ -132,8 +142,9 @@ export class Recorder {
     db.exec(`CREATE INDEX IF NOT EXISTS events_model ON events(session_id,model);
       CREATE INDEX IF NOT EXISTS events_timestamp ON events(session_id,timestamp);
       CREATE INDEX IF NOT EXISTS events_cwd ON events(session_id,cwd);
-      CREATE INDEX IF NOT EXISTS events_tools ON events(session_id,tools);`);
-    if (!hasResults || version < 5) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=5;");
+      CREATE INDEX IF NOT EXISTS events_tools ON events(session_id,tools);
+      CREATE INDEX IF NOT EXISTS usage_efforts ON usage_records(effort);`);
+    if (!hasResults || !hasFacets || version < 5) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=5;");
     const interrupted = db.query<{ id: string }, []>("SELECT id FROM sessions WHERE events != (SELECT count(*) FROM events WHERE session_id=sessions.id)").all();
     for (const row of interrupted) db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(row.id);
   }
@@ -220,6 +231,7 @@ export class Recorder {
         if (reset) this.db.transaction(() => {
           this.db.query("DELETE FROM events WHERE session_id = ?").run(id);
           this.db.query("DELETE FROM usage_records WHERE session_id = ?").run(id);
+          this.db.query("DELETE FROM session_facets WHERE session_id = ?").run(id);
           this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
             messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0 WHERE id=?`).run(id);
         })();
@@ -230,6 +242,7 @@ export class Recorder {
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
           const insertResult = this.db.query("INSERT OR REPLACE INTO tool_results(session_id,tool_id,raw,event_row) VALUES (?,?,?,?)");
           const insertCall = this.db.query("INSERT OR REPLACE INTO tool_calls(session_id,tool_id,name,event_row) VALUES (?,?,?,?)");
+          const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
           const insertUsage = this.db.query(`INSERT INTO usage_records(session_id,request_key,input,output,cache_creation,cache_read,cost,recorded,sidechain,model,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(session_id,request_key) DO UPDATE SET input=excluded.input, output=excluded.output,
               cache_creation=excluded.cache_creation, cache_read=excluded.cache_read, cost=excluded.cost,
@@ -242,8 +255,9 @@ export class Recorder {
                 AND (excluded.recorded > usage_records.recorded OR (excluded.recorded = usage_records.recorded AND coalesce(excluded.cost,-1) > coalesce(usage_records.cost,-1))))))`);
           const enrichEffort = this.db.query("UPDATE usage_records SET effort=? WHERE session_id=? AND request_key=? AND effort IS NULL");
           for (const event of events) {
+            const toolNames = event.toolNames.filter(name => isFacetValue(name));
             const inserted = insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
-              Number(event.error), event.toolNames.join("\n"), JSON.stringify(event.raw), event.text, event.role, event.timestamp,
+              Number(event.error), toolNames.join("\n"), JSON.stringify(event.raw), event.text, event.role, event.timestamp,
               string(object(event.raw.message).model), event.cwd || "", Number(event.blocks.some(block => block.type === "thinking")),
               Number(event.blocks.some(block => block.type === "tool_use" || block.type === "tool_result")));
             const usage = readUsage(event.raw, id, event.id);
@@ -251,9 +265,15 @@ export class Recorder {
               insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain), usage.model, usage.effort);
               if (usage.effort) enrichEffort.run(usage.effort, id, usage.key);
             }
-            if (inserted.changes) for (const block of event.blocks) {
-              if (block.type === "tool_result" && typeof block.tool_use_id === "string") insertResult.run(id, block.tool_use_id, JSON.stringify(block), inserted.lastInsertRowid);
-              if (block.type === "tool_use" && typeof block.id === "string") insertCall.run(id, block.id, block.name || "Unknown tool", inserted.lastInsertRowid);
+            if (inserted.changes) {
+              const model = string(object(event.raw.message).model);
+              if (model !== "<synthetic>" && isFacetValue(model)) insertFacet.run(id, "model", model);
+              if (isFacetValue(event.cwd, 2048)) insertFacet.run(id, "cwd", event.cwd);
+              for (const name of toolNames) insertFacet.run(id, "tool", name);
+              for (const block of event.blocks) {
+                if (block.type === "tool_result" && typeof block.tool_use_id === "string") insertResult.run(id, block.tool_use_id, JSON.stringify(block), inserted.lastInsertRowid);
+                if (block.type === "tool_use" && typeof block.id === "string" && isFacetValue(block.name || "Unknown tool")) insertCall.run(id, block.id, block.name || "Unknown tool", inserted.lastInsertRowid);
+              }
             }
           }
         });
@@ -299,7 +319,11 @@ export class Recorder {
       changed.push(row.id);
     }
     this.indexedAt = new Date().toISOString();
-    if (changed.length) this.emit(changed);
+    if (changed.length) {
+      this.catalogFacets = null;
+      for (const id of changed) this.replayFacets.delete(id);
+      this.emit(changed);
+    }
     return changed;
   }
 
@@ -347,15 +371,16 @@ export class Recorder {
     }
     const model = params.get("model");
     const effort = params.get("effort");
-    if (model && !effort) {
+    const effortMissing = params.get("effortMissing") === "1";
+    if (model && !effort && !effortMissing) {
       conditions.push(`(EXISTS (SELECT 1 FROM events e WHERE e.session_id=s.id AND e.model=?)
         OR EXISTS (SELECT 1 FROM usage_records model_usage WHERE model_usage.session_id=s.id AND model_usage.model=?))`);
       bindings.push(model, normalizeModel(model));
     }
-    if (effort) {
+    if (effort || effortMissing) {
       conditions.push(`EXISTS (SELECT 1 FROM usage_records model_usage WHERE model_usage.session_id=s.id
-        AND ${effort === "__missing__" ? "model_usage.effort IS NULL" : "model_usage.effort=?"}${model ? " AND model_usage.model=?" : ""})`);
-      if (effort !== "__missing__") bindings.push(effort);
+        ${effortMissing ? " AND model_usage.effort IS NULL" : ""}${effort ? " AND model_usage.effort=?" : ""}${model ? " AND model_usage.model=?" : ""})`);
+      if (effort) bindings.push(effort);
       if (model) bindings.push(normalizeModel(model));
     }
     if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
@@ -396,8 +421,11 @@ export class Recorder {
     }
     if (params.get("tool")) {
       const tool = params.get("tool")!;
-      conditions.push(`EXISTS (SELECT 1 FROM events e WHERE e.session_id=s.id AND ${toolCondition("e.tools", tool)})`);
-      if (tool !== "mcp__") bindings.push(tool);
+      if (!isFacetValue(tool)) conditions.push("0");
+      else {
+        conditions.push(`EXISTS (SELECT 1 FROM events e WHERE e.session_id=s.id AND ${toolCondition("e.tools", tool)})`);
+        if (tool !== "mcp__") bindings.push(tool);
+      }
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const total = this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total ${selectionJoins} ${where}`).get(...bindings)!.total;
@@ -471,7 +499,8 @@ export class Recorder {
       if (params.get(field)) { filter += ` AND e.${field}=?`; bindings.push(params.get(field)!); }
     }
     const tool = params.get("tool");
-    if (tool) {
+    if (tool && !isFacetValue(tool)) filter += " AND 0";
+    else if (tool) {
       const callMatch = tool === "mcp__" ? "substr(lower(call.name),1,5)='mcp__'" : "lower(call.name)=lower(?)";
       filter += ` AND (${toolCondition("e.tools", tool)} OR EXISTS (
         SELECT 1 FROM tool_results result JOIN tool_calls call ON call.session_id=result.session_id AND call.tool_id=result.tool_id
@@ -496,10 +525,20 @@ export class Recorder {
     const items = this.db.query<StoredEvent, SQLQueryBindings[]>(`SELECT e.raw,e.event_id,e.sequence,e.offset,e.text FROM events e WHERE ${filter} ORDER BY e.sequence LIMIT ? OFFSET ?`)
       .all(...bindings, limit, offset).map(row => normalize(JSON.parse(row.raw), id, row.offset, row.sequence));
     const unfilteredTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=?").get(id)!.total;
-    const tools = [...new Set(this.db.query<{ tools: string }, [string]>("SELECT DISTINCT tools FROM events WHERE session_id=? AND tools!=''").all(id).flatMap(row => row.tools.split("\n")))].sort();
-    const models = this.db.query<{ model: string }, [string]>("SELECT DISTINCT model FROM events WHERE session_id=? AND model NOT IN ('','<synthetic>') ORDER BY model").all(id).map(row => row.model);
-    const directories = this.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=? AND cwd!='' ORDER BY cwd").all(id).map(row => row.cwd);
-    return { items, total, offset, limit, unfilteredTotal, facets: { tools, models, directories } };
+    let facets = this.replayFacets.get(id);
+    if (!facets) {
+      const tools = this.facetValues("tool", id), models = this.facetValues("model", id), directories = this.facetValues("cwd", id);
+      facets = { tools: tools.values, models: models.values, directories: directories.values, limited: tools.limited || models.limited || directories.limited };
+      if (this.replayFacets.size >= 32) this.replayFacets.delete(this.replayFacets.keys().next().value!);
+      this.replayFacets.set(id, facets);
+    }
+    return { items, total, offset, limit, unfilteredTotal, facets };
+  }
+
+  private facetValues(kind: string, id?: string): { values: string[]; limited: boolean } {
+    const rows = this.db.query<{ value: string }, SQLQueryBindings[]>(`SELECT DISTINCT value FROM session_facets
+      WHERE kind=?${id ? " AND session_id=?" : ""} ORDER BY value LIMIT ?`).all(kind, ...(id ? [id] : []), facetLimit + 1);
+    return { values: rows.slice(0, facetLimit).map(row => row.value), limited: rows.length > facetLimit };
   }
 
   results(id: string, toolIds: string[]): Record<string, import("../shared/types").ContentBlock> {
@@ -552,6 +591,11 @@ export class Recorder {
   }
 
   async catalog(): Promise<Catalog> {
+    if (!this.catalogFacets) {
+      const models = this.facetValues("model"), tools = this.facetValues("tool");
+      const efforts = this.db.query<{ effort: string }, [number]>("SELECT DISTINCT effort FROM usage_records WHERE effort IS NOT NULL ORDER BY effort LIMIT ?").all(facetLimit + 1);
+      this.catalogFacets = { models: models.values, toolsUsed: tools.values, efforts: efforts.slice(0, facetLimit).map(row => row.effort), facetsLimited: models.limited || tools.limited || efforts.length > facetLimit };
+    }
     const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number }, []>(
       "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings FROM sessions").get()!;
     const sources = this.db.query<{ cwd: string; count: number }, []>("SELECT cwd,count(*) AS count FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
@@ -574,9 +618,7 @@ export class Recorder {
     return {
       ...totals, warnings: totals.warnings + this.scanWarnings, groups, workspaces: workspaces.sort((left, right) => right.count - left.count),
       bookmarked: this.db.query<{ count: number }, []>("SELECT count(*) AS count FROM bookmarks b JOIN sessions s ON b.session_id=s.id").get()!.count,
-      models: this.db.query<{ model: string }, []>("SELECT DISTINCT model FROM events WHERE model NOT IN ('','<synthetic>') ORDER BY model").all().map(row => row.model),
-      toolsUsed: [...new Set(this.db.query<{ tools: string }, []>("SELECT DISTINCT tools FROM events WHERE tools!=''").all().flatMap(row => row.tools.split("\n")))].sort(),
-      efforts: this.db.query<{ effort: string }, []>("SELECT DISTINCT effort FROM usage_records WHERE effort IS NOT NULL ORDER BY effort").all().map(row => row.effort),
+      ...this.catalogFacets,
       dataDir: this.dataDir, indexedAt: this.indexedAt, demo: await Bun.file(join(this.dataDir, ".blackbox-demo")).exists(),
     };
   }

@@ -159,13 +159,15 @@ test("workspace groups persist and retain the original source filter", async ({ 
 });
 
 test("session and event pagination remain bounded and navigable", async ({ page }) => {
+  const listing = await (await page.request.get("/api/sessions")).json();
+  const secondPageCount = Math.min(listing.limit, listing.total - listing.limit);
   await page.goto("/");
   await expect(page.locator(".session-row")).toHaveCount(50);
   await page.getByRole("button", { name: "Next recordings" }).click();
   await expect(page).toHaveURL(/offset=50/);
-  await expect(page.locator(".session-row")).toHaveCount(26);
+  await expect(page.locator(".session-row")).toHaveCount(secondPageCount);
   await page.reload();
-  await expect(page.locator(".session-row")).toHaveCount(26);
+  await expect(page.locator(".session-row")).toHaveCount(secondPageCount);
   await page.waitForTimeout(300);
   await expect(page).toHaveURL(/offset=50/);
   await page.getByRole("button", { name: "Previous recordings" }).click();
@@ -351,7 +353,8 @@ test("event permalinks and open tool disclosures survive metadata refresh", asyn
   await page.goto(href!);
   await expect(page.locator(".replay-event").first()).toHaveAttribute("data-event-id", eventId!);
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("retryBudget");
-  await expect(page.locator(".tool-code mark")).toHaveText("retryBudget");
+  await expect(page).toHaveURL(/replayQ=retryBudget/);
+  await expect(page.locator(".tool-code mark").first()).toHaveText("retryBudget");
 });
 
 test("mobile navigation removes hidden controls from keyboard focus", async ({ page }) => {
