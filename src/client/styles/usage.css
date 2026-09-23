@@ -44,7 +44,7 @@
   .usage-note { color: var(--muted); font-size: var(--text-meta); line-height: 1.6; }
   .usage-note p { margin: 8px 0 0; }
   .usage-warning { color: var(--danger); }
-  .session-trailing { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; min-width: 0; }
+  .session-trailing { grid-column: -3 / -2; grid-row: 1; align-self: start; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; min-width: 0; padding-top: calc((var(--text-control) * 1.6 - var(--text-meta) * 1.5) / 2); }
   .session-usage { color: var(--text); font-size: var(--text-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .session-usage-tokens, .session-cost-label { color: var(--muted); }
   .replay-heading-content { flex: 1; min-width: 0; }
@@ -58,7 +58,8 @@
   .library-split .usage-expand > span, .library-split .session-usage-tokens { display: none; }
   .library-split .token-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .library-split .usage-directories th:first-child, .library-split .usage-directories td:first-child { width: 48%; }
-  .library-split .session-trailing { align-self: start; }
+  .library-split .session-trailing { grid-column: -2 / -1; }
+  .library-split .session-usage, .library-split .session-sort-metric { max-width: 100%; white-space: normal; text-align: right; overflow-wrap: anywhere; }
 }
 
 @layer responsive {
@@ -79,8 +80,8 @@
     .usage-expand > span { display: none; }
     .token-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .usage-directories th:first-child, .usage-directories td:first-child { width: 50%; }
-    .session-trailing { align-self: start; }
-    .session-usage { max-width: 100px; white-space: normal; text-align: right; overflow-wrap: anywhere; }
+    .session-trailing { grid-column: -2 / -1; }
+    .session-usage, .session-sort-metric { max-width: 100%; white-space: normal; text-align: right; overflow-wrap: anywhere; }
     .library .filter-tabs { gap: 0; }
     .library .filter-tab { min-height: 44px; padding-inline: 4px; }
     .library .filter-tab svg, .library .filter-popover > summary > span:not(.filter-count) { display: none; }
