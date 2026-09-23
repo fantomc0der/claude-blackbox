@@ -370,23 +370,25 @@ test("mobile navigation removes hidden controls from keyboard focus", async ({ p
 
 test("desktop layouts adapt from compact laptops through 4K and ultrawide monitors", async ({ page }) => {
   const sizes = [
-    { width: 1280, height: 720, columns: 1 },
-    { width: 1366, height: 768, columns: 1 },
-    { width: 1920, height: 1080, columns: 1 },
-    { width: 2560, height: 1440, columns: 1 },
-    { width: 3440, height: 1440, columns: 1 },
-    { width: 3840, height: 2160, columns: 1 },
+    { width: 1280, height: 720 },
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+    { width: 2560, height: 1440 },
+    { width: 3440, height: 1440 },
+    { width: 3840, height: 2160 },
   ];
   for (const size of sizes) {
     await page.setViewportSize(size);
     await page.goto("/");
     await expect(page.locator(".session-row").first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const columns = await page.locator(".recordings-scroll").evaluate(element => {
-      const style = getComputedStyle(element);
-      return style.display === "grid" ? style.gridTemplateColumns.split(" ").length : 1;
-    });
-    expect(columns).toBe(size.columns);
+    const rows = await page.locator(".session-row").evaluateAll(elements => elements.map(element => {
+      const bounds = element.getBoundingClientRect();
+      return { left: bounds.left, top: bounds.top, bottom: bounds.bottom, width: bounds.width };
+    }));
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.every(row => row.left === rows[0].left && row.width === rows[0].width)).toBe(true);
+    expect(rows.slice(1).every((row, index) => row.top >= rows[index].bottom - 1)).toBe(true);
     expect(await page.locator(".recordings-scroll").evaluate(element => element.clientHeight)).toBeGreaterThan(180);
     await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
     await expect(page.locator(".replay-event").first()).toBeVisible();
