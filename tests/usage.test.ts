@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { appendFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -110,6 +110,32 @@ describe("usage extraction and pricing", () => {
 });
 
 describe("indexed usage", () => {
+  test("catalog reuses workspace usage until an index or group invalidation", async () => {
+    const setup = await fixture();
+    const file = await setup.write("original", [record("original", { costUSD: 1 })]);
+    await setup.write("clone", [record("clone", { cwd: "C:\\work\\clone", costUSD: 2 })]);
+    const recorder = await setup.open();
+    const query = spyOn(recorder.db, "query");
+    const aggregations = () => query.mock.calls.filter(([sql]) => sql.includes("PARTITION BY coalesce(gp.group_id,s.cwd)")).length;
+    try {
+      const first = await recorder.catalog();
+      expect((await recorder.catalog()).workspaces).toEqual(first.workspaces);
+      expect(aggregations()).toBe(1);
+      await appendFile(file, JSON.stringify(record("appended", { costUSD: 3 })) + "\n");
+      await recorder.scan();
+      expect((await recorder.catalog()).workspaces.find(workspace => workspace.name === "orbit")?.usage.costUSD).toBe(4);
+      expect(aggregations()).toBe(2);
+      const group = recorder.saveGroup({ name: "Cached group", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
+      expect((await recorder.catalog()).workspaces[0].usage.costUSD).toBe(6);
+      expect(aggregations()).toBe(3);
+      await recorder.catalog();
+      expect(aggregations()).toBe(3);
+      recorder.deleteGroup(group.id);
+      expect((await recorder.catalog()).workspaces).toHaveLength(2);
+      expect(aggregations()).toBe(4);
+    } finally { query.mockRestore(); }
+  });
+
   test("catalog costs cover each workspace and deduplicate copied requests within a group", async () => {
     const setup = await fixture();
     const shared = record("shared", { costUSD: 10 });

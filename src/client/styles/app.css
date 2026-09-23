@@ -85,9 +85,9 @@
   .workspace-filter input { width: 100%; padding: 7px 9px; font-size: var(--text-control); }
   .workspace-nav { overflow-y: auto; min-height: clamp(140px, 24dvh, 360px); flex: 1; }
   .workspace-nav-item { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 0 10px; min-height: 41px; font-size: var(--text-control); }
-  .workspace-nav-item .nav-count { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-nav-item .nav-count { grid-column: 3; grid-row: 1; max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .workspace-nav-item > svg { color: #777f7e; }
-  .workspace-nav-item small { grid-column: 2 / -1; font-size: var(--text-meta); margin-top: 4px; color: #8e9887; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-nav-item small { grid-column: 2 / -1; grid-row: 2; font-size: var(--text-meta); margin-top: 4px; color: #8e9887; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nav-empty { padding: 5px 12px; color: var(--muted); font-size: var(--text-support); line-height: 1.7; }
   .nav-empty p { margin-bottom: 4px; }
   .workspace-label .workspace-group { gap: 4px; padding-inline: 4px; font-size: var(--text-meta); letter-spacing: 0; flex-shrink: 0; }

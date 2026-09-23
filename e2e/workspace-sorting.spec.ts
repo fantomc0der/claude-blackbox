@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type { Workspace } from "../src/shared/types";
 import { emptyUsage } from "../src/server/usage";
+import { visibleWorkspaces } from "../src/client/lib/workspaces";
 import { expect, test } from "./harness";
 
 function workspace(name: string, count: number, costUSD: number): Workspace {
@@ -71,6 +72,12 @@ test("optional workspace filtering matches grouped paths, clears empty results a
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(filter).toBeHidden();
   await expect(page.locator(".workspace-nav-item")).toHaveCount(4);
+  await toggle.click();
+  await filter.fill("Zeta");
+  await page.getByRole("button", { name: "Clear and close workspace filter", exact: true }).click();
+  await expect(toggle).toBeFocused();
+  await expect(filter).toBeHidden();
+  await expect(page.locator(".workspace-nav-item")).toHaveCount(4);
 });
 
 test("workspace costs distinguish missing, unpriced and partial usage from free usage", async ({ page }) => {
@@ -131,6 +138,7 @@ test("workspace sort and filter remain usable in mobile navigation", async ({ pa
   await expect(page.locator(".app-shell")).not.toHaveClass(/nav-open/);
   expect(new URL(page.url()).searchParams.get("workspace")).toBe("/synthetic/Orbit-2");
   await page.getByRole("button", { name: "Open workspace navigation", exact: true }).click();
+  await expect(page.locator(".sidebar-mobile-close")).toBeFocused();
   await filter.press("Escape");
   await expect(page.locator(".app-shell")).toHaveClass(/nav-open/);
   await expect(page.locator(".workspace-nav-item")).toHaveCount(4);
@@ -158,9 +166,8 @@ test("cost sorting follows live grouping and ungrouping without resetting the pr
     await expect(groupRow).toContainText("2 folders, one history");
     await expect(sort).toHaveValue("cost");
     const catalog = await page.evaluate(() => fetch("/api/catalog").then(response => response.json())) as { workspaces: Workspace[] };
-    const costs = await page.locator(".workspace-nav-item").evaluateAll(rows => rows.map(row => row.textContent));
-    const ordered = [...catalog.workspaces].sort((left, right) => right.usage.costUSD - left.usage.costUSD);
-    expect(costs.map(text => ordered.findIndex(workspace => text?.startsWith(workspace.name)))).toEqual(ordered.map((_, index) => index));
+    const ordered = visibleWorkspaces(catalog.workspaces, "cost", "");
+    expect(await rowNames(page)).toEqual(ordered.map(workspace => workspace.name));
   } finally {
     await page.evaluate(id => fetch(`/api/groups/${id}`, { method: "DELETE", headers: { "Content-Type": "application/json" } }), group.id);
   }
