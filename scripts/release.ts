@@ -50,11 +50,13 @@ if (tauriConfig.version !== currentVersion || cargoVersion !== currentVersion) {
   process.exit(1);
 }
 
+const tag = `v${version}`;
+const releaseBranch = `release/${tag}`;
+const isPrerelease = prerelease(version) !== null;
 console.log(`Release ${currentVersion} -> ${version}`);
+console.log(`Release PR branch: ${releaseBranch}`);
 if (dryRun) process.exit(0);
 
-const tag = `v${version}`;
-const isPrerelease = prerelease(version) !== null;
 const run = async (strings: TemplateStringsArray, ...values: ShellExpression[]) => {
   const result = await Bun.$(strings, ...values).quiet().nothrow();
   if (result.exitCode !== 0) {
@@ -62,6 +64,25 @@ const run = async (strings: TemplateStringsArray, ...values: ShellExpression[]) 
     process.exit(result.exitCode);
   }
   return result.stdout.toString().trim();
+};
+
+const waitForRequiredChecks = async (prUrl: string) => {
+  console.log(`Waiting for required checks on ${prUrl}...`);
+  let checksReported = false;
+  for (let attempt = 0; attempt < 60 && !checksReported; attempt++) {
+    const result = await Bun.$`gh pr checks ${prUrl} --required --json name`.quiet().nothrow();
+    const output = result.stdout.toString().trim();
+    if (output) {
+      const checks = JSON.parse(output) as Array<{ name: string }>;
+      checksReported = checks.length > 0;
+    }
+    if (!checksReported) await Bun.sleep(2_000);
+  }
+  if (!checksReported) {
+    console.error(`Release aborted: required checks were not reported for ${prUrl}.`);
+    process.exit(1);
+  }
+  await run`gh pr checks ${prUrl} --required --watch --fail-fast --interval 10`;
 };
 
 if (await run`git status --porcelain`) {
@@ -83,6 +104,20 @@ if ((await Bun.$`git tag --list ${tag}`.quiet().text()).trim()) {
   console.error(`Release aborted: ${tag} already exists.`);
   process.exit(1);
 }
+if ((await run`git ls-remote --tags origin ${`refs/tags/${tag}`}`).trim()) {
+  console.error(`Release aborted: origin already contains ${tag}.`);
+  process.exit(1);
+}
+if ((await Bun.$`git branch --list ${releaseBranch}`.quiet().text()).trim()) {
+  console.error(`Release aborted: local branch ${releaseBranch} already exists.`);
+  process.exit(1);
+}
+if ((await run`git ls-remote --heads origin ${releaseBranch}`).trim()) {
+  console.error(`Release aborted: origin/${releaseBranch} already exists.`);
+  process.exit(1);
+}
+
+await run`git switch -c ${releaseBranch}`;
 
 packageJson.version = version;
 await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
@@ -97,8 +132,44 @@ await run`bun run check`;
 await run`cargo check --manifest-path src-tauri/Cargo.toml`;
 await run`git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock`;
 await run`git commit -m ${`Release ${tag}`}`;
+await run`git push -u origin ${releaseBranch}`;
+
+const prBody = `## Summary
+- bump the synchronized application version from ${currentVersion} to ${version}
+- prepare ${tag} for the protected-main release workflow
+
+## Validation
+- \`bun run check\`
+- \`cargo check --manifest-path src-tauri/Cargo.toml\`
+
+After the required pull-request checks pass, the release command will squash-merge this PR, tag the merged main commit, build the desktop artifacts, and publish the GitHub release.`;
+const prUrl = await run`gh pr create --base main --head ${releaseBranch} --title ${`Release ${tag}`} --body ${prBody}`;
+console.log(`Created release PR: ${prUrl}`);
+await waitForRequiredChecks(prUrl);
+
+const releaseCommit = await run`git rev-parse HEAD`;
+await run`gh pr merge ${prUrl} --squash --delete-branch --match-head-commit ${releaseCommit} --subject ${`Release ${tag}`} --body ${`Validated by the required release pull-request checks.`}`;
+await run`git switch main`;
+await run`git pull --ff-only origin main`;
+if ((await Bun.$`git branch --list ${releaseBranch}`.quiet().text()).trim()) {
+  await run`git branch -D ${releaseBranch}`;
+}
+if ((await run`git rev-list --left-right --count origin/main...HEAD`) !== "0\t0") {
+  console.error("Release aborted: main did not synchronize to the merged release PR.");
+  process.exit(1);
+}
+
+const mergedPackageJson = JSON.parse(await readFile(packagePath, "utf8"));
+const mergedTauriConfig = JSON.parse(await readFile(tauriPath, "utf8"));
+const mergedCargo = await readFile(cargoPath, "utf8");
+const mergedCargoVersion = mergedCargo.match(/^version = "([^"]+)"$/m)?.[1];
+if (mergedPackageJson.version !== version || mergedTauriConfig.version !== version || mergedCargoVersion !== version) {
+  console.error(`Release aborted: merged main does not contain synchronized version ${version}.`);
+  process.exit(1);
+}
+
 await run`git tag -a ${tag} -m ${`Release ${tag}`}`;
-await run`git push origin main ${tag}`;
+await run`git push origin ${tag}`;
 if (isPrerelease) {
   await run`gh release create ${tag} --draft --prerelease --verify-tag --generate-notes --title ${`claude-blackbox ${tag}`}`;
 } else {
