@@ -20,6 +20,7 @@ interface StoredEvent { raw: string; event_id: string; sequence: number; offset:
 
 const schema = `
   PRAGMA journal_mode = WAL;
+  PRAGMA busy_timeout = 5000;
   PRAGMA foreign_keys = ON;
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY, session_id TEXT NOT NULL, source TEXT NOT NULL UNIQUE,
@@ -149,7 +150,12 @@ export class Recorder {
     for (const row of interrupted) db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(row.id);
   }
 
-  static async open(dataDir: string, stateDir: string): Promise<Recorder> {
+  /**
+   * Opens or creates the derived index. The initial scan runs before this
+   * resolves unless `scan` is false, which lets the HTTP server bind first and
+   * index in the background while listeners watch the recordings arrive.
+   */
+  static async open(dataDir: string, stateDir: string, options: { scan?: boolean } = {}): Promise<Recorder> {
     const [root, state] = await Promise.all([physicalPath(resolve(dataDir)), physicalPath(resolve(stateDir))]);
     const compareRoot = process.platform === "win32" ? root.toLowerCase() : root;
     const compareState = process.platform === "win32" ? state.toLowerCase() : state;
@@ -158,7 +164,7 @@ export class Recorder {
     const database = new Database(join(state, "index.sqlite"), { create: true });
     try {
       const recorder = new Recorder(root, state, database);
-      await recorder.scan();
+      if (options.scan !== false) await recorder.scan();
       return recorder;
     } catch (error) { database.close(); throw error; }
   }
@@ -216,7 +222,13 @@ export class Recorder {
     const complete = await this.discover(join(this.dataDir, "projects"), files);
     const known = new Map(this.db.query<SourceRow, []>("SELECT * FROM sessions").all().map(row => [row.source, row]));
     const changed: string[] = [];
+    let published = 0;
+    let publishedAt = performance.now();
+    let interrupted = false;
     for (const path of files) {
+      // A shutdown must not wait for a long first index to finish; the rows an
+      // aborted file leaves behind are detected and re-indexed on the next open.
+      if (this.stopped) { interrupted = true; break; }
       const previous = known.get(path);
       known.delete(path);
       try {
@@ -309,22 +321,30 @@ export class Recorder {
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
           await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true), id);
         changed.push(id);
+        // Let live clients see a long first index fill in instead of an empty library.
+        if (performance.now() - publishedAt >= 1000) {
+          this.publish(changed.slice(published));
+          published = changed.length;
+          publishedAt = performance.now();
+        }
       } catch (error) {
         this.scanWarnings++;
         console.warn(`Could not index ${basename(path)}: ${error instanceof Error ? error.message : "read error"}`);
       }
     }
-    if (complete) for (const row of known.values()) {
+    if (complete && !interrupted) for (const row of known.values()) {
       this.db.query("DELETE FROM sessions WHERE id=?").run(row.id);
       changed.push(row.id);
     }
-    this.indexedAt = new Date().toISOString();
-    if (changed.length) {
-      this.catalogFacets = null;
-      for (const id of changed) this.replayFacets.delete(id);
-      this.emit(changed);
-    }
+    if (!interrupted) this.indexedAt = new Date().toISOString();
+    if (changed.length > published) this.publish(changed.slice(published));
     return changed;
+  }
+
+  private publish(ids: string[]): void {
+    this.catalogFacets = null;
+    for (const id of ids) this.replayFacets.delete(id);
+    this.emit(ids);
   }
 
   emit(ids: string[] = []): void {

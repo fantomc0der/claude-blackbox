@@ -111,6 +111,8 @@
   .live-dot { box-shadow: 0 0 0 3px #c7ee7909; }
   .disconnected { color: #e8c58d; }
   .disconnected .live-dot { background: #e8c58d; animation: breathe 1.5s infinite; }
+  .indexing-state { display: flex; align-items: center; gap: 7px; color: #e8c58d; font-size: var(--text-meta); }
+  .indexing-state .live-dot { background: #e8c58d; animation: breathe 1.5s infinite; }
   .demo-label { font: .6875rem var(--mono); color: var(--accent); letter-spacing: .8px; padding: 4px 7px; border: 1px solid #c7ee792a; border-radius: 4px; }
   .eyebrow { font: var(--text-meta) var(--mono); letter-spacing: 1.7px; color: var(--muted); margin: 0; }
   .icon-button { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--muted); flex: 0 0 auto; transition: color .15s, background .15s; }
@@ -363,7 +365,7 @@
     .breadcrumbs > svg, .breadcrumbs > span:not(.breadcrumb-divider) { display: none; }
     .breadcrumb-divider { display: none; }
     .breadcrumbs strong { max-width: 140px; }
-    .connection-state { font-size: var(--text-meta); gap: 5px; }
+    .connection-state, .indexing-state { font-size: var(--text-meta); gap: 5px; }
     .topbar-actions { gap: 6px; }
     .topbar-actions > .icon-button { display: none; }
     .demo-label { letter-spacing: .4px; padding: 3px 5px; }
