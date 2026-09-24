@@ -8,10 +8,10 @@ on:
 jobs:
   fix:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: write
       pull-requests: write
-      id-token: write
     env:
       BUN_VERSION: 1.4.2
     steps:
@@ -90,7 +90,7 @@ jobs:
 
       - name: Update Bun dependencies and resolve remaining alerts with Claude
         if: steps.status.outputs.should_run == 'true'
-        uses: anthropics/claude-code-action@v1.0.230
+        uses: anthropics/claude-code-action@v1.0.233
         env:
           ALERT_COUNT: ${{ steps.status.outputs.alert_count }}
           OUTDATED_COUNT: ${{ steps.status.outputs.outdated_count }}
@@ -102,6 +102,8 @@ jobs:
           # one, and that older Bun cannot read this repository's lockfile.
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
           claude_args: |
+            --model claude-sonnet-5
+            --effort xhigh
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(gh:*),Bash(bun:*),Bash(cargo:*),Bash(git:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Bash(pwd:*),Bash(head:*),Bash(tail:*)"
           prompt: |
             REPO: ${{ github.repository }}
