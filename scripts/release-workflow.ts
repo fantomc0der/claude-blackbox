@@ -315,8 +315,14 @@ async function enableAutoMergeAndWait(runtime: ReleaseRuntime, prUrl: string, pl
 
     if (status.mergeStateStatus === "BEHIND") {
       runtime.log("Release PR is behind main; rebasing it and waiting for fresh checks...");
-      await runtime.run("gh", ["pr", "update-branch", prUrl, "--rebase"]);
-      refreshAutoMerge = true;
+      // GitHub can report BEHIND moments before auto-merge lands, so a failed
+      // rebase is re-evaluated on the next poll instead of aborting the release.
+      const rebase = await runtime.tryRun("gh", ["pr", "update-branch", prUrl, "--rebase"]);
+      if (rebase.exitCode === 0) {
+        refreshAutoMerge = true;
+      } else {
+        runtime.error(`Could not rebase the release PR; re-checking its state: ${rebase.stderr || rebase.stdout}`);
+      }
     } else if (lastStatus !== status.mergeStateStatus) {
       runtime.log(`Release PR status: ${status.mergeStateStatus}.`);
       lastStatus = status.mergeStateStatus;
