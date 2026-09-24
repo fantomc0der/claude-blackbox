@@ -56,25 +56,48 @@ test("mixed rows stay bounded in the replay split pane", async ({ page }) => {
   await page.goto("/");
   await page.locator(".session-row").first().click();
   await expect(page.locator(".replay-panel")).toBeVisible();
-  await page.getByLabel("Text size").selectOption("larger");
   const splitRows = page.locator(".library-split .session-row");
-  for (const width of [1440, 1024, 920]) {
-    await page.setViewportSize({ width, height: 900 });
-    await expect(splitRows).toHaveCount(5);
-    await expect(splitRows.first()).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const geometry = await splitRows.evaluateAll(nodes => nodes.map(row => {
-      const rect = (element: Element) => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height, visible: getComputedStyle(element).display !== "none" && box.width > 0 && box.height > 0 }; };
-      const main = rect(row.querySelector(".session-main")!);
-      const model = rect(row.querySelector(".session-model")!);
-      const usage = row.querySelector(".session-usage");
-      return { main, model, usage: usage ? rect(usage) : null, overflow: row.scrollWidth > row.clientWidth + 1 };
-    }));
-    expect(geometry.every(entry => !entry.overflow && entry.main.visible && entry.main.width >= 80 && entry.model.visible)).toBe(true);
-    expect(geometry.filter(entry => entry.usage).every(entry => entry.usage!.visible)).toBe(true);
-    expect(geometry.filter(entry => !entry.usage).length).toBe(1);
-    if (width <= 1050) {
-      expect(geometry.every(entry => Math.abs(entry.model.x - entry.main.x) <= 1 && entry.model.y > entry.main.y + 18)).toBe(true);
+  for (const size of ["standard", "larger"]) {
+    await page.getByLabel("Text size").selectOption(size);
+    for (const width of [2048, 1600, 1599, 1440, 1024, 920]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(splitRows).toHaveCount(5);
+      await expect(splitRows.first()).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const geometry = await splitRows.evaluateAll(nodes => nodes.map(row => {
+        const rect = (element: Element) => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height, visible: getComputedStyle(element).display !== "none" && box.width > 0 && box.height > 0 }; };
+        const usage = row.querySelector(".session-usage");
+        return { row: rect(row), main: rect(row.querySelector(".session-main")!), model: rect(row.querySelector(".session-model")!), usage: usage ? rect(usage) : null, overflowX: row.scrollWidth > row.clientWidth + 1, overflowY: row.scrollHeight > row.clientHeight + 1 };
+      }));
+      expect(geometry.every(entry => !entry.overflowX && !entry.overflowY && entry.main.visible && entry.main.width >= 80 && entry.model.visible && within(entry.row, entry.main) && within(entry.row, entry.model))).toBe(true);
+      expect(geometry.filter(entry => entry.usage).every(entry => entry.usage!.visible && within(entry.row, entry.usage!))).toBe(true);
+      expect(geometry.filter(entry => !entry.usage).length).toBe(1);
+      expect(geometry.every(entry => entry.model.y > entry.main.y + 18)).toBe(true);
     }
+  }
+  await expect(splitRows.first().locator(".model-dot")).toBeHidden();
+});
+
+test("neighboring selections preserve split layout choices and row containment", async ({ page }) => {
+  await installSessionLayoutFixture(page);
+  await page.setViewportSize({ width: 2048, height: 900 });
+  await page.goto("/");
+  const rows = page.locator(".session-row");
+  await rows.first().click();
+  await page.getByRole("button", { name: "Hide overview" }).click();
+  const overview = page.getByRole("complementary", { name: "Recording overview" });
+  await expect(overview).toBeHidden();
+
+  for (const index of [1, 0]) {
+    const splitRows = page.locator(".library-split .session-row");
+    await splitRows.nth(index).click();
+    await expect(splitRows.nth(index)).toHaveAttribute("aria-current", "true");
+    await expect(overview).toBeHidden();
+    await expect(page.getByRole("button", { name: "Show overview" })).toBeVisible();
+    expect(await splitRows.evaluateAll(nodes => nodes.every(row => {
+      const bounds = row.getBoundingClientRect();
+      const model = row.querySelector(".session-model")!.getBoundingClientRect();
+      return row.scrollHeight <= row.clientHeight + 1 && model.top >= bounds.top - 1 && model.bottom <= bounds.bottom + 1;
+    }))).toBe(true);
   }
 });

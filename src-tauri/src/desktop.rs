@@ -295,4 +295,20 @@ mod tests {
             Some("https://github.com/fantomc0der/claude-blackbox/releases/latest/download/latest.json")
         );
     }
+
+    #[test]
+    fn installer_hooks_stop_the_sidecar() {
+        let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            config
+                .pointer("/bundle/windows/nsis/installerHooks")
+                .and_then(Value::as_str),
+            Some("./windows/hooks.nsh")
+        );
+        let hooks = include_str!("../windows/hooks.nsh");
+        assert!(hooks.contains("!macro NSIS_HOOK_PREINSTALL"));
+        assert!(hooks.contains("!macro NSIS_HOOK_PREUNINSTALL"));
+        assert!(hooks.contains("KillProcess"));
+        assert!(hooks.contains("claude-blackbox-server.exe"));
+    }
 }
