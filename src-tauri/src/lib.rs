@@ -9,8 +9,28 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_shell::{process::CommandChild, ShellExt};
 
 mod desktop;
+#[cfg(windows)]
+mod job;
 
 struct Sidecar(Mutex<Option<CommandChild>>);
+
+#[cfg(windows)]
+struct SidecarJob(#[allow(dead_code)] job::KillOnCloseJob);
+
+/// Makes Windows terminate the sidecar when this process ends for any reason,
+/// including the forced kills used by the installer and Task Manager that never
+/// reach `stop_sidecar`.
+#[cfg(windows)]
+fn tie_sidecar_to_process(app: &tauri::App, pid: u32) {
+    match job::KillOnCloseJob::new().and_then(|job| job.assign(pid).map(|()| job)) {
+        Ok(job) => {
+            app.manage(SidecarJob(job));
+        }
+        Err(error) => eprintln!(
+            "could not tie the sidecar to this process; it may outlive a forced exit: {error}"
+        ),
+    }
+}
 
 fn reserve_port() -> Result<u16, Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -59,8 +79,10 @@ pub fn run() {
             let (mut events, child) = app
                 .shell()
                 .sidecar("claude-blackbox-server")?
-                .args(["--port", port_argument.as_str()])
+                .args(["--port", port_argument.as_str(), "--exit-with-parent"])
                 .spawn()?;
+            #[cfg(windows)]
+            tie_sidecar_to_process(app, child.pid());
             app.manage(Sidecar(Mutex::new(Some(child))));
 
             tauri::async_runtime::spawn(async move {

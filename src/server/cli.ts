@@ -12,6 +12,7 @@ const { values } = parseArgs({ args: Bun.argv.slice(2), options: {
   port: { type: "string", short: "p", default: "12001" },
   dev: { type: "boolean", default: false }, help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
+  "exit-with-parent": { type: "boolean", default: false },
 }, strict: true });
 
 if (values.help) {
@@ -23,6 +24,7 @@ Usage: bun start [options]
   -p, --port <number>     Loopback HTTP port (default: 12001)
   -h, --help              Show this help
   -v, --version           Show version
+  --exit-with-parent      Shut down when the launching process closes stdin
 
 Read-only recordings. Local search. No account, telemetry, or cloud services.`);
   process.exit(0);
@@ -53,3 +55,8 @@ const shutdown = async () => {
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+if (values["exit-with-parent"]) {
+  // The desktop wrapper pipes stdin and never writes to it. The pipe only ends
+  // when the wrapper is gone, including forced kills that skip its exit hooks.
+  Bun.stdin.text().catch(() => undefined).then(shutdown);
+}
