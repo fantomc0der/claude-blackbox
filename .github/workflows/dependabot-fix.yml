@@ -103,6 +103,7 @@ jobs:
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
           claude_args: |
             --model claude-sonnet-5
+            --fallback-model "claude-opus-5[1m]"
             --effort xhigh
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(gh:*),Bash(bun:*),Bash(cargo:*),Bash(git:*),Bash(rg:*),Bash(cat:*),Bash(ls:*),Bash(pwd:*),Bash(head:*),Bash(tail:*)"
           prompt: |
@@ -116,7 +117,7 @@ jobs:
             1. Run `bun outdated` and update safe patch and minor JavaScript dependencies. Keep exact pins exact, update related Solid runtime/compiler packages together, and leave major upgrades for a separate human-reviewed PR.
             2. Fetch open security alerts with `gh api --paginate "repos/${{ github.repository }}/dependabot/alerts" --jq '[.[] | select(.state == "open")]'` and make the smallest safe manifest or lockfile changes that resolve them.
             3. This repository uses `package.json` plus `bun.lock` and `src-tauri/Cargo.toml` plus `src-tauri/Cargo.lock`. The `bun` on PATH is the pinned Bun ${{ env.BUN_VERSION }} that understands this lockfile; run `bun --version` first and stop without opening a pull request if it reports anything else. Use `bun install` for JavaScript changes, never edit `bun.lock` by hand, and never create another package-manager lockfile.
-            4. Run `bun run check`, `bun run desktop:sidecar`, and `cargo check --locked --manifest-path src-tauri/Cargo.toml`. The pull request CI runs the Edge E2E suite on Windows.
+            4. Run `bun run check`, `bun run desktop:sidecar`, and `cargo test --locked --manifest-path src-tauri/Cargo.toml`. The pull request CI runs the Edge E2E suite on Windows.
             5. Do not remove tests, weaken security checks, add suppressions, or use type-error escape hatches to make an update pass.
             6. Commit the complete maintenance change, push `${{ env.BRANCH }}`, and open a pull request against `main` titled `chore: scheduled dependency maintenance [DEPENDENCY-MAINTENANCE]`.
             7. In the PR body, list every updated dependency and each security alert addressed. Clearly explain any alert that cannot be fixed without an unsafe major platform upgrade.

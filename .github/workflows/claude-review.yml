@@ -57,13 +57,14 @@ jobs:
             - Solid 2 (`solid-js` and `@solidjs/web` pinned to the same prerelease, with a matching compiler plugin): split compute/apply effects, `onSettled`, keyed lists, and renderer-owned JSX types. Flag Solid 1 idioms and imports.
             - Privacy: no telemetry, remote fonts or assets, cloud calls, or real transcript fixtures. Tests use synthetic data only.
             - Desktop (`src-tauri`, `scripts/build-sidecar.ts`): Rust stays a lifecycle wrapper with no recorder, HTTP, SQLite, or UI logic. Navigation stays limited to the exact `127.0.0.1:<port>` origin, `src-tauri/capabilities` grants no extra native APIs to the page, the sidecar is stopped on quit, exit, and update install, and the target-triple mapping matches the release matrix. UI assets must resolve in both source and `Bun.isStandaloneExecutable` modes.
-            - CI and releases (`.github/workflows`, `scripts/release.ts`): least-privilege permissions, the same pinned Bun version everywhere, `bun.lock` as the only JavaScript lockfile, generated output (`dist`, `src-tauri/binaries`, `src-tauri/gen`, `src-tauri/target`) kept out of git, the check names required by `dependabot-auto-merge.yml` still matching the jobs in `ci.yml`, versions kept in sync across `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, and the per-platform bundle choices recorded in CLAUDE.md.
+            - CI and releases (`.github/workflows`, `scripts/release.ts`, `scripts/release-workflow.ts`): least-privilege permissions, the same pinned Bun version everywhere, `bun.lock` as the only JavaScript lockfile, generated output (`dist`, `src-tauri/binaries`, `src-tauri/gen`, `src-tauri/target`) kept out of git, the check names required by `dependabot-auto-merge.yml` still matching the jobs in `ci.yml`, versions kept in sync across `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, and the protected-`main` release flow and per-platform bundle choices recorded in CLAUDE.md.
             - Tests: behavior changes need coverage in `tests/` (Bun unit tests) or `e2e/` (Bun-run Playwright against Edge). Check that the tests actually exercise the changed behavior.
 
             Tracking comment format:
             Open with a one-line verdict. List blocking findings first, then non-blocking ones, each linked to its inline comment. Do not restate the PR description. Keep notes on what you checked and found sound to one short paragraph.
           claude_args: |
             --model claude-sonnet-5
+            --fallback-model "claude-opus-5[1m]"
             --effort xhigh
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
             --disallowedTools "Edit,Write,NotebookEdit"
