@@ -1,6 +1,6 @@
 [package]
 name = "claude-blackbox"
-version = "0.5.1"
+version = "0.5.2"
 description = "Desktop wrapper for the claude-blackbox session recorder"
 authors = ["fantomc0der"]
 license = "MIT"
