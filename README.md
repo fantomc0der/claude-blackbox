@@ -1,4 +1,4 @@
-# claude-blackbox
+![Local Image](./assets/banner.png)
 
 The flight recorder for your Claude Code sessions. Replay every conversation in a clean web UI
 
