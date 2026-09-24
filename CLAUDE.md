@@ -26,5 +26,5 @@
 
 - Run `bun run check` for type checking, unit tests, and the production web build. Run `bun run test:e2e` when UI behavior changes.
 - Validate desktop changes with `bun run desktop:sidecar` followed by `cargo check --locked --manifest-path src-tauri/Cargo.toml`. Linux additionally needs the Tauri WebKitGTK development packages.
-- Versions must stay synchronized in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`. Use `bun run release --patch|--minor|--major` rather than editing them independently.
+- Versions must stay synchronized in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`. Use `bun run release --patch|--minor|--major` rather than editing them independently. The release command must preserve the protected `main` rules: it creates a release PR, enables squash auto-merge, waits for repository policy, and tags the resulting `main` commit instead of pushing a version commit directly. Running the current exact version resumes an interrupted post-merge release.
 - Linux x64 releases include AppImage, DEB, and RPM. Linux ARM64 intentionally includes DEB and RPM only because its upstream AppImage packaging path is unreliable on the native runner.
