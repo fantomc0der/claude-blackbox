@@ -122,6 +122,7 @@ test("theme is keyboard accessible in the mobile drawer with larger text", async
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByRole("button", { name: "Open workspace navigation" }).click();
+  await expect(page.locator(".sidebar-mobile-close")).toBeFocused();
   await page.getByLabel("Text size").selectOption("larger");
   const light = page.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Light", exact: true });
   await light.focus();
