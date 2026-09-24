@@ -164,6 +164,23 @@ describe("release automation", () => {
     expect(runtime.commands.some(command => command.startsWith("gh release create "))).toBe(false);
   });
 
+  test("keeps polling when auto-merge lands before a behind-main rebase", async () => {
+    const cwd = await createWorkspace("0.4.0");
+    const runtime = new FakeRuntime(cwd);
+    runtime.failCommand = "gh pr update-branch https://github.test/pull/1 --rebase";
+    runtime.prViews = [
+      { state: "OPEN", mergeStateStatus: "BEHIND", headRefOid: "release-head", mergeCommit: null, statusCheckRollup: [] },
+      { state: "MERGED", mergeStateStatus: "CLEAN", headRefOid: "release-head", mergeCommit: { oid: "merged-head" }, statusCheckRollup: [] },
+    ];
+
+    await runRelease(["--minor"], runtime);
+
+    expect(runtime.commands).toContain(runtime.failCommand);
+    expect(runtime.errors.some(message => message.startsWith("Could not rebase the release PR"))).toBe(true);
+    expect(runtime.commands).toContain("git tag -a v0.5.0 merged-head -m Release v0.5.0");
+    expect(runtime.commands).toContain("gh release edit v0.5.0 --draft=false --latest");
+  });
+
   test("resumes an already-merged exact version from tagging onward", async () => {
     const cwd = await createWorkspace("0.5.0");
     const runtime = new FakeRuntime(cwd);
