@@ -38,6 +38,7 @@ export function App() {
   const [toast, setToast] = createSignal("");
   const [help, setHelp] = createSignal(false);
   const [libraryCollapsed, setLibraryCollapsed] = createSignal(false);
+  const [overviewVisible, setOverviewVisible] = createSignal(true);
   const [libraryWidth, setLibraryWidth] = createSignal<number>();
   let searchInput!: HTMLInputElement, helpButton!: HTMLButtonElement;
   const changed = () => setRevision(value => value + 1);
@@ -150,7 +151,7 @@ export function App() {
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>
       <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} />
         <Show when={params().get("session") && !libraryCollapsed()}><LibraryDivider resize={setLibraryWidth} /></Show>
-        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} params={params()} navigate={navigate} changed={changed} close={closeReplay} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} />}</Show>
+        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} params={params()} navigate={navigate} changed={changed} close={closeReplay} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} overviewVisible={overviewVisible()} toggleOverview={() => setOverviewVisible(value => !value)} />}</Show>
       </div>
     </main>
     <Show when={groupOpen() && catalog()}><WorkspaceDialog catalog={catalog()!} onClose={() => setGroupOpen(false)} onSaved={changed} /></Show>

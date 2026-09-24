@@ -190,7 +190,8 @@
   .library-split .session-title { align-items: start; }
   .library-split .session-title-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
   .library-split .session-title svg { margin-top: 4px; }
-  .library-split .session-model { grid-column: 1 / -1; grid-row: 2; padding-top: 0; margin-top: 6px; }
+  .library-split .session-model { grid-column: 1 / -1; grid-row: 2; padding-top: 0; padding-left: 18px; margin-top: 6px; }
+  .library-split .model-dot { display: none; }
   .library-split .session-time { font-size: var(--text-meta); }
   .library-split .session-path { font-size: var(--text-meta); }
   .library-split .row-branch, .library-split .meta-dot { display: none; }
@@ -433,7 +434,6 @@
   @media (min-width: 1600px) {
     .app-shell { grid-template-columns: clamp(226px, 13vw, 252px) minmax(0, 1fr); }
     .library-split { --library-default-width: clamp(340px, 19vw, 420px); padding-inline: 22px; }
-    .library-split .session-row { min-height: 85px; }
     .library-split .session-title { font-size: var(--text-control); }
     .library-split .session-time, .library-split .session-path { font-size: var(--text-meta); }
     .library-split .filter-tab { font-size: var(--text-control); padding-inline: 8px; }
