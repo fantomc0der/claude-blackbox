@@ -648,6 +648,7 @@ test("larger text persists without resetting replay and respects browser font pr
     }
   }
   await page.getByRole("button", { name: "Open workspace navigation" }).click();
+  await expect(page.locator(".sidebar-mobile-close")).toBeFocused();
   await selector.focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("Tab");

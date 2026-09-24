@@ -64,6 +64,7 @@ test("last activity presets replace custom dates and mobile navigation includes 
   await expect(page).toHaveURL(/days=7/);
   await expect(page).not.toHaveURL(/after=|before=/);
   await page.getByRole("button", { name: "Open workspace navigation" }).click();
+  await expect(page.locator(".sidebar-mobile-close")).toBeFocused();
   const sort = page.getByLabel("Sort workspaces");
   await sort.focus();
   await page.keyboard.press("Tab");
