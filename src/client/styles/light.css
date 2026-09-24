@@ -52,8 +52,8 @@
   .nav-item.selected { color: var(--accent); background: var(--light-selected); border-color: var(--line); }
   .nav-item.selected .nav-count, .replay-tab.active { color: var(--accent); }
   .live-dot { box-shadow: none; }
-  .disconnected { color: var(--light-warning); }
-  .disconnected .live-dot { background: var(--light-warning); }
+  .disconnected, .indexing-state { color: var(--light-warning); }
+  .disconnected .live-dot, .indexing-state .live-dot { background: var(--light-warning); }
   .demo-label { border-color: var(--light-line-strong); }
   .primary-button, .new-events { color: var(--light-on-accent); }
   .primary-button:hover:not(:disabled) { background: var(--text); }

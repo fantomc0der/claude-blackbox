@@ -25,6 +25,39 @@ async function fixture() {
 }
 
 describe("recording index", () => {
+  test("can open before the first index so the server binds immediately, then fills in on scan", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("Hello") + "\n");
+    const recorder = await Recorder.open(fixtureData.data, join(fixtureData.root, "state"), { scan: false });
+    cleanup.push(() => recorder.close());
+    expect((await recorder.catalog()).sessions).toBe(0);
+    expect((await recorder.catalog()).indexedAt).toBe("");
+    const seen: string[][] = [];
+    recorder.listeners.add(ids => seen.push(ids));
+    await recorder.scan();
+    expect((await recorder.catalog()).sessions).toBe(1);
+    expect((await recorder.catalog()).indexedAt).not.toBe("");
+    expect(seen.flat()).toHaveLength(1);
+  });
+
+  test("closing during a scan stops early without dropping recordings it had not reached", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("First") + "\n");
+    await writeFile(join(fixtureData.project, "session-b.jsonl"), fixtureData.record("Second", { sessionId: "session-b" }) + "\n");
+    const first = await fixtureData.open();
+    expect(first.list(new URLSearchParams()).total).toBe(2);
+    await first.close();
+    const state = join(fixtureData.root, "state");
+    const interrupted = await Recorder.open(fixtureData.data, state, { scan: false });
+    const scanning = interrupted.scan();
+    await interrupted.close();
+    expect(await scanning).toEqual([]);
+    const reopened = await Recorder.open(fixtureData.data, state, { scan: false });
+    cleanup.push(() => reopened.close());
+    expect(reopened.list(new URLSearchParams()).total).toBe(2);
+    expect((await reopened.catalog()).indexedAt).toBe("");
+  });
+
   test("discovers sessions without history, handles CRLF, Unicode, unknown events and no final newline", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, [fixtureData.record("Fix café 🚀"), "malformed", fixtureData.record("recorded", { type: "future-event" })].join("\r\n"));

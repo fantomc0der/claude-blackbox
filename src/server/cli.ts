@@ -37,26 +37,38 @@ const sourceKey = createHash("sha256").update(dataDir).digest("hex").slice(0, 12
 const stateDir = resolve(values["state-dir"] || join(homedir(), ".cache", "claude-blackbox", sourceKey));
 const webDir = Bun.isStandaloneExecutable ? join(import.meta.dir, "dist") : undefined;
 const started = performance.now();
-const recorder = await Recorder.open(dataDir, stateDir);
+// Bind the port before the first index so the desktop wrapper can open its
+// window immediately; a large ~/.claude can take minutes to index and the UI
+// fills in live as recordings arrive.
+const recorder = await Recorder.open(dataDir, stateDir, { scan: false });
 const server = Bun.serve({
   hostname: "127.0.0.1", port, idleTimeout: 60, maxRequestBodySize: 16384,
   fetch: createHandler({ recorder, development: values.dev, webDir }),
 });
+console.log(`\n  ◈ claude-blackbox\n  http://127.0.0.1:${server.port}\n  Source: ${dataDir}\n  Index:  ${stateDir}\n  Indexing recordings…`);
+const indexing = recorder.scan();
 recorder.watch();
-const catalog = await recorder.catalog();
-console.log(`\n  ◈ claude-blackbox\n  ${catalog.sessions} recordings · indexed in ${Math.round(performance.now() - started)}ms\n  http://127.0.0.1:${server.port}\n  Source: ${dataDir}\n  Index:  ${stateDir}\n`);
 let stopping = false;
-const shutdown = async () => {
+const shutdown = async (code = 0) => {
   if (stopping) return;
   stopping = true;
   await server.stop(true);
   await recorder.close();
-  process.exit(0);
+  process.exit(code);
 };
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
 if (values["exit-with-parent"]) {
   // The desktop wrapper pipes stdin and never writes to it. The pipe only ends
   // when the wrapper is gone, including forced kills that skip its exit hooks.
-  Bun.stdin.text().catch(() => undefined).then(shutdown);
+  Bun.stdin.text().catch(() => undefined).then(() => shutdown());
+}
+try {
+  await indexing;
+  console.log(`  ${(await recorder.catalog()).sessions} recordings · indexed in ${Math.round(performance.now() - started)}ms`);
+} catch (error) {
+  if (!stopping) {
+    console.error(`Could not index the recordings: ${error instanceof Error ? error.message : error}`);
+    await shutdown(1);
+  }
 }
