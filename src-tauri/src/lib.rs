@@ -20,6 +20,19 @@ mod job;
 
 struct Sidecar(Mutex<Option<CommandChild>>);
 
+/// Set when a second launch arrives before the main window exists, so the
+/// window is brought forward as soon as startup finishes instead of the
+/// relaunch silently doing nothing.
+struct ShowRequested(AtomicBool);
+
+fn handle_relaunch(app: &AppHandle) {
+    if app.get_webview_window("main").is_some() {
+        desktop::show_main_window(app);
+    } else {
+        app.state::<ShowRequested>().0.store(true, Ordering::SeqCst);
+    }
+}
+
 #[cfg(windows)]
 struct SidecarJob(#[allow(dead_code)] job::KillOnCloseJob);
 
@@ -72,8 +85,9 @@ fn show_error(message: &str) {
 
 /// Takes the sidecar out of the managed state. `stop_sidecar` does this before
 /// killing the child, so a child that is still held here exited on its own.
+/// The state is missing only when startup failed before the spawn.
 fn take_sidecar(app: &AppHandle) -> Option<CommandChild> {
-    app.state::<Sidecar>()
+    app.try_state::<Sidecar>()?
         .0
         .lock()
         .expect("sidecar lock poisoned")
@@ -167,22 +181,30 @@ fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     desktop::setup(app)?;
     started.store(true, Ordering::SeqCst);
+    if app.state::<ShowRequested>().0.swap(false, Ordering::SeqCst) {
+        desktop::show_main_window(app.handle());
+    }
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .manage(ShowRequested(AtomicBool::new(false)))
         // Registered first so a second launch hands off to the running instance
         // instead of starting another wrapper and sidecar pair.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            desktop::show_main_window(app);
+            handle_relaunch(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             if let Err(error) = start(app) {
+                // The build error path below exits without running the event
+                // loop, so stop a sidecar that may already be listening here
+                // rather than leaving it to the stdin backstop.
+                stop_sidecar(app.handle());
                 eprintln!("claude-blackbox could not start: {error}");
                 show_error(&format!("claude-blackbox could not start.\n\n{error}"));
                 return Err(error);

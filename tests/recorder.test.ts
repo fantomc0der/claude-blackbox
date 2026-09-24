@@ -58,6 +58,32 @@ describe("recording index", () => {
     expect((await reopened.catalog()).indexedAt).toBe("");
   });
 
+  test("closing after partial progress keeps the indexed recordings and leaves the rest for the next scan", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("First") + "\n");
+    await writeFile(join(fixtureData.project, "session-b.jsonl"), fixtureData.record("Second", { sessionId: "session-b" }) + "\n");
+    const state = join(fixtureData.root, "state");
+    const interrupted = await Recorder.open(fixtureData.data, state, { scan: false });
+    // The scan fingerprints each file right before it stores the file's row, so
+    // closing from the first fingerprint stops the scan after exactly one file.
+    const fingerprint = (interrupted as unknown as { fingerprint: (...args: unknown[]) => Promise<string> }).fingerprint.bind(interrupted);
+    let closing: Promise<void> | undefined;
+    (interrupted as unknown as { fingerprint: unknown }).fingerprint = (...args: unknown[]) => { closing ??= interrupted.close(); return fingerprint(...args); };
+    const changed = await interrupted.scan();
+    await closing;
+    expect(changed).toHaveLength(1);
+    const reopened = await Recorder.open(fixtureData.data, state, { scan: false });
+    cleanup.push(() => reopened.close());
+    const partial = reopened.list(new URLSearchParams());
+    expect(partial.total).toBe(1);
+    expect(partial.items[0].id).toBe(changed[0]);
+    expect(reopened.events(changed[0], new URLSearchParams()).total).toBe(1);
+    expect((await reopened.catalog()).indexedAt).toBe("");
+    await reopened.scan();
+    expect(reopened.list(new URLSearchParams()).total).toBe(2);
+    expect((await reopened.catalog()).indexedAt).not.toBe("");
+  });
+
   test("discovers sessions without history, handles CRLF, Unicode, unknown events and no final newline", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, [fixtureData.record("Fix café 🚀"), "malformed", fixtureData.record("recorded", { type: "future-event" })].join("\r\n"));
