@@ -8,7 +8,7 @@ import { removeTestDirectory } from "./helpers";
 import type { IndexProgress } from "../src/shared/types";
 
 const cleanup: Array<() => Promise<void>> = [];
-afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "blackbox-test-"));
