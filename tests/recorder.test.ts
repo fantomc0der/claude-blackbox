@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile, appendFile, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
 import { parseSearch } from "../src/server/search";
 import { removeTestDirectory } from "./helpers";
+import type { IndexProgress } from "../src/shared/types";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -25,6 +26,42 @@ async function fixture() {
 }
 
 describe("recording index", () => {
+  test("reports recording-file progress and completes unchanged and empty scans", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("First") + "\n" + fixtureData.record("Second") + "\n");
+    const recorder = await fixtureData.open();
+    const seen: IndexProgress[] = [];
+    const changes: string[][] = [];
+    recorder.progressListeners.add(progress => seen.push(progress));
+    recorder.listeners.add(ids => changes.push(ids));
+    await recorder.scan();
+    expect(seen).toEqual([
+      { phase: "discovering", checked: 0, total: 0 },
+      { phase: "indexing", checked: 0, total: 1 },
+      { phase: "idle", checked: 1, total: 1 },
+    ]);
+    expect(changes).toHaveLength(0);
+    expect(recorder.indexing.checked).toBe(1);
+    await rm(fixtureData.file);
+    await recorder.scan();
+    expect(recorder.indexing).toEqual({ phase: "idle", checked: 0, total: 0 });
+    expect(changes.flat()).toHaveLength(1);
+  });
+
+  test("publishes checked counts while a long scan is still running", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("First") + "\n");
+    const recorder = await fixtureData.open();
+    const seen: IndexProgress[] = [];
+    recorder.progressListeners.add(progress => seen.push(progress));
+    let elapsed = 0;
+    const clock = spyOn(performance, "now").mockImplementation(() => elapsed += 300);
+    try { await recorder.scan(); }
+    finally { clock.mockRestore(); }
+    expect(seen).toContainEqual({ phase: "indexing", checked: 1, total: 1 });
+    expect(seen.at(-1)).toEqual({ phase: "idle", checked: 1, total: 1 });
+  });
+
   test("can open before the first index so the server binds immediately, then fills in on scan", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("Hello") + "\n");

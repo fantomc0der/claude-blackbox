@@ -92,7 +92,7 @@
   .nav-empty { padding: 5px 12px; color: var(--muted); font-size: var(--text-support); line-height: 1.7; }
   .nav-empty p { margin-bottom: 4px; }
   .workspace-label .workspace-group { gap: 4px; padding-inline: 4px; font-size: var(--text-meta); letter-spacing: 0; flex-shrink: 0; }
-  .sidebar-footer { border-top: 1px solid var(--line); padding: 12px 5px 11px; }
+  .sidebar-footer { flex-shrink: 0; border-top: 1px solid var(--line); padding: 8px 5px 7px; }
   .sidebar-select { display: grid; gap: 4px; margin-bottom: 8px; color: var(--muted); }
   .sidebar-select > span { line-height: 1.35; }
   .sidebar-select select { width: 100%; min-width: 0; font-size: var(--text-control); padding: 6px 9px; }
@@ -100,7 +100,15 @@
   .sidebar-footer > div > svg { color: var(--accent); }
   .sidebar-footer span { font-size: var(--text-meta); }
   .sidebar-footer button { margin-left: auto; }
-  .sidebar-footer .version-label { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; font: .6875rem/1.2 var(--mono); letter-spacing: .4px; color: #798181; }
+  .sidebar-footer .index-status { min-height: 44px; margin-block: 2px; }
+  .index-status .index-refresh { flex-shrink: 0; margin: 0; visibility: hidden; animation: none; }
+  .index-status .index-refresh.active { visibility: visible; animation: breathe .8s infinite; }
+  .index-progress { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; }
+  .index-label { color: var(--muted); }
+  .index-count { font-variant-numeric: tabular-nums; }
+  .index-progress > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .index-status > button { flex-shrink: 0; min-width: 44px; min-height: 44px; }
+  .sidebar-footer .version-label { flex-shrink: 0; margin-left: auto; font: .6875rem/1.2 var(--mono); letter-spacing: .4px; color: #798181; }
   .version-label span { font-size: .6875rem; }
   .breadcrumbs, .topbar-actions { display: flex; align-items: center; gap: 12px; font-size: var(--text-support); color: var(--muted); min-width: 0; }
   .breadcrumbs strong { color: #c1c7c4; font-weight: 450; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 270px; }
@@ -475,8 +483,6 @@
     .list-caption { padding-block: 10px; }
     .brand { margin-bottom: 20px; }
     .workspace-label { margin-top: 18px; }
-    .sidebar-footer { padding-top: 10px; }
-    .sidebar-footer .version-label { margin-top: 7px; }
     .replay-panel-heading h2 { font-size: 20px; }
   }
   @media (max-width: 680px) {

@@ -46,9 +46,29 @@ test("SSE sends a fresh invalidation on reconnect and releases listeners", async
   const response = await handler(new Request("http://127.0.0.1:12001/api/live"));
   const reader = response.body!.getReader();
   expect(new TextDecoder().decode((await reader.read()).value)).toContain('"version":1');
+  const progress = new TextDecoder().decode((await reader.read()).value);
+  expect(progress).toContain("event: indexing");
+  expect(progress).toContain('"checked":1,"total":1');
   expect(recorder.listeners.size).toBe(1);
+  expect(recorder.progressListeners.size).toBe(1);
   recorder.emit(["updated"]);
   expect(new TextDecoder().decode((await reader.read()).value)).toContain("updated");
   await reader.cancel();
   expect(recorder.listeners.size).toBe(0);
+  expect(recorder.progressListeners.size).toBe(0);
+});
+
+test("SSE keeps the latest progress and invalidation for a slow reader", async () => {
+  const { handler, recorder } = await setup();
+  const response = await handler(new Request("http://127.0.0.1:12001/api/live"));
+  const reader = response.body!.getReader();
+  for (let checked = 0; checked <= 100; checked++) {
+    for (const listener of recorder.progressListeners) listener({ phase: checked === 100 ? "idle" : "indexing", checked, total: 100 });
+    recorder.emit([`changed-${checked}`]);
+  }
+  const messages = [];
+  for (let index = 0; index < 3; index++) messages.push(new TextDecoder().decode((await reader.read()).value));
+  expect(messages.join("")).toContain('"phase":"idle","checked":100,"total":100');
+  expect(messages.filter(message => message.includes("event: change"))).toHaveLength(2);
+  await reader.cancel();
 });

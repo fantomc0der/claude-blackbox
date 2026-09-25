@@ -1,6 +1,7 @@
 import { join, resolve, sep } from "node:path";
 import { Recorder } from "./recorder";
 import { object } from "./normalize";
+import type { IndexProgress } from "../shared/types";
 
 export interface HttpOptions { recorder: Recorder; webDir?: string; development?: boolean }
 
@@ -54,13 +55,31 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
       }
       if (request.method === "GET" && url.pathname === "/api/live") {
         let release = () => {};
+        let flush = () => {};
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             const encoder = new TextEncoder();
             let closed = false;
-            const send = (ids: string[]) => {
+            let pendingChange: string[] | null = null;
+            let pendingProgress: IndexProgress | null = null;
+            flush = () => {
               if (closed || (controller.desiredSize ?? 1) <= 0) return;
-              controller.enqueue(encoder.encode(`event: change\nid: ${++revision}\ndata: ${JSON.stringify({ version: 1, ids })}\n\n`));
+              if (pendingChange) {
+                controller.enqueue(encoder.encode(`event: change\nid: ${++revision}\ndata: ${JSON.stringify({ version: 1, ids: pendingChange })}\n\n`));
+                pendingChange = null;
+              }
+              if (pendingProgress && (controller.desiredSize ?? 1) > 0) {
+                controller.enqueue(encoder.encode(`event: indexing\ndata: ${JSON.stringify(pendingProgress)}\n\n`));
+                pendingProgress = null;
+              }
+            };
+            const send = (ids: string[]) => {
+              pendingChange = pendingChange ? [] : ids;
+              flush();
+            };
+            const progress = (state: IndexProgress) => {
+              pendingProgress = state;
+              flush();
             };
             const heartbeat = setInterval(() => {
               if (!closed && (controller.desiredSize ?? 1) > 0) controller.enqueue(encoder.encode(": heartbeat\n\n"));
@@ -69,14 +88,20 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
             release = () => {
               if (closed) return;
               closed = true;
+              pendingChange = null;
+              pendingProgress = null;
               clearInterval(heartbeat);
               recorder.listeners.delete(send);
+              recorder.progressListeners.delete(progress);
               request.signal.removeEventListener("abort", abort);
             };
             recorder.listeners.add(send);
+            recorder.progressListeners.add(progress);
             request.signal.addEventListener("abort", abort, { once: true });
             send([]);
+            progress(recorder.indexing);
           },
+          pull() { flush(); },
           cancel() { release(); },
         });
         return new Response(stream, { headers: { ...security, "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no" } });
