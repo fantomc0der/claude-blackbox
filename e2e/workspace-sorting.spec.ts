@@ -62,7 +62,7 @@ test("optional workspace filtering matches grouped paths, clears empty results a
   await expect(page.locator(".workspace-nav-item")).toHaveCount(1);
   await expect(page.locator(".workspace-nav-item")).toContainText("Shared project");
   await filter.fill("nothing-matches");
-  await expect(page.getByRole("status")).toHaveText("No matching workspaces.Clear filter");
+  await expect(page.getByRole("navigation", { name: "Workspaces", exact: true }).getByRole("status")).toHaveText("No matching workspaces.Clear filter");
   await page.getByRole("button", { name: "Clear filter", exact: true }).click();
   await expect(filter).toBeFocused();
   await expect(page.locator(".workspace-nav-item")).toHaveCount(4);

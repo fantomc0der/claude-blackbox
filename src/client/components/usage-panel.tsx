@@ -25,11 +25,11 @@ function ModelExpenses(props: { rows: ModelUsage[]; usage: UsageSummary; filterM
     <table class="usage-matrix">
       <caption>By model &amp; effort</caption>
       <thead><tr><th scope="col">Model</th><th scope="col">Effort</th><th scope="col">Tokens</th><th scope="col">Est. USD</th></tr></thead>
-      <tbody><For each={props.rows}>{row => <tr>
-        <th scope="row" title={row.model}><button class="usage-drilldown" disabled={!row.model} aria-label={`Show recordings using ${modelName(row.model)}, effort ${effortName(row.effort)}`} onClick={() => props.filterModel(row.model, row.effort)}>{modelName(row.model)}<small>{tokenCount(row.usage.requests)} {row.usage.requests === 1 ? "request" : "requests"}</small></button></th>
-        <td class={row.effort ? undefined : "usage-effort-missing"}>{effortName(row.effort)}</td>
-        <td title={tokenCount(row.usage.totalTokens)}>{compact(row.usage.totalTokens)}</td>
-        <td>{usageCost(row.usage)}<Show when={row.usage.unpricedRequests > 0 && row.usage.unpricedRequests < row.usage.requests}><small class="usage-warning">Partial</small></Show></td>
+      <tbody><For each={props.rows} keyed={row => JSON.stringify([row.model, row.effort])}>{row => <tr>
+        <th scope="row" title={row().model}><button class="usage-drilldown" disabled={!row().model} aria-label={`Show recordings using ${modelName(row().model)}, effort ${effortName(row().effort)}`} onClick={() => props.filterModel(row().model, row().effort)}>{modelName(row().model)}<small>{tokenCount(row().usage.requests)} {row().usage.requests === 1 ? "request" : "requests"}</small></button></th>
+        <td class={row().effort ? undefined : "usage-effort-missing"}>{effortName(row().effort)}</td>
+        <td title={tokenCount(row().usage.totalTokens)}>{compact(row().usage.totalTokens)}</td>
+        <td>{usageCost(row().usage)}<Show when={row().usage.unpricedRequests > 0 && row().usage.unpricedRequests < row().usage.requests}><small class="usage-warning">Partial</small></Show></td>
       </tr>}</For></tbody>
       <tfoot><tr><th scope="row" colspan="2">All models</th><td title={tokenCount(props.usage.totalTokens)}>{compact(props.usage.totalTokens)}</td><td>{usageCost(props.usage)}</td></tr></tfoot>
     </table>
@@ -40,11 +40,11 @@ function ModelExpenses(props: { rows: ModelUsage[]; usage: UsageSummary; filterM
 export function UsagePanel(props: { page: SessionPage | null; pending: boolean; filterDirectory: (cwd: string) => void; filterModel: (model: string, effort: string | null) => void }) {
   const [view, setView] = createSignal<"folders" | "models">("folders");
   const [sort, setSort] = createSignal<UsageSort>("cost");
-  const ready = () => !props.pending && props.page;
+  const ready = () => props.page;
   return <details class="usage-panel" aria-busy={props.pending ? "true" : "false"}>
     <summary aria-label="Usage and estimated cost">
-      <span class="usage-label">Usage</span>
-      <Show when={ready()} fallback={<span class="usage-loading">Reading usage…</span>}>{page => <>
+      <span class="usage-label">Usage<span class={['loading-dot usage-refresh', { active: props.pending }]} aria-hidden="true" title={props.pending ? "Updating usage" : undefined} /></span>
+      <Show when={ready()} fallback={<span class="usage-loading" aria-label="Usage not yet available">—</span>}>{page => <>
         <Show when={page().usage.requests} fallback={<span class="usage-empty">{page().total ? "No usage recorded" : "No matching recordings"}</span>}>
           <span class="usage-total" title={`${tokenCount(page().usage.totalTokens)} tokens, including cache reads and writes`}>{compact(page().usage.totalTokens)} <span>tokens</span></span>
           <span class="usage-total usage-total-cost">{usageCost(page().usage)} <span>est.</span></span>
@@ -53,7 +53,7 @@ export function UsagePanel(props: { page: SessionPage | null; pending: boolean; 
       <span class="usage-expand"><span>Breakdown</span><Icon name="down" size={14} /></span>
     </summary>
     <div class="usage-body">
-      <Show when={ready()} fallback={<p class="usage-scope">Updating usage for these recordings…</p>}>{page => <>
+      <Show when={ready()} fallback={<p class="usage-scope">Usage for this selection will appear here when available.</p>}>{page => <>
         <p class="usage-scope">All {tokenCount(page().total)} matching recordings, across every page. {tokenCount(page().sessionsWithUsage)} report usage.</p>
         <Show when={page().usage.requests} fallback={<p class="usage-note">These transcripts do not contain assistant token usage. Missing usage is not counted as zero spend.</p>}>
           <Show when={page().directories.length > 1}>
@@ -68,10 +68,10 @@ export function UsagePanel(props: { page: SessionPage | null; pending: boolean; 
             <table class="usage-directories">
               <caption>By source folder</caption>
               <thead><tr><th scope="col">Folder</th><th scope="col">Tokens</th><th scope="col">Est. USD</th></tr></thead>
-              <tbody><For each={sortUsage(page().directories, sort(), directory => directory.cwd)}>{directory => <tr>
-                <td><button disabled={!directory.cwd} onClick={() => props.filterDirectory(directory.cwd)} title={`Show recordings in ${directory.cwd}`}><Icon name="folder" size={13} /><span>{directory.cwd || "Folder not recorded"}</span><Icon name="arrow" size={13} /></button></td>
-                <td title={tokenCount(directory.usage.totalTokens)}>{directory.usage.requests ? compact(directory.usage.totalTokens) : "—"}</td>
-                <td>{directory.usage.requests ? usageCost(directory.usage) : "—"}</td>
+              <tbody><For each={sortUsage(page().directories, sort(), directory => directory.cwd)} keyed={directory => directory.cwd}>{directory => <tr>
+                <td><button disabled={!directory().cwd} onClick={() => props.filterDirectory(directory().cwd)} title={`Show recordings in ${directory().cwd}`}><Icon name="folder" size={13} /><span>{directory().cwd || "Folder not recorded"}</span><Icon name="arrow" size={13} /></button></td>
+                <td title={tokenCount(directory().usage.totalTokens)}>{directory().usage.requests ? compact(directory().usage.totalTokens) : "—"}</td>
+                <td>{directory().usage.requests ? usageCost(directory().usage) : "—"}</td>
               </tr>}</For></tbody>
             </table>
           }><ModelExpenses rows={sortUsage(page().modelUsage, sort(), row => `${row.model}\n${row.effort || ""}`)} usage={page().usage} filterModel={props.filterModel} /></Show>

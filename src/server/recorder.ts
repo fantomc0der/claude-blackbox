@@ -2,7 +2,7 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, DirectoryUsage, EventPage, ModelUsage, ReplayEvent, Session, SessionPage, UsageSummary, WorkspaceGroup } from "../shared/types";
+import type { Catalog, DirectoryUsage, EventPage, IndexProgress, ModelUsage, ReplayEvent, Session, SessionPage, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -109,6 +109,8 @@ export class Recorder {
   readonly dataDir: string;
   readonly stateDir: string;
   readonly listeners = new Set<(ids: string[]) => void>();
+  readonly progressListeners = new Set<(progress: IndexProgress) => void>();
+  indexing: IndexProgress = { phase: "idle", checked: 0, total: 0 };
   indexedAt = "";
   private scanning: Promise<string[]> | null = null;
   private timer?: ReturnType<typeof setInterval>;
@@ -179,14 +181,26 @@ export class Recorder {
     clearInterval(this.timer);
     await this.scanning;
     this.listeners.clear();
+    this.progressListeners.clear();
     this.db.close();
   }
 
   scan(): Promise<string[]> {
     if (this.stopped) return Promise.resolve([]);
     if (this.scanning) return this.scanning;
-    this.scanning = this.reconcile().finally(() => { this.scanning = null; });
+    this.scanning = this.reconcile().then(ids => {
+      this.reportProgress({ ...this.indexing, phase: "idle" });
+      return ids;
+    }, error => {
+      this.reportProgress({ ...this.indexing, phase: "error" });
+      throw error;
+    }).finally(() => { this.scanning = null; });
     return this.scanning;
+  }
+
+  private reportProgress(progress: IndexProgress): void {
+    this.indexing = progress;
+    for (const listener of this.progressListeners) listener(progress);
   }
 
   private async discover(directory: string, files: string[], depth = 0): Promise<boolean> {
@@ -218,8 +232,11 @@ export class Recorder {
 
   private async reconcile(): Promise<string[]> {
     this.scanWarnings = 0;
+    this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
     const complete = await this.discover(join(this.dataDir, "projects"), files);
+    this.reportProgress({ phase: "indexing", checked: 0, total: files.length });
+    let progressAt = performance.now();
     const known = new Map(this.db.query<SourceRow, []>("SELECT * FROM sessions").all().map(row => [row.source, row]));
     const changed: string[] = [];
     let published = 0;
@@ -330,14 +347,22 @@ export class Recorder {
       } catch (error) {
         this.scanWarnings++;
         console.warn(`Could not index ${basename(path)}: ${error instanceof Error ? error.message : "read error"}`);
+      } finally {
+        this.indexing = { ...this.indexing, checked: this.indexing.checked + 1 };
+        if (performance.now() - progressAt >= 250) {
+          this.reportProgress(this.indexing);
+          progressAt = performance.now();
+        }
       }
     }
     if (complete && !interrupted) for (const row of known.values()) {
       this.db.query("DELETE FROM sessions WHERE id=?").run(row.id);
       changed.push(row.id);
     }
+    const firstIndex = !this.indexedAt;
     if (!interrupted) this.indexedAt = new Date().toISOString();
     if (changed.length > published) this.publish(changed.slice(published));
+    else if (!interrupted && (firstIndex || changed.length)) this.emit();
     return changed;
   }
 

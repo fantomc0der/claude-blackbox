@@ -52,5 +52,11 @@ Extension quality bar: use the incumbent typography, semantic colors and native 
 
 ## Incumbent comparison
 
+### Background refresh behavior
+
+Usage retains its last successful same-selection totals and mounted breakdown while refreshing, with a reserved small-dot status beside the label. Initial loading and a different filter use an unavailable placeholder rather than relabeling old totals. Pagination and sorting retain the selection aggregate. Folder and model/effort rows have stable keys so updates preserve keyboard focus and scroll. Repeated live invalidations queue one follow-up instead of canceling in-flight same-selection work.
+
+Refresh validation must include delayed responses, repeated live events, failures/retry, focus and scroll preservation, and filter changes in desktop/mobile layouts and both themes. The established palette, typography, native disclosure, and usage semantics remain unchanged.
+
 - The extension preserves the documented charcoal-and-lime dark theme, muted grayscale light theme, system typography, quiet dividers, compact rows, and native disclosure pattern. Token/cost figures use the established restrained secondary treatment and tabular-number styling.
 - `DESIGN.md` and `.impeccable/design.json` remain unchanged. The in-scope `scripts/demo.ts` update supplies synthetic token usage for preview and regression coverage.

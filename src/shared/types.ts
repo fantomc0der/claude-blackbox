@@ -95,6 +95,12 @@ export interface WorkspaceGroup {
   paths: string[];
 }
 
+export interface IndexProgress {
+  phase: "discovering" | "indexing" | "idle" | "error";
+  checked: number;
+  total: number;
+}
+
 export interface Catalog {
   sessions: number;
   messages: number;

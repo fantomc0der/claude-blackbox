@@ -3,7 +3,9 @@
   .usage-panel > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; padding: 11px 0; list-style: none; min-height: 44px; }
   .usage-panel > summary::-webkit-details-marker { display: none; }
   .usage-panel > summary:hover .usage-expand { color: var(--text); }
-  .usage-label { font-weight: 550; }
+  .usage-label { display: inline-flex; align-items: center; gap: 8px; font-weight: 550; }
+  .usage-label .usage-refresh { margin: 0; visibility: hidden; animation: none; }
+  .usage-label .usage-refresh.active { visibility: visible; animation: breathe .8s infinite; }
   .usage-total { font-variant-numeric: tabular-nums; font-weight: 550; }
   .usage-total > span { color: var(--muted); font-weight: 400; }
   .usage-expand { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); }

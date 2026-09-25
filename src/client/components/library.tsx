@@ -11,7 +11,7 @@ import { Highlight } from "./highlight";
 import { UsagePanel } from "./usage-panel";
 
 interface LibraryProps {
-  catalog: Catalog | null; page: SessionPage | null; pending: boolean; params: URLSearchParams;
+  catalog: Catalog | null; page: SessionPage | null; usageCurrent: boolean; pending: boolean; params: URLSearchParams;
   navigate: Navigate; query: string; setQuery: (query: string) => void;
   searchRef: (element: HTMLInputElement) => void;
 }
@@ -63,7 +63,7 @@ export function Library(props: LibraryProps) {
       <div class="stat"><dt>Workspaces</dt><dd>{props.catalog?.workspaces.length || 0}</dd></div>
       <div class="stat"><dt>Tool calls</dt><dd>{compact(props.catalog?.tools || 0)}</dd></div>
     </dl></Show>
-    <UsagePanel page={props.page} pending={props.pending} filterDirectory={cwd => filter({ cwd })} filterModel={(model, effort) => filter({ model, effort, effortMissing: effort === null ? "1" : null })} />
+    <UsagePanel page={props.usageCurrent ? props.page : null} pending={props.pending} filterDirectory={cwd => filter({ cwd })} filterModel={(model, effort) => filter({ model, effort, effortMissing: effort === null ? "1" : null })} />
     <div class="discovery-controls">
       <div class="search-box"><Icon name="search" size={19} /><input ref={props.searchRef} aria-label="Search all recordings" placeholder="Search prompts, code, tool output…" value={props.query} onInput={event => props.setQuery(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Escape") { props.setQuery(""); filter({ q: null }); }
