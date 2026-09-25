@@ -69,6 +69,30 @@ test("SSE keeps the latest progress and invalidation for a slow reader", async (
   const messages = [];
   for (let index = 0; index < 3; index++) messages.push(new TextDecoder().decode((await reader.read()).value));
   expect(messages.join("")).toContain('"phase":"idle","checked":100,"total":100');
-  expect(messages.filter(message => message.includes("event: change"))).toHaveLength(2);
+  const changes = messages.filter(message => message.includes("event: change"));
+  expect(changes).toHaveLength(2);
+  expect(changes.map(message => JSON.parse(message.split("data: ")[1]))).toEqual([
+    { version: 1, ids: [] },
+    { version: 1, ids: [] },
+  ]);
   await reader.cancel();
+});
+
+test("SSE preserves single updates and broadens overlapping invalidations without narrowing them", async () => {
+  const { handler, recorder } = await setup();
+  const response = await handler(new Request("http://127.0.0.1:12001/api/live"));
+  const reader = response.body!.getReader();
+  const readPayload = async () => JSON.parse(new TextDecoder().decode((await reader.read()).value).split("data: ")[1]);
+  try {
+    await readPayload();
+    await readPayload();
+    recorder.emit(["single"]);
+    expect(await readPayload()).toEqual({ version: 1, ids: ["single"] });
+    for (const updates of [[["first"], ["second"], ["third"]], [[], ["later"]], [["earlier"], []]]) {
+      recorder.emit(["buffered"]);
+      for (const ids of updates) recorder.emit(ids);
+      expect(await readPayload()).toEqual({ version: 1, ids: ["buffered"] });
+      expect(await readPayload()).toEqual({ version: 1, ids: [] });
+    }
+  } finally { await reader.cancel(); }
 });

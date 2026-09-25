@@ -181,5 +181,6 @@ export function App() {
     <Show when={groupOpen() && catalog()}><WorkspaceDialog catalog={catalog()!} onClose={() => setGroupOpen(false)} onSaved={changed} /></Show>
     <Show when={help()}><ShortcutPopover close={() => setHelp(false)} trigger={helpButton} /></Show>
     <Show when={toast()}><div class="toast" role="status"><Icon name="check" size={16} />{toast()}</div></Show>
+    <div class="visually-hidden index-announcement" role="status" aria-live="polite" aria-atomic="true">{indexing()?.phase === "error" ? "Recording scan failed. Indexed recordings remain available, but results may be incomplete or out of date. Rescan recordings to retry." : ""}</div>
   </div>;
 }

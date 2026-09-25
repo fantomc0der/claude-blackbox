@@ -62,6 +62,7 @@ Install the first release that includes the tray updater manually. Earlier build
 - **Live updates:** the local index reconciles every 2.5 seconds. Reconnection refreshes the view. New events do not pull you away from older content; use **Jump to latest** when ready.
 - **Indexing progress:** beside **Rescan recordings** in the sidebar, longer scans show recording files checked out of the discovered total. Finding files is a separate stage because the total is not known yet. Quick background checks stay quiet; when idle, the status shows the indexed recording count. Progress counts files, not individual messages.
 - **Quiet usage refreshes:** existing totals and the expanded breakdown stay visible while a small dot indicates a background refresh. Slow requests finish before queued updates run; pagination and sorting retain the same usage selection, while a different filter waits for its own totals.
+- **Scan failures:** a quiet warning identifies an incomplete index while keeping indexed recordings available. Failures are announced to assistive technology even with mobile navigation closed; Rescan retries the scan without clearing the visible usage breakdown.
 - **Return to your work:** bookmark a recording, copy its source path or safely quoted resume command, use an event permalink, or export the original parsed records as JSONL.
 
 Search words combine with AND, including matches in different events of the same session. Quote phrases and prefix exclusions with a minus sign:

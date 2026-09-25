@@ -27,6 +27,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
 The footer includes a fixed-height status beside Rescan recordings: finding files while the total is unknown, checked/total recording files during a longer scan, and the indexed recording count when idle. The counter measures transcript files, not messages. Quick scans do not flash the busy presentation; longer scans use the existing small status dot, with a static indicator under reduced motion. Progress travels separately from data invalidations and does not refresh the library by itself. The version shares the privacy row so the new status does not crowd out workspace navigation. On short screens the sidebar can scroll to its footer, while workspace lists retain their existing minimum usable height. Preserve the existing privacy statement, appearance controls, tokens, and mobile drawer.
 
+The checking label explicitly names files, and Rescan exposes the full count definition as an accessible description. Scan failures use a static danger-colored dot and label plus an incomplete-index explanation without changing the status height. A polite live region outside the inert mobile drawer explains that indexed recordings remain available but results may be incomplete or out of date. Routine progress counts are not live-announced.
+
 ## Original appearance-control evidence and finish
 
 - **Disposition:** SHIP. The finish reviewer reached the review ceiling with no material fixes; dark remains visually preserved and the approved light palette stays muted, off-white, and mostly grayscale.

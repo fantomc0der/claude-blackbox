@@ -74,7 +74,7 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
               }
             };
             const send = (ids: string[]) => {
-              pendingChange = pendingChange ? [] : ids;
+              pendingChange = pendingChange === null ? ids : [];
               flush();
             };
             const progress = (state: IndexProgress) => {

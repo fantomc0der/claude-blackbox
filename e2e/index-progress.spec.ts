@@ -39,18 +39,22 @@ test("sidebar shows meaningful indexing progress without refreshing usage or shi
   await expect(status).toContainText("Total not yet known");
   await expect(status.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   await progress(page, { phase: "indexing", checked: 1234, total: 8400 });
+  await expect(status).toContainText("Checking files");
   await expect(status).toContainText("1,234 / 8,400");
   await expect(status.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1234");
   await expect(status.getByRole("progressbar")).toHaveAttribute("aria-valuemax", "8400");
   await expect(status.getByLabel("Rescan recordings")).toBeDisabled();
+  await expect(status.getByLabel("Rescan recordings")).toHaveAccessibleDescription(/recording files, not individual messages/);
+  await expect(page.locator(".index-announcement")).toBeEmpty();
   expect((await status.boundingBox())!.height).toBe(height);
   await progress(page, { phase: "indexing", checked: 8399, total: 8400 });
   await expect(status).toContainText("8,399 / 8,400");
   expect(await status.locator(".index-refresh").evaluate(element => getComputedStyle(element).animationName)).toBe("none");
   expect(requests).toBe(0);
   await expect(page.locator(".usage-total-cost")).toHaveText(before!);
-  const audit = await new AxeBuilder({ page }).include(".index-status").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  const audit = await new AxeBuilder({ page }).include(".sidebar-footer").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
   expect(audit.violations).toEqual([]);
+  expect(audit.incomplete.filter(result => result.id === "aria-prohibited-attr")).toEqual([]);
   await progress(page, { phase: "idle", checked: 8400, total: 8400 });
   await expect(status).toContainText("Recordings indexed");
   await expect(status.getByLabel("Rescan recordings")).toBeEnabled();
@@ -71,9 +75,52 @@ test("quick index checks stay quiet and scan errors allow retry", async ({ page 
   await expect(status.locator(".index-refresh")).not.toBeVisible();
   await progress(page, { phase: "error", checked: 20, total: 77 });
   await expect(status).toContainText("Scan failed");
+  await expect(status).toContainText("Index incomplete");
+  await expect(page.locator(".index-announcement")).toContainText("results may be incomplete or out of date");
   await expect(status.getByLabel("Rescan recordings")).toBeEnabled();
   await status.getByLabel("Rescan recordings").click();
   await expect(page.locator(".toast")).toContainText("Recordings are up to date");
+});
+
+test("scan errors remain accessible outside a closed mobile drawer without moving usage", async ({ page }) => {
+  await mockProgress(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const theme of ["dark", "light"]) {
+    await page.addInitScript(value => localStorage.setItem("blackbox:theme", value), theme);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    const panel = page.locator(".usage-panel");
+    await expect(panel).toHaveAttribute("aria-busy", "false");
+    await progress(page, { phase: "idle", checked: 77, total: 77 });
+    await page.getByLabel("Usage and estimated cost").click();
+    const before = await panel.boundingBox();
+    const cost = await panel.locator(".usage-total-cost").textContent();
+    await progress(page, { phase: "error", checked: 20, total: 77 });
+    const announcement = page.locator(".index-announcement");
+    await expect(announcement).toHaveAttribute("role", "status");
+    await expect(announcement).toHaveAttribute("aria-live", "polite");
+    await expect(announcement).toContainText("Indexed recordings remain available");
+    expect(await announcement.evaluate(element => Boolean(element.closest("[inert]")))).toBe(false);
+    expect(await panel.boundingBox()).toEqual(before);
+    await expect(panel.locator(".usage-total-cost")).toHaveText(cost!);
+    await page.getByLabel("Open workspace navigation").click();
+    const status = page.locator(".index-status");
+    await status.scrollIntoViewIfNeeded();
+    const height = (await status.boundingBox())!.height;
+    await expect(status).toHaveClass(/index-failed/);
+    expect(await status.locator(".index-refresh").evaluate(element => getComputedStyle(element).animationName)).toBe("none");
+    const retry = status.getByLabel("Rescan recordings");
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    await expect(retry).toBeEnabled();
+    await expect(retry).toHaveAccessibleDescription(/index may be incomplete or out of date/);
+    const audit = await new AxeBuilder({ page }).include(".index-status").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    expect(audit.violations).toEqual([]);
+    await progress(page, { phase: "idle", checked: 77, total: 77 });
+    await expect(announcement).toBeEmpty();
+    await expect(status).not.toHaveClass(/index-failed/);
+    expect((await status.boundingBox())!.height).toBe(height);
+  }
 });
 
 test("index progress fits compact and mobile navigation in both themes", async ({ page }) => {

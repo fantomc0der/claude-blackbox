@@ -4,6 +4,7 @@ import { tokenCount } from "../lib/format";
 import { Icon } from "./icon";
 
 export function IndexStatus(props: { catalog: Catalog | null; progress: IndexProgress | null; refreshing: boolean; refresh: () => void }) {
+  const failed = () => props.progress?.phase === "error";
   const working = () => props.refreshing || props.progress?.phase === "discovering" || props.progress?.phase === "indexing";
   const [visible, setVisible] = createSignal(false);
   createEffect(() => working(), active => {
@@ -13,25 +14,27 @@ export function IndexStatus(props: { catalog: Catalog | null; progress: IndexPro
   });
   const label = () => {
     if (!props.progress) return props.catalog ? "Index unavailable" : "Connecting to index";
-    if (props.progress.phase === "error") return "Scan failed";
-    if (visible()) return props.progress.phase === "discovering" ? "Finding recordings" : "Checking recordings";
+    if (failed()) return "Scan failed";
+    if (visible()) return props.progress.phase === "discovering" ? "Finding recordings" : "Checking files";
     return "Recordings indexed";
   };
   const count = () => {
     if (!props.progress) return props.catalog ? "Reconnecting…" : "—";
-    if (props.progress.phase === "error") return "Rescan to try again";
+    if (failed()) return "Index incomplete";
     if (visible()) return props.progress.phase === "discovering" ? "Total not yet known" : `${tokenCount(props.progress.checked)} / ${tokenCount(props.progress.total)}`;
     return props.catalog ? tokenCount(props.catalog.sessions) : "—";
   };
   const determinate = () => visible() && props.progress?.phase === "indexing" && props.progress.total > 0;
-  return <div class="index-status">
-    <span class={['loading-dot index-refresh', { active: visible() }]} aria-hidden="true" />
-    <div class="index-progress" role={visible() ? "progressbar" : undefined} aria-label={visible() ? "Recording index" : undefined}
+  return <div class={['index-status', { 'index-failed': failed() }]}>
+    <span class={['loading-dot index-refresh', { active: visible() && !failed() }]} aria-hidden="true" />
+    <div class="index-progress" role={visible() && !failed() ? "progressbar" : undefined} aria-label={visible() && !failed() ? "Recording index" : undefined}
+      aria-describedby="recording-index-help"
       aria-valuemin={determinate() ? 0 : undefined} aria-valuemax={determinate() ? props.progress!.total : undefined}
-      aria-valuenow={determinate() ? props.progress!.checked : undefined} aria-valuetext={visible() ? `${label()}: ${count()} recording files` : undefined}
+      aria-valuenow={determinate() ? props.progress!.checked : undefined} aria-valuetext={visible() && !failed() ? `${label()}: ${count()} recording files` : undefined}
       title={`${label()}: ${count()}. Progress counts recording files, not individual messages. Unreadable sources are reported separately.`}>
       <span class="index-label">{label()}</span><span class="index-count">{count()}</span>
     </div>
-    <button class="icon-button" title="Rescan recordings" aria-label="Rescan recordings" disabled={visible() || props.refreshing} onClick={props.refresh}><Icon name="refresh" size={15} /></button>
+    <span id="recording-index-help" class="visually-hidden">Counts refer to recording files, not individual messages. {failed() ? "The index may be incomplete or out of date. Rescan recordings to retry." : ""}</span>
+    <button class="icon-button" title="Rescan recordings" aria-label="Rescan recordings" aria-describedby="recording-index-help" disabled={visible() || props.refreshing} onClick={props.refresh}><Icon name="refresh" size={15} /></button>
   </div>;
 }

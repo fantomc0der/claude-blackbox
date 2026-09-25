@@ -17,6 +17,10 @@ The server binds only to loopback. No transcript commands run, remote images loa
 
 Discover JSONL files directly, including agent recordings. Index complete records using byte offsets and retain incomplete trailing writes for the next scan. Store provenance and raw records alongside searchable content. Reconcile changes and deletions, then notify clients with a single server-sent invalidation stream. Clients refetch bounded pages, not a guessed stream cursor. Reconnection always refreshes the current view.
 
+The `/api/live` stream sends `change` events with `{ version: 1, ids: string[] }`. A nonempty `ids` list identifies affected recordings; an empty list means **invalidate the entire current view**, not "nothing changed." Connection/reconnection sends a broad invalidation. If a slow consumer already has an unsent change, another change deliberately broadens that pending event to an empty `ids` list, bounding queued metadata rather than retaining an ever-growing ID set. Once broad, the pending invalidation cannot narrow again. Selective consumers must always support the empty-list convention.
+
+Separate `indexing` events carry the latest phase and recording-file counts. They update status only, without invalidating library data; under backpressure the newest progress snapshot replaces older unsent progress.
+
 Full-text queries are parameterized. Indexing is independent of `history.jsonl`; session identity includes its source file so duplicate IDs across copied directories do not collide. Unknown event types remain available through the activity filter and raw record disclosure.
 
 The index tracks filesystem identity and prefix/tail checkpoints, maintains a separate tool-result lookup, and repairs interrupted imports at startup. Schema versioning invalidates derived records when normalization changes. Both the source and state paths are resolved through existing directory links before enforcing their separation.
