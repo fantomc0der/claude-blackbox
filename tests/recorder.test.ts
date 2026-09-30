@@ -246,14 +246,46 @@ describe("recording index", () => {
     await expect(Recorder.open(fixtureData.data, join(fixtureData.data.toUpperCase(), "cache"))).rejects.toThrow("outside");
   });
 
-  test("includes subagents explicitly and lets discovery filter them out", async () => {
+  test("hides subagents by default and includes them only when requested", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("Main recording") + "\n");
     await writeFile(join(fixtureData.project, "agent-worker.jsonl"), fixtureData.record("Delegated work") + "\n");
     const recorder = await fixtureData.open();
-    expect(recorder.list(new URLSearchParams()).total).toBe(2);
+    expect(recorder.list(new URLSearchParams()).total).toBe(1);
+    expect(recorder.list(new URLSearchParams({ agents: "1" })).total).toBe(2);
+    expect(recorder.list(new URLSearchParams({ agents: "only" })).total).toBe(1);
     expect(recorder.list(new URLSearchParams({ agents: "0" })).total).toBe(1);
-    expect(recorder.list(new URLSearchParams({ q: "Delegated" })).items[0].isAgent).toBe(true);
+    expect(recorder.list(new URLSearchParams({ q: "Delegated" })).total).toBe(0);
+    expect(recorder.list(new URLSearchParams({ q: "Delegated", agents: "1" })).items[0].isAgent).toBe(true);
+  });
+
+  test("links nested and legacy subagents without matching unrelated projects or parents", async () => {
+    const setup = await fixture();
+    await writeFile(setup.file, setup.record("Main recording") + "\n");
+    const nested = join(setup.project, "session-a", "subagents");
+    const unrelated = join(setup.project, "session-other", "subagents");
+    const otherProject = join(setup.data, "projects", "other-project");
+    for (const folder of [nested, unrelated, otherProject]) await mkdir(folder, { recursive: true });
+    await writeFile(join(nested, "agent-nested.jsonl"), setup.record("Nested task", { sessionId: "own-agent-id", cwd: "C:\\work\\isolated-agent" }) + "\n");
+    await writeFile(join(setup.project, "agent-legacy.jsonl"), setup.record("Legacy task") + "\n");
+    await writeFile(join(unrelated, "agent-unrelated.jsonl"), setup.record("Different parent") + "\n");
+    await writeFile(join(otherProject, "agent-copy.jsonl"), setup.record("Different project") + "\n");
+    const recorder = await setup.open();
+    const parent = recorder.list(new URLSearchParams()).items[0];
+    const children = recorder.subagents(parent.id);
+    expect(children.map(agent => agent.title).sort()).toEqual(["Legacy task", "Nested task"]);
+    expect(recorder.subagents(children[0].id)).toEqual([]);
+    expect(recorder.subagents("missing")).toEqual([]);
+    expect(recorder.getSession(children[0].id)?.isAgent).toBe(true);
+    recorder.bookmark(children[0].id, true);
+    const catalog = await recorder.catalog();
+    expect(catalog.mainSessions).toBe(1);
+    expect(catalog.mainBookmarked).toBe(0);
+    expect(catalog.workspaces.find(workspace => workspace.id === "C:\\work\\isolated-agent")?.mainCount).toBe(0);
+    const group = recorder.saveGroup({ name: "With agent worktree", paths: [parent.cwd, "C:\\work\\isolated-agent"] });
+    expect((await recorder.catalog()).workspaces.find(workspace => workspace.id === group.id)).toMatchObject({ count: 5, mainCount: 1 });
+    expect(recorder.list(new URLSearchParams({ workspace: group.id })).total).toBe(1);
+    expect(recorder.list(new URLSearchParams({ workspace: group.id, agents: "1" })).total).toBe(5);
   });
 
   test("uses recorded session IDs and generated titles, not injected context", async () => {

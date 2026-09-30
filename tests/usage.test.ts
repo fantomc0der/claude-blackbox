@@ -294,11 +294,12 @@ describe("indexed usage", () => {
     await setup.write("session-b", [record("shared", { cwd: "C:\\clone" }), record("distinct", { cwd: "C:\\clone" })]);
     await setup.write("agent-subtask", [record("agent", { cwd: "C:\\clone", isSidechain: true })]);
     const recorder = await setup.open();
-    const page = recorder.list(new URLSearchParams());
+    const page = recorder.list(new URLSearchParams({ agents: "1" }));
     expect(page.usage.requests).toBe(3);
     expect(page.directories.reduce((sum, directory) => sum + directory.usage.requests, 0)).toBe(3);
     expect(recorder.list(new URLSearchParams({ agents: "0" })).usage.requests).toBe(2);
-    expect(recorder.list(new URLSearchParams({ cwd: "C:\\clone" })).usage.requests).toBe(3);
+    expect(recorder.list(new URLSearchParams()).usage.requests).toBe(2);
+    expect(recorder.list(new URLSearchParams({ cwd: "C:\\clone", agents: "1" })).usage.requests).toBe(3);
   });
 
   test("tracks missing pricing and does not treat recordings without usage as free", async () => {

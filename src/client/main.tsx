@@ -6,6 +6,7 @@ import "./styles/replay.css";
 import "./styles/theme-control.css";
 import "./styles/usage.css";
 import "./styles/light.css";
+import "./styles/subagents.css";
 
 render(() => (
   <Errored fallback={(error, reset) => <main class="fatal-error"><h1>Something interrupted the replay.</h1><p>{String(error())}</p><button onClick={reset}>Try again</button></main>}>

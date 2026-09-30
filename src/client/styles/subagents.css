@@ -1,0 +1,49 @@
+@layer components {
+  .subagent-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 2px; color: var(--muted); font-size: var(--text-support); background: transparent; border: 0; cursor: pointer; }
+  .subagent-toggle:hover { color: var(--text); }
+  .subagent-toggle[aria-pressed="true"] { color: var(--text); }
+  .sidebar-footer > .subagent-toggle { width: 100%; min-height: 40px; padding: 4px 0; margin: 0 0 4px; text-align: left; }
+  .sidebar-footer > .subagent-toggle > svg { display: none; }
+  .sidebar-footer .subagent-toggle-track { margin-left: auto; flex-shrink: 0; }
+  .subagent-toggle-label small { display: block; margin-top: 3px; color: var(--muted); font-size: var(--text-meta); font-weight: 400; line-height: 1.35; }
+  .filter-row > .subagent-toggle { margin-left: auto; }
+  .library-split .subagent-toggle-label { display: none; }
+  .subagent-toggle-track { width: 26px; height: 16px; padding: 3px; border-radius: 10px; background: var(--line); }
+  .subagent-toggle-track::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .subagent-toggle[aria-pressed="true"] .subagent-toggle-track { background: var(--accent); }
+  .subagent-toggle[aria-pressed="true"] .subagent-toggle-track::after { transform: translateX(10px); background: var(--bg); }
+  .subagent-access { white-space: nowrap; }
+  .session-context { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+  .session-context > .session-path, .session-context > .session-snippet { min-width: 0; flex: 1; }
+  .session-kind { flex-shrink: 0; margin-top: 7px; border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--muted); font-size: var(--text-meta); line-height: 1.4; font-weight: 500; white-space: nowrap; }
+  .subagent-access > span { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .subagent-dialog { color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 0; width: min(900px, calc(100vw - 32px)); height: min(840px, calc(100dvh - 48px)); max-width: none; max-height: none; }
+  .subagent-dialog[open] { display: flex; flex-direction: column; }
+  .subagent-dialog::backdrop { background: #0009; }
+  .subagent-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px 16px; }
+  .subagent-dialog-heading > div { min-width: 0; }
+  .subagent-dialog-heading h2 { margin: 0; font-size: 1.125rem; }
+  .subagent-dialog-heading p { margin: 6px 0 0; color: var(--muted); font-size: var(--text-support); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subagent-selection { padding: 0 24px 16px; border-bottom: 1px solid var(--line); }
+  .subagent-selection label { display: block; margin-bottom: 6px; font-size: var(--text-support); }
+  .subagent-selection label span { color: var(--muted); }
+  .subagent-selection select { width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); padding: 6px 10px; font: inherit; font-size: var(--text-control); }
+  .subagent-metadata { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; color: var(--muted); font-size: var(--text-meta); }
+  .subagent-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subagent-transcript { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: 20px 24px; scrollbar-gutter: stable; }
+  .subagent-status { color: var(--muted); font-size: var(--text-body); }
+  .subagent-dialog-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 10px 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--text-meta); }
+  @media (max-width: 680px) {
+    .library .subagent-toggle-label { display: none; }
+    .subagent-dialog { width: calc(100vw - 16px); height: calc(100dvh - 24px); }
+    .subagent-dialog-heading { padding: 16px; }
+    .subagent-selection { padding: 0 16px 12px; }
+    .subagent-transcript { padding: 12px; }
+    .subagent-dialog-footer { padding: 10px 16px; }
+  }
+  @media (max-width: 360px) {
+    .quick-filter-label { display: none; }
+    .filter-tabs .filter-tab:not(:first-child) { min-width: 34px; justify-content: center; }
+    .filter-tabs .filter-tab svg { width: 16px; height: 16px; }
+  }
+}

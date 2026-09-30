@@ -85,6 +85,7 @@ export interface Workspace {
   name: string;
   paths: string[];
   count: number;
+  mainCount?: number;
   grouped: boolean;
   usage: UsageSummary;
 }
@@ -103,6 +104,8 @@ export interface IndexProgress {
 
 export interface Catalog {
   sessions: number;
+  mainSessions?: number;
+  mainBookmarked?: number;
   messages: number;
   tools: number;
   errors: number;

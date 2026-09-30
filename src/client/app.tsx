@@ -135,6 +135,7 @@ export function App() {
     source.addEventListener("change", changed);
     source.addEventListener("indexing", event => setIndexing(JSON.parse((event as MessageEvent).data)));
     const keyboard = (event: KeyboardEvent) => {
+      if (document.querySelector("dialog[open]")) return;
       if (navOpen() && mobile() && event.key === "Tab") {
         const targets = [...document.querySelectorAll<HTMLElement>(".sidebar a[href],.sidebar button:not([disabled]),.sidebar input:not([disabled]),.sidebar select:not([disabled]),.sidebar textarea:not([disabled]),.sidebar summary,.sidebar [tabindex]:not([tabindex='-1'])")].filter(element => element.getClientRects().length && !element.closest("[inert]"));
         if (event.shiftKey && document.activeElement === targets[0]) { event.preventDefault(); targets.at(-1)?.focus(); }
