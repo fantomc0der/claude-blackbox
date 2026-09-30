@@ -395,6 +395,17 @@ export class Recorder {
     return row ? this.session(row) : null;
   }
 
+  subagents(id: string): Session[] {
+    const parent = this.db.query<SourceRow, [string]>(`SELECT ${columns} ${joins} WHERE s.id=? AND s.agent=0`).get(id);
+    if (!parent) return [];
+    const prefix = join(dirname(parent.source), basename(parent.source, ".jsonl"), "subagents") + sep;
+    return this.db.query<SourceRow, [string, string, string]>(`SELECT ${columns} ${joins}
+      WHERE s.agent=1 AND (substr(s.source,1,length(?))=? OR s.session_id=?) ORDER BY s.started,s.id`)
+      .all(prefix, prefix, parent.session_id)
+      .filter(row => row.source.startsWith(prefix) || dirname(row.source) === dirname(parent.source))
+      .map(row => this.session(row));
+  }
+
   list(params: URLSearchParams): SessionPage {
     const conditions: string[] = [];
     const bindings: SQLQueryBindings[] = [];
@@ -431,7 +442,7 @@ export class Recorder {
     if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
     if (params.get("errors") === "1") conditions.push("s.errors>0");
     if (params.get("edits") === "1") conditions.push("s.edits>0");
-    if (params.get("agents") === "0") conditions.push("s.agent=0");
+    if (params.get("agents") !== "1" && params.get("agents") !== "only") conditions.push("s.agent=0");
     if (params.get("agents") === "only") conditions.push("s.agent=1");
     const pricing = params.get("pricing");
     if (pricing === "complete") conditions.push("session_usage.usageRequests>0 AND session_usage.pricedRequests=session_usage.usageRequests");
@@ -643,7 +654,7 @@ export class Recorder {
     }
     const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number }, []>(
       "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings FROM sessions").get()!;
-    const sources = this.db.query<{ cwd: string; count: number }, []>("SELECT cwd,count(*) AS count FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
+    const sources = this.db.query<{ cwd: string; count: number; mainCount: number }, []>("SELECT cwd,count(*) AS count,sum(CASE WHEN agent=0 THEN 1 ELSE 0 END) AS mainCount FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
     const groups = this.groups();
     if (!this.workspaceUsage) {
       const usageRows = this.db.query<UsageSummary & { workspace: string }, []>(`WITH ranked AS (
@@ -656,12 +667,14 @@ export class Recorder {
       this.workspaceUsage = new Map(usageRows.map(({ workspace, ...usage }) => [workspace, usage]));
     }
     const usageByWorkspace = this.workspaceUsage;
-    const workspaces = groups.map(group => ({ ...group, grouped: true, count: sources.filter(row => group.paths.includes(row.cwd)).reduce((sum, row) => sum + row.count, 0), usage: usageByWorkspace.get(group.id) || emptyUsage() }));
+    const workspaces = groups.map(group => ({ ...group, grouped: true, count: sources.filter(row => group.paths.includes(row.cwd)).reduce((sum, row) => sum + row.count, 0), mainCount: sources.filter(row => group.paths.includes(row.cwd)).reduce((sum, row) => sum + row.mainCount, 0), usage: usageByWorkspace.get(group.id) || emptyUsage() }));
     for (const source of sources) if (!groups.some(group => group.paths.includes(source.cwd))) {
-      workspaces.push({ id: source.cwd || "unknown", name: pathName(source.cwd), paths: [source.cwd], count: source.count, grouped: false, usage: usageByWorkspace.get(source.cwd) || emptyUsage() });
+      workspaces.push({ id: source.cwd || "unknown", name: pathName(source.cwd), paths: [source.cwd], count: source.count, mainCount: source.mainCount, grouped: false, usage: usageByWorkspace.get(source.cwd) || emptyUsage() });
     }
     return {
       ...totals, warnings: totals.warnings + this.scanWarnings, groups, workspaces: workspaces.sort((left, right) => right.count - left.count),
+      mainSessions: sources.reduce((sum, row) => sum + row.mainCount, 0),
+      mainBookmarked: this.db.query<{ count: number }, []>("SELECT count(*) AS count FROM bookmarks b JOIN sessions s ON b.session_id=s.id WHERE s.agent=0").get()!.count,
       bookmarked: this.db.query<{ count: number }, []>("SELECT count(*) AS count FROM bookmarks b JOIN sessions s ON b.session_id=s.id").get()!.count,
       ...this.catalogFacets,
       dataDir: this.dataDir, indexedAt: this.indexedAt, demo: await Bun.file(join(this.dataDir, ".blackbox-demo")).exists(),

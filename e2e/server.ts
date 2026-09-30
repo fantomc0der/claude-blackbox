@@ -63,6 +63,15 @@ const workspaceTransitions = [
   event("Returned to the original directory", 6),
 ];
 await writeFile(join(folder, "workspace-transitions.jsonl"), workspaceTransitions.map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "subagent-parent.jsonl"), Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
+const agentsFolder = join(folder, "subagent-parent", "subagents");
+await mkdir(agentsFolder, { recursive: true });
+for (const name of ["first", "second"]) {
+  await writeFile(join(agentsFolder, `agent-${name}.jsonl`), Array.from({ length: 45 }, (_, index) => JSON.stringify({
+    ...event(index === 0 ? `Subagent child ${name}` : `Delegate ${name} event ${index}\n\nRecorded findings from the delegated task.`, index, index ? "assistant" : "user"),
+    sessionId: "subagent-parent", isSidechain: true, cwd: "/synthetic/delegated-worktree",
+  })).join("\n") + "\n");
+}
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);

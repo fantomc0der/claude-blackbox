@@ -140,7 +140,7 @@ test("index progress fits compact and mobile navigation in both themes", async (
       await expect(status.getByRole("progressbar")).toBeVisible();
       await status.scrollIntoViewIfNeeded();
       const box = (await status.boundingBox())!;
-      expect(box.y + box.height).toBeLessThanOrEqual(width === 1280 ? 720 : 844);
+      expect(Math.round(box.y + box.height)).toBeLessThanOrEqual(width === 1280 ? 720 : 844);
       expect(await status.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }

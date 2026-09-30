@@ -11,6 +11,7 @@ import { clearReplayFilters, replayFilters } from "../lib/replay-filters";
 import { withSelectedOption } from "../lib/filter-options";
 import { Icon } from "./icon";
 import { EventCard } from "./event-card";
+import { SubagentAccess } from "./subagent-dialog";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
 
@@ -252,6 +253,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         <Show when={props.session}>{session => <>
           <button class="secondary-button resume-command" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button>
           <SessionActions session={session()} onBookmark={() => void bookmark()} />
+          <Show when={!session().isAgent}><SubagentAccess session={session()} revision={props.revision} /></Show>
           <details class="session-details" ref={setDetails}>
             <summary class="text-button"><span class="session-actions-label">Session actions</span><span class="session-details-label">Session details</span><Icon name="down" size={14} /></summary>
             <div class="session-details-menu" ref={setDetailsMenu} role="region" aria-label="Session details">

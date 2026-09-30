@@ -166,7 +166,7 @@ test("cost sorting follows live grouping and ungrouping without resetting the pr
     await expect(groupRow).toContainText("2 folders, one history");
     await expect(sort).toHaveValue("cost");
     const catalog = await page.evaluate(() => fetch("/api/catalog").then(response => response.json())) as { workspaces: Workspace[] };
-    const ordered = visibleWorkspaces(catalog.workspaces, "cost", "");
+    const ordered = visibleWorkspaces(catalog.workspaces.filter(workspace => (workspace.mainCount ?? workspace.count) > 0), "cost", "");
     expect(await rowNames(page)).toEqual(ordered.map(workspace => workspace.name));
   } finally {
     await page.evaluate(id => fetch(`/api/groups/${id}`, { method: "DELETE", headers: { "Content-Type": "application/json" } }), group.id);

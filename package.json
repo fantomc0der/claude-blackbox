@@ -15,6 +15,7 @@
     "build": "bun --bun vite build",
     "start": "bun src/server/cli.ts",
     "desktop": "bun tauri dev",
+    "desktop:local": "bun scripts/desktop-local.ts",
     "desktop:build": "bun tauri build",
     "desktop:sidecar": "bun scripts/build-sidecar.ts",
     "demo": "bun scripts/demo.ts && bun src/server/cli.ts --dir .blackbox/demo --state-dir .blackbox/demo-state --port 12002",

@@ -43,6 +43,15 @@ bun run desktop
 bun run desktop:build
 ```
 
+On Windows, use the repeatable local preview launcher to rebuild and open this checkout without leaving a development watcher running:
+
+```sh
+bun run desktop:local
+bun run desktop:local --dry-run
+```
+
+It checks the current Windows session for existing processes, stops this checkout's debug/release desktop app, sidecars, and local Tauri development watcher (including their child processes), then builds the UI, sidecar, and debug desktop executable without producing an installer. The preview opens in its own window and stays running after the command exits. Stopping a local instance closes its window and tray process; source recordings, bookmarks, and workspace groups are not removed. An installed app or another checkout must be quit from its tray first: the launcher reports it rather than stopping unrelated processes or accidentally reopening an older build. A failed build never launches the stale executable. `--dry-run` reports the process and launch plan without stopping, building, or opening anything. Bun, Rust, and the usual Tauri prerequisites must already be installed; the launcher does not install dependencies. On macOS/Linux, continue to use `bun run desktop`.
+
 Desktop bundles include the Bun runtime, so they are substantially larger than a typical Tauri application. The backend still listens on a dynamically selected loopback TCP port; the existing hostname, origin, request-shape, and cross-site checks remain active.
 
 While the desktop app is running, claude-blackbox also lives in the system tray. Closing the window keeps the session archive available in the tray by default; left-click the tray icon to reopen it, or right-click for updates, release downloads, settings, and a full quit. Under **Settings**, clear **Keep running when window is closed** if the window close button should exit the app instead. Launching the app while it is already running, including while it sits in the tray, reopens the existing window instead of starting a second copy. The window opens as soon as the local server is up; a large recording history keeps indexing in the background and the library fills in as sessions are read.
@@ -75,7 +84,11 @@ src/auth.ts
 
 Transcript search uses Unicode word/phrase tokenization, not regular expressions or fuzzy matching. Session titles and workspace metadata also support substring matches. Search within a recording uses literal substring matching. Calendar date bounds use UTC; displayed event times use your browser's local timezone.
 
-All source recordings, including subagents, are included initially. The recording-type filter can select main sessions or subagents alone. **Conversation** hides internal metadata/context records; **All events** retains them. “Recently active” means a recording changed within two minutes, not that a Claude process has been independently verified as running.
+Main sessions are shown by default. **Show subagents** in the sidebar's display preferences or session library includes delegated recordings across all workspaces and session lists; the setting stays with your current URL as you browse folders and groups. Agent-only workspaces are hidden while the toggle is off. Subagent rows carry an explicit **Subagent** label on the metadata line below the title, including in compact and mobile lists, without taking width away from the title. The recording-type filter can also select subagents alone. Workspace cost sorting still includes all recordings, including subagents.
+
+When a main session has linked subagent recordings, **Subagents** in its replay opens a compact, read-only viewer without leaving the main session. Switch between agents and page through their full events, including tool results and raw records. The preview deliberately omits resume, bookmark, and archive-filter controls. Closing it returns to the same main-session position. Relationships use the nested `session/subagents/` recording path, or a shared recorded session ID for legacy `agent-*.jsonl` files in the same project folder; unlinked agents remain available through **Show subagents**.
+
+**Conversation** hides internal metadata/context records; **All events** retains them. “Recently active” means a recording changed within two minutes, not that a Claude process has been independently verified as running.
 
 ### Investigation Scope
 
