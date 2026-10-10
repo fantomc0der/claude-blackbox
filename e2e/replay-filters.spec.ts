@@ -73,9 +73,10 @@ test("replay advanced filters stay usable on mobile and reset the empty state", 
 });
 
 test("reasoning the API did not return is kept out of the conversation but shown in all events", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?q=Hidden+reasoning+verification");
   await page.getByRole("button", { name: /Hidden reasoning verification/ }).click();
   await expect(page.getByRole("region", { name: "Session replay" })).toBeVisible();
+  await page.getByRole("button", { name: "Conversation", exact: true }).click();
   await expect(page.locator(".replay-event")).toHaveCount(3);
   await expect(page.locator(".tool-hidden")).toHaveCount(0);
   await expect(page.locator(".tool-thinking summary")).toHaveText("Reasoning");
@@ -91,9 +92,10 @@ test("reasoning the API did not return is kept out of the conversation but shown
 });
 
 test("redacted reasoning is kept out of the conversation and labeled distinctly in all events", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?q=Redacted+reasoning+verification");
   await page.getByRole("button", { name: /Redacted reasoning verification/ }).click();
   await expect(page.getByRole("region", { name: "Session replay" })).toBeVisible();
+  await page.getByRole("button", { name: "Conversation", exact: true }).click();
   await expect(page.locator(".replay-event")).toHaveCount(2);
   await expect(page.locator(".tool-hidden")).toHaveCount(0);
   await page.getByRole("button", { name: "All events", exact: true }).click();
@@ -102,9 +104,10 @@ test("redacted reasoning is kept out of the conversation and labeled distinctly 
 });
 
 test("thinking view explains a session whose reasoning was never returned", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?q=Hidden-only+reasoning+verification");
   await page.getByRole("button", { name: /Hidden-only reasoning verification/ }).click();
   await expect(page.getByRole("region", { name: "Session replay" })).toBeVisible();
+  await page.getByRole("button", { name: "Conversation", exact: true }).click();
   await expect(page.locator(".replay-event")).toHaveCount(2);
   await openFilters(page);
   await page.getByRole("combobox", { name: "Focused replay view" }).selectOption("thinking");
