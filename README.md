@@ -52,6 +52,8 @@ bun run desktop:local --dry-run
 
 It checks the current Windows session for existing processes, stops this checkout's debug/release desktop app, sidecars, and local Tauri development watcher (including their child processes), then builds the UI, sidecar, and debug desktop executable without producing an installer. The preview opens in its own window and stays running after the command exits. Stopping a local instance closes its window and tray process; source recordings, bookmarks, and workspace groups are not removed. An installed app or another checkout must be quit from its tray first: the launcher reports it rather than stopping unrelated processes or accidentally reopening an older build. A failed build never launches the stale executable. `--dry-run` reports the process and launch plan without stopping, building, or opening anything. Bun, Rust, and the usual Tauri prerequisites must already be installed; the launcher does not install dependencies. On macOS/Linux, continue to use `bun run desktop`.
 
+**Development cache warning:** these desktop launchers currently share the default index with the installed app when reading the same Claude directory. A newer development build can upgrade that index and prevent an older installed version from starting. Stopping the installed app avoids a process conflict, not a cache-compatibility conflict. Use the isolated browser workflow under **Development And Verification** for routine development and review; desktop validation needs an explicitly verified isolation or migration plan.
+
 Desktop bundles include the Bun runtime, so they are substantially larger than a typical Tauri application. The backend still listens on a dynamically selected loopback TCP port; the existing hostname, origin, request-shape, and cross-site checks remain active.
 
 While the desktop app is running, claude-blackbox also lives in the system tray. Closing the window keeps the session archive available in the tray by default; left-click the tray icon to reopen it, or right-click for updates, release downloads, settings, and a full quit. Under **Settings**, clear **Keep running when window is closed** if the window close button should exit the app instead. Launching the app while it is already running, including while it sits in the tray, reopens the existing window instead of starting a second copy. The window opens as soon as the local server is up; a large recording history keeps indexing in the background and the library fills in as sessions are read.
@@ -154,7 +156,7 @@ Open `http://127.0.0.1:12002`. The demo creates 15 explicitly synthetic recordin
 ## Development And Verification
 
 ```sh
-bun dev
+bun run dev --state-dir .blackbox/dev-state
 bun run typecheck
 bun run test
 bun run test:e2e
@@ -163,7 +165,16 @@ bun run desktop:sidecar
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Development uses Vite on `127.0.0.1:12000` and the Bun API on `127.0.0.1:12001`. Stop any production server on that API port before starting development. For synthetic data, first run `bun scripts/demo.ts`, then `bun dev --dir .blackbox/demo --state-dir .blackbox/dev-state`.
+Development uses Vite on `127.0.0.1:12000` and the Bun API on `127.0.0.1:12001`. Always give development and review servers their own `--state-dir`; the example uses ignored checkout-local state instead of the installed app's shared cache. Changing the port does not isolate the index. Use a fresh task-specific state directory when switching between incompatible schema versions. For synthetic data, first run `bun scripts/demo.ts`, then `bun run dev --dir .blackbox/demo --state-dir .blackbox/demo-dev-state`.
+
+If either development port is occupied, do not stop an installed app or unrelated server to free it. A built browser preview can use an available port and separate state instead:
+
+```sh
+bun run build
+bun start --state-dir .blackbox/review-state --port 12004
+```
+
+Open `http://127.0.0.1:12004` after checking that port is free. Coding agents must read `AGENTS.md` and `CLAUDE.md`, including the required state-isolation and cleanup rules, before starting local servers or desktop previews.
 
 Browser tests use **Bun's test runner with Playwright controlling installed Microsoft Edge**, not Playwright's Node-dependent test runner. They build the UI, preload the shared browser/server lifecycle across spec files, start an isolated fixture server on port `12003`, exercise real browser interactions, and audit accessibility with axe. Failed tests save screenshots and traces in ignored `test-results/`. No real transcripts are used by the test suite.
 
