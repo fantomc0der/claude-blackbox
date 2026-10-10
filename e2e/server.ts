@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { deflateSync } from "node:zlib";
 import { createDemo } from "../scripts/demo";
 import { Recorder } from "../src/server/recorder";
 import { createHandler } from "../src/server/http";
@@ -63,7 +64,39 @@ const workspaceTransitions = [
   event("Returned to the original directory", 6),
 ];
 await writeFile(join(folder, "workspace-transitions.jsonl"), workspaceTransitions.map(record => JSON.stringify(record)).join("\n") + "\n");
-await writeFile(join(folder, "subagent-parent.jsonl"), Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
+const tinyPng = (width: number, height: number, rgb: [number, number, number]) => {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc32 = (bytes: Uint8Array) => { let c = 0xffffffff; for (const byte of bytes) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type: string, data: Uint8Array) => {
+    const out = new Uint8Array(12 + data.length);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, data.length);
+    out.set(Buffer.from(type, "ascii"), 4);
+    out.set(data, 8);
+    view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+    return out;
+  };
+  const header = new Uint8Array(13);
+  new DataView(header.buffer).setUint32(0, width);
+  new DataView(header.buffer).setUint32(4, height);
+  header.set([8, 2, 0, 0, 0], 8);
+  const raw = new Uint8Array(height * (1 + width * 3));
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) raw.set(rgb, y * (1 + width * 3) + 1 + x * 3);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", new Uint8Array())]).toString("base64");
+};
+const imageSource = { type: "base64", media_type: "image/png", data: tinyPng(16, 12, [199, 238, 121]) };
+const imageRead = (id: string, file_path: string) => ({ type: "tool_use", id, name: "Read", input: { file_path } });
+await writeFile(join(folder, "image-read.jsonl"), [
+  event("Image read verification", 0),
+  { ...event("", 1, "assistant"), message: { role: "assistant", content: [imageRead("read-image-1", "/synthetic/browser-tests/docs/screenshot.png"), imageRead("read-mixed-1", "/synthetic/browser-tests/docs/mixed.png"), imageRead("read-svg-1", "/synthetic/browser-tests/docs/diagram.svg")] } },
+  { ...event("", 2), message: { role: "user", content: [
+    { type: "tool_result", tool_use_id: "read-image-1", content: [{ type: "image", source: imageSource }] },
+    { type: "tool_result", tool_use_id: "read-mixed-1", content: [{ type: "text", text: "Mixed image result caption" }, { type: "image", source: imageSource }] },
+    { type: "tool_result", tool_use_id: "read-svg-1", content: [{ type: "image", source: { type: "base64", media_type: "image/svg+xml", data: Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"/>").toString("base64") } }] },
+  ] } },
+  { ...event("", 3), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "read-unpaired-1", content: [{ type: "image", source: imageSource }] }] } },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "subagent-parent.jsonl"),Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
 const agentsFolder = join(folder, "subagent-parent", "subagents");
 await mkdir(agentsFolder, { recursive: true });
 for (const name of ["first", "second"]) {

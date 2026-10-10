@@ -2,14 +2,17 @@ import { For, Show, createEffect, createMemo, createSignal, onSettled, untrack }
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
 import {
   boundedDiff,
+  contentImages,
   contentToText,
   eventRaw,
   formatEventTime,
   getString,
   getToolInput,
+  imageMeta,
   isRecord,
   isToolResultEvent,
   prettyValue,
+  resultImages,
   resultText,
   safeDataImage,
   toolPreview,
@@ -106,27 +109,52 @@ function QuestionPanel(props: { input: Record<string, unknown> }) {
   }}</For></div>;
 }
 
-function Attachment(props: { block: ContentBlock }) {
+function Attachment(props: { block: ContentBlock; label?: string }) {
   const [enabled, setEnabled] = createSignal(false);
   const source = () => safeDataImage(props.block.source);
-  return <section class="tool-attachment"><span>Image attachment</span><Show when={source()} fallback={<span class="replay-muted">Unavailable or blocked attachment</span>}><button class="replay-text-button" type="button" onClick={() => setEnabled(!enabled())}>{enabled() ? "Hide image" : "Show image"}</button><Show when={enabled()}><img src={source()} alt="Recorded image attachment" /></Show></Show></section>;
+  const meta = () => imageMeta(props.block.source);
+  return <section class="tool-attachment"><span>{props.label ?? "Image attachment"} <span class="replay-muted">{meta().format} · {meta().size}</span></span><Show when={source()} fallback={<span class="replay-muted">Unavailable or blocked attachment</span>}><button class="replay-text-button" type="button" onClick={() => setEnabled(!enabled())}>{enabled() ? "Hide image" : "Show image"}</button><Show when={enabled()}><img src={source()} alt="Recorded image attachment" /></Show></Show></section>;
+}
+
+function ImagePanel(props: { title: string; block: ContentBlock }) {
+  const [actualSize, setActualSize] = createSignal(false);
+  const [dimensions, setDimensions] = createSignal("");
+  const source = () => safeDataImage(props.block.source);
+  const meta = () => imageMeta(props.block.source);
+  const name = () => props.title.split(/[\\/]/).pop() || props.title;
+  return <section class="tool-code tool-image" data-actual-size={actualSize() ? "true" : "false"}>
+    <header><span>{props.title}</span><span class="tool-image-meta">{meta().format} · {meta().size}{dimensions() ? ` · ${dimensions()}` : ""}</span></header>
+    <Show when={source()} fallback={<p class="tool-image-blocked replay-muted">Image not shown (unsupported or blocked format)</p>}>
+      <button class="tool-image-frame" type="button" aria-pressed={actualSize() ? "true" : "false"} aria-label={actualSize() ? "Fit image to card" : "Show image at actual size"} onClick={() => setActualSize(!actualSize())}>
+        <img src={source()} alt={`Image read from ${name()}`} loading="lazy" decoding="async" onLoad={(event) => setDimensions(`${event.currentTarget.naturalWidth}×${event.currentTarget.naturalHeight}`)} />
+      </button>
+    </Show>
+  </section>;
+}
+
+function ResultImages(props: { title: string; result?: ContentBlock }) {
+  return <For each={resultImages(props.result)}>{(block) => <ImagePanel title={props.title} block={block} />}</For>;
 }
 
 function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highlight?: string }) {
   const input = () => getToolInput(props.block);
   const name = () => (props.block.name ?? "").toLowerCase();
   const result = () => resultText(props.result);
+  const images = () => resultImages(props.result);
   const terminal = () => ["bash", "shell", "powershell"].includes(name());
+  const readTitle = () => getString(input().file_path) ?? getString(input().path) ?? "Read file";
   return <div class="tool-content">
     <Show when={name() === "edit"}><DiffPanel input={input()} /></Show>
     <Show when={name() === "write"}><CodePanel title={getString(input().file_path) ?? "Written file"} value={getString(input().content) ?? prettyValue(input())} highlight={props.highlight} /></Show>
-    <Show when={name() === "read"}><CodePanel title={getString(input().file_path) ?? getString(input().path) ?? "Read file"} value={result() || prettyValue(input())} highlight={props.highlight} /></Show>
+    <Show when={name() === "read" && (result() || !images().length)}><CodePanel title={readTitle()} value={result() || prettyValue(input())} highlight={props.highlight} /></Show>
+    <Show when={name() === "read"}><ResultImages title={readTitle()} result={props.result} /></Show>
     <Show when={terminal()}><CodePanel title="Command" value={getString(input().command) ?? prettyValue(input())} highlight={props.highlight} terminal /><Show when={result()}><CodePanel title={props.result?.is_error ? "Command error" : "Command output"} value={result()} highlight={props.highlight} terminal /></Show></Show>
     <Show when={name() === "todowrite" || name() === "todo"}><TodoPanel input={input()} /></Show>
     <Show when={name() === "task" || name() === "agent"}><section class="tool-task"><strong>{getString(input().description) ?? getString(input().subagent_type) ?? "Task"}</strong><p>{getString(input().prompt) ?? ""}</p></section></Show>
     <Show when={name() === "askuserquestion" || name() === "ask_question"}><QuestionPanel input={input()} /></Show>
     <Show when={!(["edit", "write", "read", "bash", "shell", "powershell", "todowrite", "todo", "task", "agent", "askuserquestion", "ask_question"] as string[]).includes(name())}><CodePanel title="Tool input" value={prettyValue(input())} highlight={props.highlight} /></Show>
     <Show when={!terminal() && name() !== "read" && result()}><CodePanel title={props.result?.is_error ? "Tool error" : "Tool result"} value={result()} highlight={props.highlight} /></Show>
+    <Show when={name() !== "read"}><ResultImages title="Tool result image" result={props.result} /></Show>
   </div>;
 }
 
@@ -142,8 +170,9 @@ function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?
 }
 
 function ToolResult(props: { block: ContentBlock; highlight?: string }) {
-  const value = () => contentToText(props.block.content) || prettyValue(props.block.content ?? props.block);
-  return <section class={`tool-card tool-result ${props.block.is_error ? "tool-card-error" : ""}`}><CodePanel title={props.block.is_error ? "Recorded tool error" : "Recorded tool result"} value={value()} highlight={props.highlight} /></section>;
+  const images = () => contentImages(props.block.content);
+  const value = () => contentToText(props.block.content) || (images().length ? "" : prettyValue(props.block.content ?? props.block));
+  return <section class={`tool-card tool-result ${props.block.is_error ? "tool-card-error" : ""}`}><Show when={value()}><CodePanel title={props.block.is_error ? "Recorded tool error" : "Recorded tool result"} value={value()} highlight={props.highlight} /></Show><For each={images()}>{(block) => <Attachment block={block} label="Recorded image result" />}</For></section>;
 }
 
 function ThinkingBlock(props: { block: ContentBlock; highlight?: string }) {

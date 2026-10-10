@@ -71,8 +71,36 @@ export function prettyValue(value: unknown): string {
   }
 }
 
+export function isImageBlock(block: ContentBlock): boolean {
+  return block.type === "image" || isRecord(block.source);
+}
+
+export function contentImages(content: ContentBlock["content"]): ContentBlock[] {
+  return Array.isArray(content) ? content.filter(isImageBlock) : [];
+}
+
+export function resultImages(result?: ContentBlock): ContentBlock[] {
+  return result ? contentImages(result.content) : [];
+}
+
 export function resultText(result?: ContentBlock): string {
-  return result ? blockToText(result) || prettyValue(result.content ?? result) : "";
+  if (!result) return "";
+  return blockToText(result) || (resultImages(result).length ? "" : prettyValue(result.content ?? result));
+}
+
+export interface ImageMeta {
+  format: string;
+  size: string;
+}
+
+export function imageMeta(source?: ContentBlock["source"]): ImageMeta {
+  const subtype = source?.media_type?.toLowerCase().replace(/^image\//, "").replace(/;.*$/, "") ?? "";
+  const format = subtype === "jpeg" ? "JPEG" : subtype === "svg+xml" ? "SVG" : subtype.toUpperCase() || "Image";
+  const data = typeof source?.data === "string" ? source.data.replace(/\s/g, "") : "";
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  const bytes = Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+  const size = bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
+  return { format, size };
 }
 
 export function safeDataImage(source?: ContentBlock["source"]): string | undefined {
