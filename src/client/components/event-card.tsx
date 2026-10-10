@@ -9,6 +9,7 @@ import {
   getString,
   getToolInput,
   imageMeta,
+  isImageBlock,
   isRecord,
   isToolResultEvent,
   prettyValue,
@@ -186,7 +187,7 @@ function BlockRenderer(props: { block: ContentBlock; results?: Record<string, Co
   if (props.block.type === "thinking") return <ThinkingBlock block={props.block} highlight={props.highlight} />;
   if (props.block.type === "tool_use") return <ToolUse block={props.block} result={props.block.id ? props.results?.[props.block.id] : undefined} highlight={props.highlight} />;
   if (props.block.type === "tool_result") return <ToolResult block={props.block} highlight={props.highlight} />;
-  if (props.block.source || props.block.type === "image") return <Attachment block={props.block} />;
+  if (isImageBlock(props.block)) return <Attachment block={props.block} />;
   return <section class="tool-unknown"><strong>Unknown block: {props.block.type || "untitled"}</strong><CodePanel title="Raw block" value={prettyValue(props.block)} /></section>;
 }
 
