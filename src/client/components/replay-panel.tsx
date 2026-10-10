@@ -51,7 +51,7 @@ function SessionActions(props: { session: Session; onBookmark: () => void }) {
   </div>;
 }
 
-export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; params: URLSearchParams; navigate: Navigate; changed: () => void; close: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void; overviewVisible: boolean; toggleOverview: () => void }) {
+export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; params: URLSearchParams; navigate: Navigate; traversal: () => boolean; changed: () => void; close: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void; overviewVisible: boolean; toggleOverview: () => void }) {
   let scroll!: HTMLDivElement;
   const initialFilters = untrack(() => replayFilters(props.params));
   const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : initialFilters.kind);
@@ -116,11 +116,14 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const [detailsMenu, setDetailsMenu] = createSignal<HTMLDivElement>();
   const [filterDetails, setFilterDetails] = createSignal<HTMLDetailsElement>();
   const [filterMenu, setFilterMenu] = createSignal<HTMLDivElement>();
-  let atBottom = false;
   let initial = true;
   let lastKey = "";
   let jumpBottom = false;
+  let following = false;
   let requestSequence = 0;
+  // Measured when needed rather than cached from scroll events: expanding a card at the end of the page moves the
+  // reader away from the end without any scroll event, and a cached flag would then snap them back on the next refresh.
+  const nearEnd = () => Boolean(scroll) && scroll.scrollHeight > scroll.clientHeight && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
 
   createEffect(() => details(), element => element && dismissableDetails(element));
   createEffect(() => ({ details: details(), menu: detailsMenu() }), elements => elements.details && elements.menu && anchoredMenu(elements.details, elements.menu));
@@ -165,7 +168,10 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const key = params.toString();
     const navigation = key !== lastKey;
     const nextPositionKey = replayPositionKey(state.id, untrack(() => props.params));
-    const savedPosition = navigation || initial ? recalledReplayPosition(nextPositionKey) : undefined;
+    // A remembered reading position is only restored when browser history brings the reader back; a fresh navigation
+    // to a recording starts at the beginning (or at its anchored event).
+    const savedPosition = (navigation || initial) && untrack(() => props.traversal()) ? recalledReplayPosition(nextPositionKey) : undefined;
+    if (navigation && !jumpBottom) following = false;
     lastKey = key;
     if (navigation || initial) setPending(true);
     setError("");
@@ -176,26 +182,30 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       const previousPage = page();
       const grew = !navigation && !initial && Boolean(previousPage) && next.unfilteredTotal > previousPage!.unfilteredTotal;
       const narrowed = Boolean(state.q || state.tool || state.model || state.cwd || state.after || state.before || state.errors || !["conversation", "all"].includes(state.kind));
-      const follow = !navigation && !initial && !narrowed && atBottom && Boolean(previousPage) && (previousPage!.offset + previousPage!.limit >= previousPage!.total);
+      // Whether the reader was at the end of the recording's last page before this refresh rendered anything new.
+      const atEnd = !navigation && !initial && !narrowed && Boolean(previousPage) && (previousPage!.offset + previousPage!.limit >= previousPage!.total) && nearEnd();
+      const overflow = next.offset + next.limit < next.total;
       const existing = new Map(page()?.items.map(event => [event.id, event]) || []);
       next.items = next.items.map(event => {
         const previous = existing.get(event.id);
         return previous && JSON.stringify(previous.raw) === JSON.stringify(event.raw) ? previous : event;
       });
       setPage(next); setPending(false);
-      if (grew && !follow) setUpdated(true);
-      if (follow && grew && next.offset + next.limit < next.total) {
+      let keepAtEnd = false;
+      if (grew && atEnd && overflow && following) {
+        // Jump to latest was requested earlier and the reader stayed at the end, so keep showing the newest records.
         jumpBottom = true;
         const nextOffset = Math.max(0, next.total - next.limit);
         setOffset(nextOffset);
         props.navigate({ replayOffset: String(nextOffset), event: null, context: null }, true);
-      }
+      } else if (grew && atEnd && !overflow) keepAtEnd = true;
+      else if (grew) { setUpdated(true); following = false; }
       setRestoreScroll(() => () => {
         if (sequence !== requestSequence) return;
         positionKey = nextPositionKey;
         if (jumpBottom) { scroll?.scrollTo({ top: scroll.scrollHeight }); jumpBottom = false; }
         else if (navigation || initial) scroll?.scrollTo({ top: savedPosition ?? 0 });
-        else if (follow) scroll?.scrollTo({ top: scroll.scrollHeight });
+        else if (keepAtEnd) scroll?.scrollTo({ top: scroll.scrollHeight });
         if (state.anchor && savedPosition === undefined && (navigation || initial)) scroll?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(state.anchor)}"]`)?.scrollIntoView({ block: "center" });
         initial = false;
         setRestoreScroll(null);
@@ -269,13 +279,14 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const extraFilterCount = () => [!["conversation", "all"].includes(kind()), errorsOnly(), search(), tool(), model(), cwd(), after(), before()].filter(Boolean).length;
   const timelineLabel = () => {
     const first = page()?.items[0];
-    if (page()?.offset) return `CONTINUED · EVENT ${page()!.offset + 1}`;
+    if (page()?.offset) return `CONTINUED · EVENT ${(first ? first.sequence : page()!.offset) + 1}`;
     if (extraFilterCount() > 0 && first && first.sequence > 0) return `FIRST MATCH · EVENT ${first.sequence + 1}`;
     return "BEGINNING OF RECORDING";
   };
   const latest = () => {
     const target = Math.max(0, (page()?.total || 0) - 60);
     jumpBottom = true;
+    following = true;
     const samePage = offset() === target && !props.anchor;
     setOffset(target); setUpdated(false); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: target ? String(target) : null });
     if (samePage) requestAnimationFrame(() => { scroll?.scrollTo({ top: scroll.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" }); jumpBottom = false; });
@@ -285,6 +296,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const samePage = !isFiltered() && offset() === target && !props.anchor;
     setQuery(""); setSearch(""); setKind("all"); setErrorsOnly(false); setOffset(target);
     jumpBottom = true;
+    following = true;
     updateReplay(clearReplayFilters({ replayKind: "all", replayOffset: target ? String(target) : null }));
     if (samePage) requestAnimationFrame(() => { scroll?.scrollTo({ top: scroll.scrollHeight }); jumpBottom = false; });
   };
@@ -357,7 +369,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       </div></details>
     </div>
     <Show when={error()}><div class="error-banner" role="alert">{error()}<button class="text-button" onClick={() => setRetry(value => value + 1)}>Retry</button></div></Show>
-    <div class="replay-body"><div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; if (element.isConnected && props.params.get("session") === props.id && !pending() && !initial && positionKey === replayPositionKey(props.id, props.params)) rememberReplayPosition(positionKey, element.scrollTop); }}>
+    <div class="replay-body"><div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; if (element.isConnected && props.params.get("session") === props.id && !pending() && !initial && positionKey === replayPositionKey(props.id, props.params)) rememberReplayPosition(positionKey, element.scrollTop); }}>
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
@@ -371,7 +383,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <nav class="replay-outline" aria-label="Events on this page"><p class="eyebrow">ON THIS PAGE</p><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>
       <p class="inspector-note"><Icon name="shield" size={13} />An original record. Nothing rewritten.</p>
     </aside></div>
-    <Show when={updated()}><button class="new-events" onClick={latestUnfiltered}><Icon name="down" size={15} />Recording updated · Show latest unfiltered</button></Show>
+    <Show when={updated()}><button class="new-events" onClick={() => extraFilterCount() ? latestUnfiltered() : latest()}><Icon name="down" size={15} />{extraFilterCount() ? "Recording updated · Show latest unfiltered" : "Recording updated · Show latest"}</button></Show>
     <footer class="replay-footer"><span><Icon name="shield" size={12} />Read-only replay</span><span>{pending() ? "Reading recording…" : `${page() ? Math.min(page()!.offset + 1, page()!.total) : 0}–${Math.min((page()?.offset || 0) + (page()?.items.length || 0), page()?.total || 0)} of ${page()?.total || 0} records`}</span><div><button class="text-button" onClick={() => { setOffset(0); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null }); }}>Beginning</button><button class="text-button" aria-label="Jump to latest" onClick={latest}><span class="replay-jump-full">Jump to latest</span><span class="replay-jump-short" aria-hidden="true">Latest</span><Icon name="down" size={12} /></button></div></footer>
     <Show when={previewId() && family()}><SubagentDialog parent={familyRoot()} members={family()!.members.filter(member => member.session.isAgent)} selected={previewId()} revision={props.revision} href={href} follow={followSession} close={() => setPreviewId("")} /></Show>
   </section>;

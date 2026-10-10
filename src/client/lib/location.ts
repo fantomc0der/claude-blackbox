@@ -4,6 +4,7 @@ export type Navigate = (values: Record<string, string | null>, replace?: boolean
 
 export function createLocation() {
   const [params, setParams] = createSignal(new URLSearchParams(location.search));
+  let traversal = false;
   const navigate: Navigate = (values, replace = false) => {
     const next = new URL(location.href);
     const changingSession = Object.hasOwn(values, "session") && values.session !== next.searchParams.get("session");
@@ -16,13 +17,15 @@ export function createLocation() {
       else next.searchParams.delete(key);
     }
     if (next.href === location.href) return;
+    traversal = false;
     history[replace ? "replaceState" : "pushState"](null, "", next);
     setParams(new URLSearchParams(next.search));
   };
   onSettled(() => {
-    const update = () => setParams(new URLSearchParams(location.search));
+    const update = () => { traversal = true; setParams(new URLSearchParams(location.search)); };
     window.addEventListener("popstate", update);
     return () => window.removeEventListener("popstate", update);
   });
-  return { params, navigate };
+  /** True while the current location was reached through browser history (Back/Forward) rather than a new navigation. */
+  return { params, navigate, traversal: () => traversal };
 }
