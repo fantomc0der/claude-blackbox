@@ -154,7 +154,7 @@ function agentIdsFromLaunch(row: LaunchRow): string[] {
   const result = jsonRecord(row.result_raw);
   const content = resultText(result.content);
   for (const line of content.split(/\r?\n/)) {
-    const match = /^\s*agent(?:Id|_id)\s*:\s*([\w.-]+)\s*$/i.exec(line);
+    const match = /^\s*agent(?:Id|_id)\s*:\s*([\w.-]+)(?:[ \t]+\([^\r\n]*\))?\s*$/i.exec(line);
     if (match) ids.add(match[1]);
   }
   for (const raw of [jsonRecord(row.call_raw), jsonRecord(row.result_event_raw)]) {
@@ -500,29 +500,19 @@ export class Recorder {
     }
     const prefix = join(dirname(root.source), basename(root.source, ".jsonl"), "subagents") + sep;
     const directory = dirname(root.source) + sep;
-    const descendantRows = this.db.query<SourceRow, [string, string, string, string, string, string, string, number]>(`SELECT ${columns} ${joins}
-      WHERE s.agent=1 AND (substr(s.source,1,length(?))=? OR (s.session_id=? AND substr(s.source,1,length(?))=? AND instr(substr(s.source,length(?)+1),?)=0))
+    const familyScope = "s.agent=1 AND (substr(s.source,1,length(?))=? OR (s.session_id=? AND substr(s.source,1,length(?))=? AND instr(substr(s.source,length(?)+1),?)=0))";
+    const familyBindings = [prefix, prefix, root.session_id, directory, directory, directory, sep];
+    const descendantRows = this.db.query<SourceRow, SQLQueryBindings[]>(`SELECT ${columns} ${joins}
+      WHERE ${familyScope}
       ORDER BY s.started,s.id LIMIT ?`)
-      .all(prefix, prefix, root.session_id, directory, directory, directory, sep, 501);
+      .all(...familyBindings, 501);
     const limited = descendantRows.length > 500;
     const descendants = descendantRows.slice(0, 500);
     if (requestedRow.agent && !descendants.some(candidate => candidate.id === requestedRow.id)) descendants.splice(-1, 1, requestedRow);
     if (requestedRow.agent && !descendants.some(candidate => candidate.id === requestedRow.id)) return orphan();
+    if (limited) return this.limitedFamily(requestedRow, root, descendants, familyScope, familyBindings);
     const rows = [root, ...descendants].sort((left, right) => left.id === root.id ? -1 : right.id === root.id ? 1 : left.started.localeCompare(right.started) || left.id.localeCompare(right.id));
     const sessions = new Map(rows.map(row => [row.id, this.session(row)]));
-    if (limited) {
-      return {
-        rootId: root.id,
-        members: rows.map(row => {
-          const session = sessions.get(row.id)!;
-          return row.id === root.id
-            ? { session, parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(session.title), depth: 0 }
-            : { session, parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(session.title), depth: null };
-        }),
-        launches: {},
-        limited: true,
-      };
-    }
     const childrenByAgentId = new Map<string, string>();
     const duplicateAgentIds = new Set<string>();
     for (const child of descendants) {
@@ -532,16 +522,8 @@ export class Recorder {
       else childrenByAgentId.set(agentId, child.id);
     }
     for (const agentId of duplicateAgentIds) childrenByAgentId.delete(agentId);
-    const ids = rows.map(row => row.id);
-    const placeholders = ids.map(() => "?").join(",");
-    const launches = this.db.query<LaunchRow, string[]>(`SELECT calls.session_id AS parent_id,calls.tool_id,call_events.event_id,calls.name,
-      call_events.raw AS call_raw,results.raw AS result_raw,result_events.raw AS result_event_raw
-      FROM tool_calls calls JOIN events call_events ON call_events.rowid=calls.event_row
-      LEFT JOIN tool_results results ON results.session_id=calls.session_id AND results.tool_id=calls.tool_id
-      LEFT JOIN events result_events ON result_events.rowid=results.event_row
-      WHERE calls.session_id IN (${placeholders}) AND lower(calls.name) IN ('agent','task') ORDER BY call_events.sequence`).all(...ids);
     const evidenceByChild = new Map<string, LaunchEvidence[]>();
-    for (const launch of launches) {
+    for (const launch of this.launchRows(rows.map(row => row.id))) {
       const agentIds = agentIdsFromLaunch(launch);
       if (agentIds.length !== 1) continue;
       const childId = childrenByAgentId.get(agentIds[0]);
@@ -592,7 +574,59 @@ export class Recorder {
       const evidence = evidenceByChild.get(child.id);
       if (evidence?.length === 1 && evidence[0].parentId === requestedRow.id && !cyclic.has(child.id)) launchesForRequest[evidence[0].toolId] = child.id;
     }
-    return { rootId: root.id, members, launches: launchesForRequest, ...(limited ? { limited: true } : {}) };
+    return { rootId: root.id, members, launches: launchesForRequest };
+  }
+
+  private launchRows(ids: string[]) {
+    const placeholders = ids.map(() => "?").join(",");
+    return this.db.query<LaunchRow, string[]>(`SELECT calls.session_id AS parent_id,calls.tool_id,call_events.event_id,calls.name,
+      call_events.raw AS call_raw,results.raw AS result_raw,result_events.raw AS result_event_raw
+      FROM tool_calls calls JOIN events call_events ON call_events.rowid=calls.event_row
+      LEFT JOIN tool_results results ON results.session_id=calls.session_id AND results.tool_id=calls.tool_id
+      LEFT JOIN events result_events ON result_events.rowid=results.event_row
+      WHERE calls.session_id IN (${placeholders}) AND lower(calls.name) IN ('agent','task') ORDER BY call_events.sequence`).iterate(...ids);
+  }
+
+  private limitedFamily(requested: SourceRow, root: SourceRow, descendants: SourceRow[], scope: string, bindings: string[]): SessionFamily {
+    const references = new Map<string, { toolId: string; label: string } | null>();
+    for (const launch of this.launchRows([requested.id])) {
+      const ids = agentIdsFromLaunch(launch);
+      if (ids.length !== 1) continue;
+      const agentId = ids[0];
+      if (references.has(agentId)) references.set(agentId, null);
+      else if (references.size < 500) references.set(agentId, { toolId: launch.tool_id, label: launchLabel(launch) });
+    }
+    const matches = new Map<string, string | null>();
+    if (references.size) {
+      for (const candidate of this.db.query<Pick<SourceRow, "id" | "source">, string[]>(`SELECT s.id,s.source FROM sessions s WHERE ${scope}`).iterate(...bindings)) {
+        const agentId = agentFileId(candidate.source);
+        if (references.get(agentId)) matches.set(agentId, matches.has(agentId) ? null : candidate.id);
+      }
+    }
+    const selected = new Map<string, SourceRow>();
+    if (requested.agent) selected.set(requested.id, requested);
+    const launches: Record<string, string> = {};
+    const labels = new Map<string, string>();
+    for (const [agentId, reference] of references) {
+      const childId = matches.get(agentId);
+      if (!reference || !childId || childId === requested.id || selected.size >= 500) continue;
+      const child = this.db.query<SourceRow, [string]>(`SELECT ${columns} ${joins} WHERE s.id=?`).get(childId);
+      if (!child) continue;
+      selected.set(childId, child);
+      launches[reference.toolId] = childId;
+      labels.set(childId, reference.label);
+    }
+    for (const descendant of descendants) {
+      if (selected.size >= 500) break;
+      selected.set(descendant.id, descendant);
+    }
+    const rows = [root, ...[...selected.values()].sort((left, right) => left.started.localeCompare(right.started) || left.id.localeCompare(right.id))];
+    return {
+      rootId: root.id,
+      members: rows.map(row => ({ session: this.session(row), parentId: null, spawnEventId: null, spawnToolId: null, label: labels.get(row.id) || boundedLabel(row.title), depth: row.id === root.id ? 0 : null })),
+      launches,
+      limited: true,
+    };
   }
 
   list(params: URLSearchParams): SessionPage {

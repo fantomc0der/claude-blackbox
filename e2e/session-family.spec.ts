@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { SessionFamily } from "../src/shared/types";
 import { expect, test } from "./harness";
 
 const rootTitle = "Session family root";
@@ -51,6 +52,27 @@ test("family preview uses conversation records and opens the selected child in f
   await expect(childFamily).toContainText(`Main session: ${rootTitle}`);
   await expect(page.getByRole("navigation", { name: "Session family", exact: true })).toContainText("Originating tool call");
   await expect(childFamily.getByLabel("Jump to related session")).toHaveValue(new URL(page.url()).searchParams.get("session")!);
+});
+
+test("partial family responses keep exact tool targets previewable without asserting parentage", async ({ page }) => {
+  await page.route("**/api/sessions/*/family", async route => {
+    const response = await route.fetch();
+    const family = await response.json() as SessionFamily;
+    await route.fulfill({ response, json: { ...family, limited: true, members: family.members.map(member => ({
+      ...member, parentId: null, spawnEventId: null, spawnToolId: null, depth: member.session.isAgent ? null : 0,
+    })) } });
+  });
+  await openRoot(page);
+  await expect(page.getByRole("navigation", { name: "Session family", exact: true })).toContainText("this list is partial");
+  const call = page.locator(".tool-card").filter({ hasText: childTitle });
+  await expect(call.getByRole("link", { name: "Open session", exact: true })).toBeVisible();
+  await call.getByRole("button", { name: "Preview conversation", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Subagent recordings", exact: true });
+  await expect(dialog.getByText(`${childTitle} conversation result`, { exact: true })).toBeVisible();
+  await dialog.getByRole("link", { name: "Open full session", exact: true }).click();
+  await expect(page.getByRole("heading", { name: childTitle, exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Session family", exact: true })).toContainText("this list is partial");
+  await expect(page.getByRole("link", { name: "Originating tool call", exact: true })).toHaveCount(0);
 });
 
 test("family members preserve source context through nested navigation and browser Back", async ({ page }) => {
