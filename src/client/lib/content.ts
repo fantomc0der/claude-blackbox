@@ -72,7 +72,7 @@ export function prettyValue(value: unknown): string {
 }
 
 export function isImageBlock(block: ContentBlock): boolean {
-  return block.type === "image" || isRecord(block.source);
+  return block.type === "image";
 }
 
 export function contentImages(content: ContentBlock["content"]): ContentBlock[] {

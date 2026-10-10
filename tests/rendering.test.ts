@@ -43,6 +43,10 @@ describe("replay content helpers", () => {
     expect(resultImages(mixed)).toHaveLength(1);
     expect(resultText({ type: "tool_result", tool_use_id: "read-3", content: [{ type: "unknown" }] })).toContain("unknown");
     expect(resultImages(undefined)).toEqual([]);
+    const document = { type: "document", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" } };
+    const documentOnly = { type: "tool_result", tool_use_id: "read-4", content: [document] };
+    expect(resultImages(documentOnly)).toEqual([]);
+    expect(resultText(documentOnly)).toContain("application/pdf");
   });
 
   test("describes recorded images by format and decoded size", () => {
