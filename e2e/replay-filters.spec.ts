@@ -90,6 +90,17 @@ test("reasoning the API did not return is kept out of the conversation but shown
   await expect(page.locator(".replay-event").nth(1).locator("details.tool-thinking")).toHaveCount(0);
 });
 
+test("redacted reasoning is kept out of the conversation and labeled distinctly in all events", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Redacted reasoning verification/ }).click();
+  await expect(page.getByRole("region", { name: "Session replay" })).toBeVisible();
+  await expect(page.locator(".replay-event")).toHaveCount(2);
+  await expect(page.locator(".tool-hidden")).toHaveCount(0);
+  await page.getByRole("button", { name: "All events", exact: true }).click();
+  await expect(page.locator(".replay-event")).toHaveCount(3);
+  await expect(page.locator(".tool-hidden")).toHaveText("Reasoning redacted");
+});
+
 test("thinking view explains a session whose reasoning was never returned", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Hidden-only reasoning verification/ }).click();
