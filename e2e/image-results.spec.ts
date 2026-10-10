@@ -39,6 +39,13 @@ test("image tool results render inline without base64 and blocked formats degrad
   await unpaired.getByRole("button", { name: "Show image" }).click();
   await expect(unpaired.locator("img")).toBeVisible();
 
+  const document = page.locator(".tool-unknown");
+  await expect(document).toHaveCount(1);
+  await expect(document).toContainText("Unknown block: document");
+  await expect(document.locator(".tool-code pre")).toContainText("application/pdf");
+  await expect(document.locator("img")).toHaveCount(0);
+  await expect(page.locator(".tool-attachment")).toHaveCount(1);
+
   await expect(page.locator(".tool-output-toggle")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Session replay" })).not.toContainText("iVBORw0KGgo");
 });

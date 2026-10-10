@@ -95,6 +95,7 @@ await writeFile(join(folder, "image-read.jsonl"), [
     { type: "tool_result", tool_use_id: "read-svg-1", content: [{ type: "image", source: { type: "base64", media_type: "image/svg+xml", data: Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"/>").toString("base64") } }] },
   ] } },
   { ...event("", 3), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "read-unpaired-1", content: [{ type: "image", source: imageSource }] }] } },
+  { ...event("", 4, "assistant"), message: { role: "assistant", content: [{ type: "text", text: "Attached a document block" }, { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from("%PDF-1.4").toString("base64") } }] } },
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "subagent-parent.jsonl"),Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
 const agentsFolder = join(folder, "subagent-parent", "subagents");
