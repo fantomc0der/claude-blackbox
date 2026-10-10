@@ -19,6 +19,18 @@ export function searchable(value: unknown): string {
     .map(([key, entry]) => `${key}: ${searchable(entry)}`).join("\n");
 }
 
+function readableThinking(block: ContentBlock): boolean {
+  return block.type === "thinking" && Boolean(string(block.thinking).trim() || string(block.text).trim());
+}
+
+export function hasReadableThinking(blocks: ContentBlock[]): boolean {
+  return blocks.some(readableThinking);
+}
+
+export function isHiddenReasoning(blocks: ContentBlock[]): boolean {
+  return blocks.length > 0 && blocks.every(block => block.type === "redacted_thinking" || (block.type === "thinking" && !readableThinking(block)));
+}
+
 export function normalize(raw: Record<string, unknown>, sourceId: string, offset: number, sequence: number): ReplayEvent {
   const message = object(raw.message);
   const type = string(raw.type) || "unknown";
@@ -46,7 +58,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     timestamp: Number.isFinite(stamp) ? new Date(stamp).toISOString() : "",
     blocks,
     text,
-    category: role === "system" ? "system" : hasText ? "message" : hasTools ? "tool" : "thinking",
+    category: role === "system" ? "system" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
     toolNames: tools.map(block => block.name || "Unknown tool"),
     error: blocks.some(block => block.is_error === true) || raw.is_error === true || raw.level === "error",
     parentId: string(raw.parentUuid) || undefined,

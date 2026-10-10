@@ -72,6 +72,40 @@ test("replay advanced filters stay usable on mobile and reset the empty state", 
   await expect(page.locator(".replay-event").first()).toBeVisible();
 });
 
+test("reasoning the API did not return is kept out of the conversation but shown in all events", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Hidden reasoning verification/ }).click();
+  await expect(page.getByRole("region", { name: "Session replay" })).toBeVisible();
+  await expect(page.locator(".replay-event")).toHaveCount(3);
+  await expect(page.locator(".tool-hidden")).toHaveCount(0);
+  await expect(page.locator(".tool-thinking summary")).toHaveText("Reasoning");
+  await openFilters(page);
+  await page.getByRole("combobox", { name: "Focused replay view" }).selectOption("thinking");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".replay-event")).toHaveCount(1);
+  await expect(page.locator(".tool-thinking summary")).toHaveText("Reasoning");
+  await page.getByRole("button", { name: "All events", exact: true }).click();
+  await expect(page.locator(".replay-event")).toHaveCount(4);
+  await expect(page.locator(".tool-hidden")).toHaveText("Reasoning not returned by the API");
+  await expect(page.locator(".replay-event").nth(1).locator("details.tool-thinking")).toHaveCount(0);
+});
+
+test("thinking view explains a session whose reasoning was never returned", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /Hidden-only reasoning verification/ }).click();
+  await expect(page.getByRole("region", { name: "Session replay" })).toBeVisible();
+  await expect(page.locator(".replay-event")).toHaveCount(2);
+  await openFilters(page);
+  await page.getByRole("combobox", { name: "Focused replay view" }).selectOption("thinking");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".empty-state")).toContainText("No readable reasoning in this session.");
+  await expect(page.locator(".empty-state")).toContainText("Choose All events to see where it paused to think.");
+  await page.locator(".empty-state").getByRole("button", { name: "Show all events" }).click();
+  await expect(page).toHaveURL(/replayKind=all/);
+  await expect(page.locator(".replay-event")).toHaveCount(3);
+  await expect(page.locator(".tool-hidden")).toHaveText("Reasoning not returned by the API");
+});
+
 test("replay filters remain bounded and dismissable in a short desktop viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 360 });
   await openReplay(page);

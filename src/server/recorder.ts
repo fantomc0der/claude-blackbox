@@ -4,7 +4,7 @@ import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, DirectoryUsage, EventPage, IndexProgress, ModelUsage, ReplayEvent, Session, SessionPage, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, normalize, object, pathName, promptTitle, string } from "./normalize";
+import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { emptyUsage, normalizeModel, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -125,7 +125,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 5) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 6) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -147,7 +147,7 @@ export class Recorder {
       CREATE INDEX IF NOT EXISTS events_cwd ON events(session_id,cwd);
       CREATE INDEX IF NOT EXISTS events_tools ON events(session_id,tools);
       CREATE INDEX IF NOT EXISTS usage_efforts ON usage_records(effort);`);
-    if (!hasResults || !hasFacets || version < 5) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=5;");
+    if (!hasResults || !hasFacets || version < 6) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=6;");
     const interrupted = db.query<{ id: string }, []>("SELECT id FROM sessions WHERE events != (SELECT count(*) FROM events WHERE session_id=sessions.id)").all();
     for (const row of interrupted) db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(row.id);
   }
@@ -287,7 +287,7 @@ export class Recorder {
             const toolNames = event.toolNames.filter(name => isFacetValue(name));
             const inserted = insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
               Number(event.error), toolNames.join("\n"), JSON.stringify(event.raw), event.text, event.role, event.timestamp,
-              string(object(event.raw.message).model), event.cwd || "", Number(event.blocks.some(block => block.type === "thinking")),
+              string(object(event.raw.message).model), event.cwd || "", Number(hasReadableThinking(event.blocks)),
               Number(event.blocks.some(block => block.type === "tool_use" || block.type === "tool_result")));
             const usage = readUsage(event.raw, id, event.id);
             if (usage) {
@@ -540,7 +540,7 @@ export class Recorder {
     const bindings: SQLQueryBindings[] = [id];
     let filter = "e.session_id=?";
     const kind = params.get("kind");
-    if (kind === "conversation") filter += " AND e.category!='system'";
+    if (kind === "conversation") filter += " AND e.category NOT IN ('system','hidden')";
     else if (kind === "tool") filter += " AND e.has_tools=1";
     else if (kind === "thinking") filter += " AND e.has_thinking=1";
     else if (kind === "prompts") filter += " AND e.role='user' AND e.category='message'";
@@ -581,6 +581,7 @@ export class Recorder {
     const items = this.db.query<StoredEvent, SQLQueryBindings[]>(`SELECT e.raw,e.event_id,e.sequence,e.offset,e.text FROM events e WHERE ${filter} ORDER BY e.sequence LIMIT ? OFFSET ?`)
       .all(...bindings, limit, offset).map(row => normalize(JSON.parse(row.raw), id, row.offset, row.sequence));
     const unfilteredTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=?").get(id)!.total;
+    const hiddenTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=? AND category='hidden'").get(id)!.total;
     let facets = this.replayFacets.get(id);
     if (!facets) {
       const tools = this.facetValues("tool", id), models = this.facetValues("model", id), directories = this.facetValues("cwd", id);
@@ -588,7 +589,7 @@ export class Recorder {
       if (this.replayFacets.size >= 32) this.replayFacets.delete(this.replayFacets.keys().next().value!);
       this.replayFacets.set(id, facets);
     }
-    return { items, total, offset, limit, unfilteredTotal, facets };
+    return { items, total, offset, limit, unfilteredTotal, hiddenTotal, facets };
   }
 
   private facetValues(kind: string, id?: string): { values: string[]; limited: boolean } {

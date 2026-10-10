@@ -139,6 +139,45 @@ test("replay views include mixed records, paired results and independent failure
   expect(events("q=nonexistent").facets).toEqual({ tools: ["Edit"], models: ["model-a", "model-b"], directories: ["/synthetic/project", "/synthetic/worktree"], limited: false });
 });
 
+test("reasoning the API did not return leaves the conversation and thinking views but stays in the chronology", async () => {
+  const setup = await fixture();
+  const assistant = (content: unknown[]) => record("", { type: "assistant", message: { model: "model-a", content } });
+  await setup.write("hidden", [
+    record("Investigate the failure"),
+    assistant([{ type: "thinking", thinking: "", signature: "signed" }]),
+    assistant([{ type: "thinking", thinking: " \n", signature: "signed" }]),
+    assistant([{ type: "redacted_thinking", data: "encrypted" }]),
+    assistant([{ type: "thinking", thinking: "Readable progress note", signature: "signed" }]),
+    assistant([{ type: "thinking", text: "Legacy text field only" }]),
+    assistant([{ type: "thinking", thinking: "", signature: "signed" }, { type: "tool_use", id: "call", name: "Read", input: {} }]),
+    assistant([{ type: "thinking", thinking: "", signature: "signed" }, { type: "text", text: "Final answer" }]),
+    assistant([]),
+  ]);
+  const recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
+  expect(events("kind=all").items.map(event => event.category)).toEqual(["message", "hidden", "hidden", "hidden", "thinking", "thinking", "tool", "message", "thinking"]);
+  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 4, 5, 6, 7, 8]);
+  expect(events("kind=thinking").items.map(event => event.sequence)).toEqual([4, 5]);
+  expect(events("kind=all").total).toBe(9);
+  expect(events("kind=thinking").hiddenTotal).toBe(3);
+  expect(events("kind=conversation&anchor=" + encodeURIComponent(events("kind=all").items[1].id)).offset).toBe(1);
+  expect(session.messageCount).toBe(2);
+});
+
+test("version 5 indexes reclassify reasoning the API did not return", async () => {
+  const setup = await fixture();
+  await setup.write("reclassify", [record("Prompt"), record("", { type: "assistant", message: { content: [{ type: "thinking", thinking: "", signature: "signed" }] } })]);
+  const before = await setup.open();
+  const session = before.list(new URLSearchParams()).items[0];
+  before.db.exec("UPDATE events SET category='thinking', has_thinking=1; PRAGMA user_version=5");
+  await before.close();
+  const after = await setup.open();
+  expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
+  expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(6);
+});
+
 test("full-session replay filters precede pagination and context keeps original sequence", async () => {
   const setup = await fixture();
   await setup.write("long", Array.from({ length: 175 }, (_, index) => record(`Record ${index}`, {

@@ -21,7 +21,7 @@ export interface ReplayEvent {
   timestamp: string;
   blocks: ContentBlock[];
   text: string;
-  category: "message" | "tool" | "thinking" | "system";
+  category: "message" | "tool" | "thinking" | "hidden" | "system";
   toolNames: string[];
   error: boolean;
   parentId?: string;
@@ -139,5 +139,6 @@ export interface EventPage {
   offset: number;
   limit: number;
   unfilteredTotal: number;
+  hiddenTotal: number;
   facets: { tools: string[]; models: string[]; directories: string[]; limited: boolean };
 }
