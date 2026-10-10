@@ -236,6 +236,7 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 ### Replay Event
 - **Style:** A bordered transcript card with a monospace header carrying the role, a linked timestamp, and an error flag. The first known directory on each visible page is shown, followed by directory changes rather than repeated identical paths. Filtering or paging establishes the visible context again; exact per-event provenance remains in Raw event.
 - **Raw records:** The disclosure stays keyboard accessible with muted metadata emphasis and a 44px minimum hit area on phones. Expanded records retain their original data and copy controls.
+- **JSON payloads:** Complete JSON objects and arrays in raw records, type records, and pretty-printed tool input are syntax highlighted with six muted token colors per theme (key, string, number, boolean, null, punctuation), each at or above 4.5:1 against the code panel. Incomplete or invalid JSON stays plain, and search marks keep their background behind token colors.
 - **Role label:** Recorded roles are capitalized; a tool-result event reads "Tool result" in sentence case rather than being forced into the capitalized role pattern.
 - **Counts:** The find row states shown-versus-total only when the two differ, and shows an em dash until a total is actually known.
 

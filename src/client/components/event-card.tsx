@@ -20,6 +20,7 @@ import {
   toolTitle,
   truncate,
 } from "../lib/content";
+import { jsonSegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
 import { Markdown } from "./markdown";
 import { Highlight } from "./highlight";
 import { Icon } from "./icon";
@@ -60,18 +61,19 @@ function CopyButton(props: { value: string; label?: string }) {
   return <button class="replay-copy" type="button" onClick={copy} aria-live="polite" aria-label={label()}>{label()}</button>;
 }
 
-function CodePanel(props: { title: string; value: string; terminal?: boolean; highlight?: string }) {
+function CodePanel(props: { title: string; value: string; terminal?: boolean; highlight?: string; json?: boolean }) {
   const [open, setOpen] = createSignal(false);
+  const segments = createMemo((): TextSegment[] => props.json ? jsonSegments(props.value) : [{ text: props.value }]);
   const preview = () => {
-    if (open() || props.value.length <= 1800) return props.value;
+    if (open() || props.value.length <= 1800) return segments();
     const match = props.highlight ? props.value.toLowerCase().indexOf(props.highlight.toLowerCase()) : 0;
     const start = Math.max(0, match - 450);
-    return `${start ? "…\n" : ""}${props.value.slice(start, start + 1800)}\n… expand for full output …`;
+    return [...(start ? [{ text: "…\n" }] : []), ...sliceSegments(segments(), start, start + 1800), { text: "\n… expand for full output …" }];
   };
   return (
     <section class={`tool-code ${props.terminal ? "tool-terminal" : ""}`}>
       <header><span>{props.title}</span><CopyButton value={props.value} /></header>
-      <pre><code><Highlight text={preview()} term={props.highlight || ""} /></code></pre>
+      <pre><code><Highlight segments={preview()} term={props.highlight || ""} /></code></pre>
       <Show when={props.value.length > 1800}>
         <button class="replay-text-button tool-output-toggle" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => setOpen(!open())}>{open() ? "Show less" : "Show full output"}</button>
       </Show>
@@ -84,7 +86,7 @@ function DiffPanel(props: { input: Record<string, unknown> }) {
   const after = () => getString(props.input.new_string) ?? getString(props.input.after) ?? "";
   const lines = createMemo(() => boundedDiff(before(), after()));
   return (
-    <Show when={before() || after()} fallback={<CodePanel title="Edit input" value={prettyValue(props.input)} />}>
+    <Show when={before() || after()} fallback={<CodePanel title="Edit input" value={prettyValue(props.input)} json />}>
       <section class="tool-diff" aria-label="Bounded file diff">
         <For each={lines()}>{(line) => <div class={`tool-diff-line tool-diff-${line.kind}`}><span>{line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " "}</span><code>{line.value}</code></div>}</For>
       </section>
@@ -153,7 +155,7 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
     <Show when={name() === "todowrite" || name() === "todo"}><TodoPanel input={input()} /></Show>
     <Show when={name() === "task" || name() === "agent"}><section class="tool-task"><strong>{getString(input().description) ?? getString(input().subagent_type) ?? "Task"}</strong><p>{getString(input().prompt) ?? ""}</p></section></Show>
     <Show when={name() === "askuserquestion" || name() === "ask_question"}><QuestionPanel input={input()} /></Show>
-    <Show when={!(["edit", "write", "read", "bash", "shell", "powershell", "todowrite", "todo", "task", "agent", "askuserquestion", "ask_question"] as string[]).includes(name())}><CodePanel title="Tool input" value={prettyValue(input())} highlight={props.highlight} /></Show>
+    <Show when={!(["edit", "write", "read", "bash", "shell", "powershell", "todowrite", "todo", "task", "agent", "askuserquestion", "ask_question"] as string[]).includes(name())}><CodePanel title="Tool input" value={prettyValue(input())} highlight={props.highlight} json /></Show>
     <Show when={!terminal() && name() !== "read" && result()}><CodePanel title={props.result?.is_error ? "Tool error" : "Tool result"} value={result()} highlight={props.highlight} /></Show>
     <Show when={name() !== "read"}><ResultImages title="Tool result image" result={props.result} /></Show>
   </div>;
@@ -195,7 +197,7 @@ function BlockRenderer(props: { block: ContentBlock; results?: Record<string, Co
   if (props.block.type === "tool_use") return <ToolUse block={props.block} result={props.block.id ? props.results?.[props.block.id] : undefined} highlight={props.highlight} />;
   if (props.block.type === "tool_result") return <ToolResult block={props.block} highlight={props.highlight} />;
   if (isImageBlock(props.block)) return <Attachment block={props.block} />;
-  return <section class="tool-unknown"><strong>Unknown block: {props.block.type || "untitled"}</strong><CodePanel title="Raw block" value={prettyValue(props.block)} /></section>;
+  return <section class="tool-unknown"><strong>Unknown block: {props.block.type || "untitled"}</strong><CodePanel title="Raw block" value={prettyValue(props.block)} json /></section>;
 }
 
 export function EventCard(props: EventCardProps) {
@@ -219,8 +221,8 @@ export function EventCard(props: EventCardProps) {
   };
   return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
     <header class="replay-event-header"><span class="replay-role">{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
-    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} highlight={props.highlight} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
+    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} highlight={props.highlight} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
     <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
-    <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} /></Show></details>
+    <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} json /></Show></details>
   </article>;
 }

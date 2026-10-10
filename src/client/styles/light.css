@@ -110,6 +110,12 @@
   .tool-code > .tool-output-toggle:hover { background: var(--light-hover); }
   .tool-terminal { border-color: var(--light-line-strong); }
   .tool-terminal pre { color: var(--text); }
+  .tool-code .json-key { color: #1f5a8a; }
+  .tool-code .json-string { color: #8a4a22; }
+  .tool-code .json-number { color: #6b3fa0; }
+  .tool-code .json-boolean { color: #0f6e6e; }
+  .tool-code .json-null { color: #6e4f85; }
+  .tool-code .json-punctuation { color: var(--muted); }
   .tool-diff-added { color: var(--light-success); background: var(--light-success-surface); }
   .tool-diff-removed { color: var(--danger); background: var(--light-error-surface); }
   .tool-thinking { background: var(--light-inset); border-color: var(--line); }
