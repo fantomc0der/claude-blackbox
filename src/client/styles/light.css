@@ -105,6 +105,7 @@
   .tool-card-error .tool-status { color: var(--danger); background: var(--light-error-surface); }
   .tool-content, .tool-code header, .tool-checklist li, .tool-attachment img, .replay-raw,
   .md-content td, .md-content th { border-color: var(--line); }
+  .tool-image-frame { background: repeating-conic-gradient(var(--light-hover) 0 25%, var(--light-inset) 0 50%) 0 0 / 16px 16px; }
   .tool-code > .tool-output-toggle { border-color: var(--line); background: transparent; }
   .tool-code > .tool-output-toggle:hover { background: var(--light-hover); }
   .tool-terminal { border-color: var(--light-line-strong); }
