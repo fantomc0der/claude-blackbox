@@ -262,6 +262,7 @@
   .replay-tabs { display: flex; flex-wrap: wrap; gap: 0 20px; }
   .replay-tab { min-height: 45px; padding: 0; font-size: var(--text-control); color: #98a39c; border-bottom: 2px solid transparent; }
   .replay-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .replay-tab-all { margin-left: 16px; }
   .replay-find { display: flex; align-items: center; color: #838e89; gap: 8px; min-height: 44px; font-size: var(--text-meta); border-top: 1px solid #222928; }
   .replay-find > span { flex-shrink: 0; }
   .replay-find input { flex: 1; background: transparent; border: 0; padding: 7px 0; font-size: var(--text-control); }
@@ -410,7 +411,8 @@
     .replay-controls { padding: 0 16px; }
     .replay-tab { min-width: 44px; min-height: 44px; }
     .replay-timeline { padding: 19px 17px; }
-    .replay-tabs { justify-content: space-between; gap: 0 8px; }
+    .replay-tabs { gap: 0 12px; }
+    .replay-tab-all { margin-left: auto; }
     .replay-footer { padding: 0 15px; min-height: 43px; }
     .replay-footer > span:first-child { display: none; }
     .workspace-dialog { padding: 22px; max-height: calc(100dvh - 30px); }

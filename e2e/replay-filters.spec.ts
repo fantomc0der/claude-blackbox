@@ -23,6 +23,25 @@ test("default conversation retains its beginning and live-update end copy", asyn
   await expect(page.locator(".replay-context-button").first()).toBeVisible();
 });
 
+test("replay tabs keep All events last and reset returns to the conversation", async ({ page }) => {
+  await openReplay(page);
+  await expect(page.locator(".replay-tab")).toHaveText(["Conversation", "Tools", "Errors", "All events"]);
+  await expect(page.locator(".replay-tab.active")).toHaveText("Conversation");
+  await openFilters(page);
+  await expect(page.getByRole("combobox", { name: "Focused replay view" }).getByRole("option").last()).toHaveText("All events");
+  await page.getByRole("combobox", { name: "Focused replay view" }).selectOption("thinking");
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/replayKind=thinking/);
+  await expect(page.locator(".timeline-end")).toContainText("Reset filters to return to the conversation.");
+  await page.getByRole("textbox", { name: "Find in this recording" }).fill("definitely-not-recorded");
+  await expect(page.locator(".empty-state")).toContainText("choose All events for the full chronology");
+  await page.locator(".empty-state").getByRole("button", { name: "Reset replay filters" }).click();
+  await expect(page).not.toHaveURL(/replayKind=/);
+  await expect(page).not.toHaveURL(/replayQ=/);
+  await expect(page.locator(".replay-tab.active")).toHaveText("Conversation");
+  await expect(page.locator(".replay-event").first()).toBeVisible();
+});
+
 test("replay filters persist through reload and browser history on desktop", async ({ page }) => {
   await openReplay(page);
   await openFilters(page);
