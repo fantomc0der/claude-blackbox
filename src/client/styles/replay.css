@@ -11,6 +11,12 @@
 .replay-event-tool-result .replay-role { text-transform: none; }
 .replay-event-link:hover { color: #c7ee79; text-decoration: underline; }
 .tool-code mark { background: #c7ee7933; color: #e2ffb6; }
+.tool-code .json-key { color: #8fc1e3; }
+.tool-code .json-string { color: #b5d98c; }
+.tool-code .json-number { color: #dcb67a; }
+.tool-code .json-boolean { color: #c4a8ee; }
+.tool-code .json-null { color: #a89bbd; }
+.tool-code .json-punctuation { color: #8b9494; }
 .replay-event-body > *, .tool-content, .tool-code, .tool-diff { min-width: 0; }
 .tool-code > .tool-output-toggle {
   display: flex;

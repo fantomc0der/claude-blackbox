@@ -74,6 +74,15 @@ const workspaceTransitions = [
   event("Returned to the original directory", 6),
 ];
 await writeFile(join(folder, "workspace-transitions.jsonl"), workspaceTransitions.map(record => JSON.stringify(record)).join("\n") + "\n");
+const hookRecord = {
+  uuid: "browser-hook-1", parentUuid: "browser-0", isSidechain: false, type: "attachment", cwd: "/synthetic/browser-tests", timestamp: "2026-01-01T00:00:01Z",
+  attachment: {
+    type: "hook_success", hookName: "PreToolUse:Bash", toolUseID: "toolu_synthetic_hook", hookEvent: "PreToolUse", content: "",
+    stdout: '{\n  "continue": true,\n  "hookSpecificOutput": {\n    "hookEventName": "PreToolUse",\n    "additionalContext": "Use parallel execution for independent tasks."\n  }\n}\n',
+    stderr: "", exitCode: 0,
+  },
+};
+await writeFile(join(folder, "json-highlighting.jsonl"), [event("JSON highlighting verification", 0), hookRecord].map(record => JSON.stringify(record)).join("\n") + "\n");
 const tinyPng = (width: number, height: number, rgb: [number, number, number]) => {
   const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
   const crc32 = (bytes: Uint8Array) => { let c = 0xffffffff; for (const byte of bytes) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };

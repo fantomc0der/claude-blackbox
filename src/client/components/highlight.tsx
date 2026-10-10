@@ -1,20 +1,10 @@
 import { For } from "solid-js";
+import { markSegments, type TextSegment } from "../lib/json-highlight";
 
-export function Highlight(props: { text: string; term: string }) {
-  const parts = () => {
-    if (!props.term) return [{ text: props.text, match: false }];
-    const lower = props.text.toLowerCase();
-    const term = props.term.toLowerCase();
-    const result: { text: string; match: boolean }[] = [];
-    let cursor = 0;
-    let found = lower.indexOf(term);
-    while (found !== -1) {
-      result.push({ text: props.text.slice(cursor, found), match: false }, { text: props.text.slice(found, found + term.length), match: true });
-      cursor = found + term.length;
-      found = lower.indexOf(term, cursor);
-    }
-    result.push({ text: props.text.slice(cursor), match: false });
-    return result;
-  };
-  return <For each={parts()}>{part => part.match ? <mark>{part.text}</mark> : part.text}</For>;
+export function Highlight(props: { text?: string; segments?: TextSegment[]; term: string }) {
+  const runs = () => markSegments(props.segments ?? [{ text: props.text ?? "" }], props.term);
+  return <For each={runs()}>{run => {
+    const content = <For each={run.segments}>{segment => segment.kind ? <span class={`json-${segment.kind}`}>{segment.text}</span> : segment.text}</For>;
+    return run.match ? <mark>{content}</mark> : content;
+  }}</For>;
 }
