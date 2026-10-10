@@ -71,14 +71,47 @@ export function prettyValue(value: unknown): string {
   }
 }
 
+export function isImageBlock(block: ContentBlock): boolean {
+  return block.type === "image";
+}
+
+export function contentImages(content: ContentBlock["content"]): ContentBlock[] {
+  return Array.isArray(content) ? content.filter(isImageBlock) : [];
+}
+
+export function resultImages(result?: ContentBlock): ContentBlock[] {
+  return result ? contentImages(result.content) : [];
+}
+
 export function resultText(result?: ContentBlock): string {
-  return result ? blockToText(result) || prettyValue(result.content ?? result) : "";
+  if (!result) return "";
+  return blockToText(result) || (resultImages(result).length ? "" : prettyValue(result.content ?? result));
+}
+
+export interface ImageMeta {
+  format: string;
+  size: string;
+}
+
+export function imageMediaType(source?: ContentBlock["source"]): string {
+  const mediaType = source?.media_type?.toLowerCase().split(";")[0]?.trim() ?? "";
+  return mediaType === "image/jpg" || mediaType === "image/pjpeg" ? "image/jpeg" : mediaType;
+}
+
+export function imageMeta(source?: ContentBlock["source"]): ImageMeta {
+  const subtype = imageMediaType(source).replace(/^image\//, "");
+  const format = subtype === "jpeg" ? "JPEG" : subtype === "svg+xml" ? "SVG" : subtype.toUpperCase() || "Image";
+  const data = typeof source?.data === "string" ? source.data.replace(/\s/g, "") : "";
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  const bytes = Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+  const size = bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
+  return { format, size };
 }
 
 export function safeDataImage(source?: ContentBlock["source"]): string | undefined {
   if (!source || source.type !== "base64" || !source.data) return undefined;
-  const mediaType = source.media_type?.toLowerCase() ?? "";
-  if (!/^image\/(png|gif|jpeg|webp|avif)$/.test(mediaType)) return undefined;
+  const mediaType = imageMediaType(source);
+  if (!/^image\/(png|gif|jpeg|webp|avif|bmp)$/.test(mediaType)) return undefined;
   if (!/^[a-z0-9+/=\s]+$/i.test(source.data)) return undefined;
   return `data:${mediaType};base64,${source.data.replace(/\s/g, "")}`;
 }

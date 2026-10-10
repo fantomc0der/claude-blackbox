@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boundedDiff, contentToText, safeDataImage, toolTitle } from "../src/client/lib/content";
+import { boundedDiff, contentToText, imageMeta, resultImages, resultText, safeDataImage, toolTitle } from "../src/client/lib/content";
 
 describe("replay content helpers", () => {
   test("keeps mixed nested content in source order", () => {
@@ -22,6 +22,38 @@ describe("replay content helpers", () => {
   test("only accepts supported base64 image attachments", () => {
     expect(safeDataImage({ type: "base64", media_type: "image/png", data: "aGVsbG8=" })).toBe("data:image/png;base64,aGVsbG8=");
     expect(safeDataImage({ type: "url", media_type: "image/png", data: "https://example.com/image.png" })).toBeUndefined();
+  });
+
+  test("normalizes recorded JPEG media types and rejects script-capable ones", () => {
+    expect(safeDataImage({ type: "base64", media_type: "image/jpeg", data: "/9j/4AAQ" })).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    expect(safeDataImage({ type: "base64", media_type: "image/jpg", data: "/9j/4AAQ" })).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    expect(safeDataImage({ type: "base64", media_type: "IMAGE/JPEG; charset=binary", data: "/9j/4AAQ" })).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    expect(safeDataImage({ type: "base64", media_type: "image/bmp", data: "Qk0=" })).toBe("data:image/bmp;base64,Qk0=");
+    expect(safeDataImage({ type: "base64", media_type: "image/svg+xml", data: "PHN2Zy8+" })).toBeUndefined();
+    expect(imageMeta({ type: "base64", media_type: "image/jpg", data: "/9j/4AAQ" })).toEqual({ format: "JPEG", size: "6 B" });
+  });
+
+  test("separates image blocks from tool result text instead of dumping base64", () => {
+    const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } };
+    const imageOnly = { type: "tool_result", tool_use_id: "read-1", content: [image] };
+    expect(resultText(imageOnly)).toBe("");
+    expect(resultImages(imageOnly)).toEqual([image]);
+    const mixed = { type: "tool_result", tool_use_id: "read-2", content: [{ type: "text", text: "caption" }, image] };
+    expect(resultText(mixed)).toBe("caption");
+    expect(resultImages(mixed)).toHaveLength(1);
+    expect(resultText({ type: "tool_result", tool_use_id: "read-3", content: [{ type: "unknown" }] })).toContain("unknown");
+    expect(resultImages(undefined)).toEqual([]);
+    const document = { type: "document", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" } };
+    const documentOnly = { type: "tool_result", tool_use_id: "read-4", content: [document] };
+    expect(resultImages(documentOnly)).toEqual([]);
+    expect(resultText(documentOnly)).toContain("application/pdf");
+  });
+
+  test("describes recorded images by format and decoded size", () => {
+    expect(imageMeta({ type: "base64", media_type: "image/png", data: "aGVsbG8=" })).toEqual({ format: "PNG", size: "5 B" });
+    expect(imageMeta({ type: "base64", media_type: "image/jpeg", data: "A".repeat(4000) })).toEqual({ format: "JPEG", size: "3 KB" });
+    expect(imageMeta({ type: "base64", media_type: "image/svg+xml", data: "" })).toEqual({ format: "SVG", size: "0 B" });
+    expect(imageMeta(undefined)).toEqual({ format: "Image", size: "0 B" });
   });
 
   test("keeps recorded tool names and unpacks MCP tool identifiers", () => {
