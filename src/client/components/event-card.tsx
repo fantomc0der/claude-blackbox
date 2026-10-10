@@ -26,6 +26,15 @@ import { Highlight } from "./highlight";
 import { Icon } from "./icon";
 import { modelName } from "../lib/format";
 
+export interface SubagentNavigation {
+  targets: Record<string, { id: string; label: string }>;
+  pending: boolean;
+  failed: boolean;
+  href: (id: string) => string;
+  follow: (event: MouseEvent, id: string) => void;
+  preview: (id: string) => void;
+}
+
 export interface EventCardProps {
   event: ReplayEvent;
   results?: Record<string, ContentBlock>;
@@ -36,6 +45,7 @@ export interface EventCardProps {
   filtered?: boolean;
   selected?: boolean;
   onShowContext?: (id: string) => void;
+  subagents?: SubagentNavigation;
 }
 
 function CopyButton(props: { value: string; label?: string }) {
@@ -161,13 +171,21 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
   </div>;
 }
 
-function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string }) {
+function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string; subagents?: SubagentNavigation }) {
   const [open, setOpen] = createSignal(untrack(() => Boolean(props.result?.is_error || props.highlight || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || ""))));
   const preview = () => toolPreview(props.block);
   const status = () => props.result?.is_error === true ? "error" : props.result ? "success" : "pending";
+  const recording = () => props.subagents?.targets[props.block.id || ""];
   createEffect(() => Boolean(props.highlight || props.result?.is_error), value => { if (value) setOpen(true); });
   return <section class={`tool-card ${props.result?.is_error ? "tool-card-error" : ""}`}>
     <button class="tool-summary" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => { setOpen(!open()); }}><span class="tool-status" aria-label={`Tool ${status()}`}>{status() === "error" ? "!" : status() === "success" ? "✓" : "→"}</span><span>{toolTitle(props.block.name)}</span><Show when={preview()}><span class="tool-preview">{preview()}</span></Show><span class="tool-disclosure" aria-hidden="true">{open() ? "−" : "+"}</span></button>
+    <Show when={props.subagents && /^(agent|task)$/i.test(props.block.name || "")}>
+      <div class="tool-subagent-link"><Show when={recording()} fallback={<span class="family-note">{props.subagents?.pending ? "Finding linked recording…" : props.subagents?.failed ? "Linked recordings unavailable. Retry from Session family." : "No linked recording available."}</span>}>{target => <>
+        <span class="tool-subagent-title" title={target().label}><Icon name="branch" size={14} />{target().label}</span>
+        <button class="secondary-button" onClick={() => props.subagents?.preview(target().id)}>Preview conversation</button>
+        <a class="text-button" href={props.subagents!.href(target().id)} onClick={event => props.subagents?.follow(event, target().id)}>Open session<Icon name="arrow" size={13} /></a>
+      </>}</Show></div>
+    </Show>
     <Show when={open()}><ToolContent block={props.block} result={props.result} highlight={props.highlight} /></Show>
   </section>;
 }
@@ -190,11 +208,11 @@ function ThinkingBlock(props: { block: ContentBlock; highlight?: string }) {
   return <details class="tool-thinking" open={open()} onToggle={(event) => { setOpen(event.currentTarget.open); }}><summary>Reasoning</summary><Show when={open()}><CodePanel title="Recorded reasoning" value={props.block.thinking ?? props.block.text ?? ""} highlight={props.highlight} /></Show></details>;
 }
 
-function BlockRenderer(props: { block: ContentBlock; results?: Record<string, ContentBlock>; highlight?: string }) {
+function BlockRenderer(props: { block: ContentBlock; results?: Record<string, ContentBlock>; highlight?: string; subagents?: SubagentNavigation }) {
   if (props.block.type === "text") return <Markdown content={props.block.text ?? ""} highlight={props.highlight} />;
   if (props.block.type === "thinking") return <ThinkingBlock block={props.block} highlight={props.highlight} />;
   if (props.block.type === "redacted_thinking") return <HiddenReasoning label="Reasoning redacted" detail="The API encrypted this reasoning step, so there is no text to show." />;
-  if (props.block.type === "tool_use") return <ToolUse block={props.block} result={props.block.id ? props.results?.[props.block.id] : undefined} highlight={props.highlight} />;
+  if (props.block.type === "tool_use") return <ToolUse block={props.block} result={props.block.id ? props.results?.[props.block.id] : undefined} highlight={props.highlight} subagents={props.subagents} />;
   if (props.block.type === "tool_result") return <ToolResult block={props.block} highlight={props.highlight} />;
   if (isImageBlock(props.block)) return <Attachment block={props.block} />;
   return <section class="tool-unknown"><strong>Unknown block: {props.block.type || "untitled"}</strong><CodePanel title="Raw block" value={prettyValue(props.block)} json /></section>;
@@ -221,7 +239,7 @@ export function EventCard(props: EventCardProps) {
   };
   return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
     <header class="replay-event-header"><span class="replay-role">{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
-    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} highlight={props.highlight} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
+    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
     <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} json /></Show></details>
   </article>;

@@ -2,7 +2,7 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, DirectoryUsage, EventPage, IndexProgress, ModelUsage, ReplayEvent, Session, SessionPage, UsageSummary, WorkspaceGroup } from "../shared/types";
+import type { Catalog, DirectoryUsage, EventPage, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -17,6 +17,23 @@ interface SourceRow {
 }
 
 interface StoredEvent { raw: string; event_id: string; sequence: number; offset: number; text: string }
+
+interface LaunchRow {
+  parent_id: string;
+  tool_id: string;
+  event_id: string;
+  name: string;
+  call_raw: string;
+  result_raw: string | null;
+  result_event_raw: string | null;
+}
+
+interface LaunchEvidence {
+  parentId: string;
+  toolId: string;
+  eventId: string;
+  label: string;
+}
 
 const schema = `
   PRAGMA journal_mode = WAL;
@@ -93,6 +110,68 @@ const sessionUsageJoin = `LEFT JOIN (SELECT session_id, count(*) AS usageRequest
 function toolCondition(column: string, tool: string): string {
   return tool === "mcp__" ? `instr(char(10)||lower(${column}),char(10)||'mcp__')>0`
     : `instr(char(10)||lower(${column})||char(10),char(10)||lower(?)||char(10))>0`;
+}
+
+function boundedLabel(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 120) || "Untitled session";
+}
+
+function agentFileId(source: string): string {
+  return /^agent-(.+)\.jsonl$/i.exec(basename(source))?.[1] || "";
+}
+
+function belongsToRoot(agent: SourceRow, root: SourceRow): boolean {
+  const prefix = join(dirname(root.source), basename(root.source, ".jsonl"), "subagents") + sep;
+  return agent.source.startsWith(prefix) || (agent.session_id === root.session_id && dirname(agent.source) === dirname(root.source));
+}
+
+function rootSourceForAgent(source: string): string {
+  const marker = `${sep}subagents${sep}`;
+  const position = source.indexOf(marker);
+  if (position < 0) return "";
+  const sessionDirectory = source.slice(0, position);
+  return join(dirname(sessionDirectory), `${basename(sessionDirectory)}.jsonl`);
+}
+
+function jsonRecord(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try { return object(JSON.parse(raw)); }
+  catch { return {}; }
+}
+
+function resultText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value.map(entry => {
+    if (typeof entry === "string") return entry;
+    const block = object(entry);
+    return string(block.text) || resultText(block.content);
+  }).join("\n");
+}
+
+function agentIdsFromLaunch(row: LaunchRow): string[] {
+  const ids = new Set<string>();
+  const result = jsonRecord(row.result_raw);
+  const content = resultText(result.content);
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^\s*agent(?:Id|_id)\s*:\s*([\w.-]+)\s*$/i.exec(line);
+    if (match) ids.add(match[1]);
+  }
+  for (const raw of [jsonRecord(row.call_raw), jsonRecord(row.result_event_raw)]) {
+    for (const candidate of [object(raw.toolUseResult), object(object(raw.message).toolUseResult)]) {
+      const agentId = string(candidate.agentId);
+      if (agentId) ids.add(agentId);
+    }
+  }
+  return [...ids];
+}
+
+function launchLabel(row: LaunchRow): string {
+  const raw = jsonRecord(row.call_raw);
+  const content = object(raw.message).content ?? raw.content;
+  const block = Array.isArray(content) ? content.map(object).find(item => item.type === "tool_use" && item.id === row.tool_id) : undefined;
+  const input = object(block?.input);
+  return boundedLabel(string(input.description) || string(input.name) || string(input.prompt) || row.name);
 }
 
 async function physicalPath(path: string): Promise<string> {
@@ -404,6 +483,116 @@ export class Recorder {
       .all(prefix, prefix, parent.session_id)
       .filter(row => row.source.startsWith(prefix) || dirname(row.source) === dirname(parent.source))
       .map(row => this.session(row));
+  }
+
+  family(id: string): SessionFamily {
+    const requestedRow = this.db.query<SourceRow, [string]>(`SELECT ${columns} ${joins} WHERE s.id=?`).get(id);
+    if (!requestedRow) throw new Error("Session not found");
+    const requested = this.session(requestedRow);
+    const orphan = (): SessionFamily => ({ rootId: null, members: [{ session: requested, parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(requested.title), depth: null }], launches: {} });
+    let root = requestedRow;
+    if (requestedRow.agent) {
+      const roots = this.db.query<SourceRow, [string, string]>(`SELECT ${columns} ${joins} WHERE s.agent=0 AND (s.source=? OR s.session_id=?)`)
+        .all(rootSourceForAgent(requestedRow.source), requestedRow.session_id)
+        .filter(candidate => belongsToRoot(requestedRow, candidate));
+      if (roots.length !== 1) return orphan();
+      root = roots[0];
+    }
+    const prefix = join(dirname(root.source), basename(root.source, ".jsonl"), "subagents") + sep;
+    const directory = dirname(root.source) + sep;
+    const descendantRows = this.db.query<SourceRow, [string, string, string, string, string, string, string, number]>(`SELECT ${columns} ${joins}
+      WHERE s.agent=1 AND (substr(s.source,1,length(?))=? OR (s.session_id=? AND substr(s.source,1,length(?))=? AND instr(substr(s.source,length(?)+1),?)=0))
+      ORDER BY s.started,s.id LIMIT ?`)
+      .all(prefix, prefix, root.session_id, directory, directory, directory, sep, 501);
+    const limited = descendantRows.length > 500;
+    const descendants = descendantRows.slice(0, 500);
+    if (requestedRow.agent && !descendants.some(candidate => candidate.id === requestedRow.id)) descendants.splice(-1, 1, requestedRow);
+    if (requestedRow.agent && !descendants.some(candidate => candidate.id === requestedRow.id)) return orphan();
+    const rows = [root, ...descendants].sort((left, right) => left.id === root.id ? -1 : right.id === root.id ? 1 : left.started.localeCompare(right.started) || left.id.localeCompare(right.id));
+    const sessions = new Map(rows.map(row => [row.id, this.session(row)]));
+    if (limited) {
+      return {
+        rootId: root.id,
+        members: rows.map(row => {
+          const session = sessions.get(row.id)!;
+          return row.id === root.id
+            ? { session, parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(session.title), depth: 0 }
+            : { session, parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(session.title), depth: null };
+        }),
+        launches: {},
+        limited: true,
+      };
+    }
+    const childrenByAgentId = new Map<string, string>();
+    const duplicateAgentIds = new Set<string>();
+    for (const child of descendants) {
+      const agentId = agentFileId(child.source);
+      if (!agentId) continue;
+      if (childrenByAgentId.has(agentId)) duplicateAgentIds.add(agentId);
+      else childrenByAgentId.set(agentId, child.id);
+    }
+    for (const agentId of duplicateAgentIds) childrenByAgentId.delete(agentId);
+    const ids = rows.map(row => row.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const launches = this.db.query<LaunchRow, string[]>(`SELECT calls.session_id AS parent_id,calls.tool_id,call_events.event_id,calls.name,
+      call_events.raw AS call_raw,results.raw AS result_raw,result_events.raw AS result_event_raw
+      FROM tool_calls calls JOIN events call_events ON call_events.rowid=calls.event_row
+      LEFT JOIN tool_results results ON results.session_id=calls.session_id AND results.tool_id=calls.tool_id
+      LEFT JOIN events result_events ON result_events.rowid=results.event_row
+      WHERE calls.session_id IN (${placeholders}) AND lower(calls.name) IN ('agent','task') ORDER BY call_events.sequence`).all(...ids);
+    const evidenceByChild = new Map<string, LaunchEvidence[]>();
+    for (const launch of launches) {
+      const agentIds = agentIdsFromLaunch(launch);
+      if (agentIds.length !== 1) continue;
+      const childId = childrenByAgentId.get(agentIds[0]);
+      if (!childId) continue;
+      if (childId === launch.parent_id) continue;
+      const evidence: LaunchEvidence = { parentId: launch.parent_id, toolId: launch.tool_id, eventId: launch.event_id, label: launchLabel(launch) };
+      evidenceByChild.set(childId, [...(evidenceByChild.get(childId) || []), evidence]);
+    }
+    const relations = new Map<string, { parentId: string | null; spawnEventId: string | null; spawnToolId: string | null; label: string }>();
+    for (const child of descendants) {
+      const evidence = evidenceByChild.get(child.id) || [];
+      const unique = evidence.length === 1 ? evidence[0] : null;
+      relations.set(child.id, unique ? { parentId: unique.parentId, spawnEventId: unique.eventId, spawnToolId: unique.toolId, label: unique.label }
+        : { parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(sessions.get(child.id)!.title) });
+    }
+    const cyclic = new Set<string>();
+    for (const child of descendants) {
+      const path: string[] = [];
+      const positions = new Map<string, number>();
+      let current: string | null = child.id;
+      while (current && current !== root.id) {
+        const previous = positions.get(current);
+        if (previous !== undefined) { for (const memberId of path.slice(previous)) cyclic.add(memberId); break; }
+        positions.set(current, path.length);
+        path.push(current);
+        current = relations.get(current)?.parentId || null;
+      }
+    }
+    for (const memberId of cyclic) relations.set(memberId, { parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(sessions.get(memberId)!.title) });
+    const depth = (memberId: string, trail = new Set<string>()): number | null => {
+      if (memberId === root.id) return 0;
+      if (trail.has(memberId)) return null;
+      const parentId = relations.get(memberId)?.parentId;
+      if (!parentId || !sessions.has(parentId)) return null;
+      trail.add(memberId);
+      const parentDepth = depth(parentId, trail);
+      trail.delete(memberId);
+      return parentDepth === null ? null : parentDepth + 1;
+    };
+    const members: SessionFamilyMember[] = rows.map(row => {
+      const session = sessions.get(row.id)!;
+      if (row.id === root.id) return { session, parentId: null, spawnEventId: null, spawnToolId: null, label: boundedLabel(session.title), depth: 0 };
+      const relation = relations.get(row.id)!;
+      return { session, ...relation, depth: depth(row.id) };
+    });
+    const launchesForRequest: Record<string, string> = {};
+    for (const child of descendants) {
+      const evidence = evidenceByChild.get(child.id);
+      if (evidence?.length === 1 && evidence[0].parentId === requestedRow.id && !cyclic.has(child.id)) launchesForRequest[evidence[0].toolId] = child.id;
+    }
+    return { rootId: root.id, members, launches: launchesForRequest, ...(limited ? { limited: true } : {}) };
   }
 
   list(params: URLSearchParams): SessionPage {
