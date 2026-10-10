@@ -15,6 +15,29 @@
 - The derived SQLite index contains sensitive transcript content. Do not add telemetry, cloud synchronization, remote assets, or real transcript fixtures.
 - Markdown and attachments are untrusted recorded content. Preserve sanitization, remote-image blocking, bounded rendering, and explicit attachment reveal behavior.
 
+## Development State Isolation (Required)
+
+- Agent-owned development, preview, screenshot, and test runs must use an explicit isolated `--state-dir`. Never use the installed application's default cache at `~/.cache/claude-blackbox/<source-directory-hash>` for these runs. Builds reading the same Claude directory share that default cache: changing the port, browser profile, executable path, or branch does not isolate it. Startup can migrate the index and prevent an older installed app from opening it, even when both builds report the same application version.
+- Use disposable, ignored state outside the recording source directory, preferably `.blackbox/<task>-state` in the current checkout. Use separate directories for concurrent tasks or incompatible schema versions. Verify resolved source/state paths and the actual server arguments before launching; do not assume a launcher default selected safe state.
+- Prefer synthetic recordings for tests and screenshots. If real recordings are needed, keep their source read-only and index them into isolated development state. Installed indexes and their contents must not become committed or published fixtures.
+
+Safe browser workflows:
+
+```sh
+bun run dev --state-dir .blackbox/dev-state
+
+bun scripts/demo.ts
+bun run dev --dir .blackbox/demo --state-dir .blackbox/demo-dev-state
+
+bun run build
+bun start --state-dir .blackbox/review-state --port 12004
+```
+
+- Check that the chosen ports are free. Do not stop an installed app or unrelated server to make room. Record the processes started for the task and stop only those when finished. On Windows, verify the actual listener/server PID as well as any launcher or shim PID; stopping a shim or closing a browser tab does not prove its server stopped.
+- Desktop previews require the same isolation. The current Tauri wrapper does not forward `--state-dir` to its sidecar, so `bun run desktop`, `bun run desktop:local`, and locally built desktop binaries are not automatically safe. Do not assume a wrapper flag or an undocumented environment variable isolates state. If the launcher cannot provide a verified isolated state path, use the browser workflow or ask for explicit authorization before using the installed cache. Do not silently change the user's recording-source environment as a workaround.
+- Installed-index inspection must use a genuinely read-only SQLite connection. `Recorder.open()` and server startup may initialize or migrate state, even with scanning disabled; they are not read-only inspection tools.
+- Installed-state repair requires separate, explicit authorization. Back up the complete cache, including any required SQLite journal files; preserve bookmarks and workspace groups (`bookmarks`, `groups`, and `group_paths`); and verify the replacement before switching it into use. Do not bypass schema-version checks or discard the installed cache to make a development build start. Keep source recordings and installed executables unchanged unless the user separately requests changes to them.
+
 ## Toolchain Traps
 
 - Use Bun, not Node, for scripts, builds, and tests. The lockfile is `bun.lock`; do not introduce `package-lock.json`, `yarn.lock`, or the legacy binary `bun.lockb`.
