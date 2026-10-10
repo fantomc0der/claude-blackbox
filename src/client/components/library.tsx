@@ -38,7 +38,8 @@ export function Library(props: LibraryProps) {
   };
   const bookmarksOnly = () => props.params.get("bookmarked") === "1" && !props.params.get("q") && !props.query && chips().length === 1;
   const countUnit = () => `${props.query ? " result" : " recording"}${props.page?.total === 1 ? "" : "s"}`;
-  const openSession = (session: Session) => props.navigate(clearReplayFilters({ session: session.id, event: session.matchEventId || null, context: null }));
+  // A search result opens at its matching record with the preceding records in view, the same as revealing context in a replay.
+  const openSession = (session: Session) => props.navigate(clearReplayFilters({ session: session.id, event: session.matchEventId || null, context: session.matchEventId ? "1" : null }));
   const discovering = () => Boolean(props.query.trim() || props.params.get("q") || props.params.get("workspace") || chips().length);
   const sort = () => props.params.get("sort") || "recent";
   const recordedSpan = (session: Session) => {
