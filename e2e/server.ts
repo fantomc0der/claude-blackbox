@@ -20,6 +20,16 @@ await writeFile(join(folder, "long-recording.jsonl"), Array.from({ length: 175 }
   const record = event(`Long recording event ${index}`, index);
   return JSON.stringify(index === 0 ? { ...record, diagnostics: "Synthetic diagnostic output\n".repeat(100) } : record);
 }).join("\n") + "\n");
+const reasoning = (sequence: number, thinking: string) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "thinking", thinking, signature: "synthetic-signature" }], model: "claude-sonnet-4-5" } });
+await writeFile(join(folder, "hidden-reasoning.jsonl"), [
+  event("Hidden reasoning verification", 0),
+  reasoning(1, ""),
+  reasoning(2, "Readable reasoning summary"),
+  event("Answer after reasoning", 3, "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "hidden-only-reasoning.jsonl"), [event("Hidden-only reasoning verification", 0), reasoning(1, ""), event("Answer after hidden reasoning", 2, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
+const redactedReasoning = (sequence: number) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "redacted_thinking", data: "encrypted" }], model: "claude-sonnet-4-5" } });
+await writeFile(join(folder, "redacted-reasoning.jsonl"), [event("Redacted reasoning verification", 0), redactedReasoning(1), event("Answer after redacted reasoning", 2, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "live-recording.jsonl"), JSON.stringify(event("Live update verification", 0)) + "\n");
 await writeFile(join(folder, "filtered-live-recording.jsonl"), JSON.stringify(event("Filtered live verification", 0)) + "\n");
 await writeFile(join(folder, "unsafe-markdown.jsonl"), [event("Unsafe markdown verification", 0), event('<script>window.blackboxXss = true</script><img src="https://blocked.invalid/pixel" onerror="window.blackboxXss = true"><p class="nav-scrim">Untrusted styling</p>\n[Unsafe](javascript:alert(1))\n![Remote image](https://blocked.invalid/image)\n## Safe content', 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");

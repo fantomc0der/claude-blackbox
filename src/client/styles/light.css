@@ -94,7 +94,7 @@
   .replay-role, .replay-copy, .replay-text-button, .tool-checklist span,
   .tool-thinking summary, .md-content a, .replay-event-link:hover { color: var(--accent); }
   .replay-event-system .replay-role, .replay-muted, .tool-preview, .tool-disclosure,
-  .tool-code header, .tool-checklist [data-status="completed"], .tool-questions li, .tool-unknown { color: var(--muted); }
+  .tool-code header, .tool-checklist [data-status="completed"], .tool-questions li, .tool-unknown, .tool-hidden { color: var(--muted); }
   .replay-error-label { color: var(--danger); }
   .replay-copy:focus-visible, .replay-text-button:focus-visible, .tool-summary:focus-visible, details:focus-visible { outline-color: var(--accent); }
   .tool-card, .tool-unknown, .tool-attachment, .tool-code, .tool-diff, .tool-task, .tool-questions section,

@@ -176,15 +176,22 @@ function ToolResult(props: { block: ContentBlock; highlight?: string }) {
   return <section class={`tool-card tool-result ${props.block.is_error ? "tool-card-error" : ""}`}><Show when={value()}><CodePanel title={props.block.is_error ? "Recorded tool error" : "Recorded tool result"} value={value()} highlight={props.highlight} /></Show><For each={images()}>{(block) => <Attachment block={block} label="Recorded image result" />}</For></section>;
 }
 
+function HiddenReasoning(props: { label: string; detail: string }) {
+  return <p class="tool-hidden" title={props.detail}>{props.label}</p>;
+}
+
 function ThinkingBlock(props: { block: ContentBlock; highlight?: string }) {
   const [open, setOpen] = createSignal(false);
   createEffect(() => props.highlight, value => { if (value) setOpen(true); });
+  const text = () => getString(props.block.thinking) ?? getString(props.block.text) ?? "";
+  if (!text()) return <HiddenReasoning label="Reasoning not returned by the API" detail="The model reasoned here, but the API's thinking display setting returned only an encrypted signature, so there is no text to show." />;
   return <details class="tool-thinking" open={open()} onToggle={(event) => { setOpen(event.currentTarget.open); }}><summary>Reasoning</summary><Show when={open()}><CodePanel title="Recorded reasoning" value={props.block.thinking ?? props.block.text ?? ""} highlight={props.highlight} /></Show></details>;
 }
 
 function BlockRenderer(props: { block: ContentBlock; results?: Record<string, ContentBlock>; highlight?: string }) {
   if (props.block.type === "text") return <Markdown content={props.block.text ?? ""} highlight={props.highlight} />;
   if (props.block.type === "thinking") return <ThinkingBlock block={props.block} highlight={props.highlight} />;
+  if (props.block.type === "redacted_thinking") return <HiddenReasoning label="Reasoning redacted" detail="The API encrypted this reasoning step, so there is no text to show." />;
   if (props.block.type === "tool_use") return <ToolUse block={props.block} result={props.block.id ? props.results?.[props.block.id] : undefined} highlight={props.highlight} />;
   if (props.block.type === "tool_result") return <ToolResult block={props.block} highlight={props.highlight} />;
   if (isImageBlock(props.block)) return <Attachment block={props.block} />;
