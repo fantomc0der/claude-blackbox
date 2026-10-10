@@ -24,6 +24,15 @@ describe("replay content helpers", () => {
     expect(safeDataImage({ type: "url", media_type: "image/png", data: "https://example.com/image.png" })).toBeUndefined();
   });
 
+  test("normalizes recorded JPEG media types and rejects script-capable ones", () => {
+    expect(safeDataImage({ type: "base64", media_type: "image/jpeg", data: "/9j/4AAQ" })).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    expect(safeDataImage({ type: "base64", media_type: "image/jpg", data: "/9j/4AAQ" })).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    expect(safeDataImage({ type: "base64", media_type: "IMAGE/JPEG; charset=binary", data: "/9j/4AAQ" })).toBe("data:image/jpeg;base64,/9j/4AAQ");
+    expect(safeDataImage({ type: "base64", media_type: "image/bmp", data: "Qk0=" })).toBe("data:image/bmp;base64,Qk0=");
+    expect(safeDataImage({ type: "base64", media_type: "image/svg+xml", data: "PHN2Zy8+" })).toBeUndefined();
+    expect(imageMeta({ type: "base64", media_type: "image/jpg", data: "/9j/4AAQ" })).toEqual({ format: "JPEG", size: "6 B" });
+  });
+
   test("separates image blocks from tool result text instead of dumping base64", () => {
     const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } };
     const imageOnly = { type: "tool_result", tool_use_id: "read-1", content: [image] };
