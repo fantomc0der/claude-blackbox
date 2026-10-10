@@ -344,6 +344,226 @@ describe("recording index", () => {
     expect(recorder.list(new URLSearchParams({ q: "Replacement" })).total).toBe(1);
     expect(recorder.list(new URLSearchParams()).items[0].eventCount).toBe(2);
   });
+
+  test("resolves evidence-backed nested session families without crossing projects", async () => {
+    const fixtureData = await fixture();
+    const root = fixtureData.file;
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    const otherAgents = join(fixtureData.root, "claude", "projects", "other", "session-a", "subagents");
+    const orphanAgents = join(fixtureData.project, "orphan", "subagents");
+    await mkdir(agents, { recursive: true });
+    await mkdir(otherAgents, { recursive: true });
+    await mkdir(orphanAgents, { recursive: true });
+    const event = (sessionId: string, content: unknown, extra: Record<string, unknown> = {}) => JSON.stringify({ type: "assistant", cwd: "C:\\work\\orbit", timestamp: "2026-09-19T12:00:00Z", sessionId, message: { role: "assistant", content }, ...extra });
+    await writeFile(root, [
+      event("root", [{ type: "tool_use", id: "launch-child", name: "Agent", input: { description: "Research implementation" } }]),
+      event("root", [{ type: "tool_result", tool_use_id: "launch-child", content: "agent_id: child-123" }]),
+      event("root", [{ type: "tool_use", id: "unknown-launch", name: "Agent", input: { description: "No indexed child" } }]),
+      event("root", [{ type: "tool_result", tool_use_id: "unknown-launch", content: "agentId: missing-child" }]),
+    ].join("\n") + "\n");
+    await writeFile(join(agents, "agent-child-123.jsonl"), [
+      event("child", "Child title", { type: "user" }),
+      event("child", [{ type: "tool_use", id: "launch-grandchild", name: "task", input: { description: "Validate nested work" } }]),
+      event("child", [{ type: "tool_result", tool_use_id: "launch-grandchild", content: "done" }], { toolUseResult: { agentId: "grand-456" } }),
+    ].join("\n") + "\n");
+    await writeFile(join(agents, "agent-grand-456.jsonl"), event("grand", "Grandchild title", { type: "user" }) + "\n");
+    await writeFile(join(agents, "agent-unlinked.jsonl"), event("unlinked", "Unlinked title", { type: "user" }) + "\n");
+    await writeFile(join(fixtureData.project, "agent-legacy.jsonl"), event("root", "Legacy title", { type: "user" }) + "\n");
+    await writeFile(join(otherAgents, "agent-cross.jsonl"), event("cross", "Cross project", { type: "user" }) + "\n");
+    await writeFile(join(orphanAgents, "agent-orphan.jsonl"), event("orphan", "Orphan title", { type: "user" }) + "\n");
+    const recorder = await fixtureData.open();
+    const sessions = recorder.list(new URLSearchParams({ agents: "1", limit: "50" })).items;
+    const byTitle = new Map(sessions.map(session => [session.title, session]));
+    const family = recorder.family(recorder.list(new URLSearchParams()).items.find(session => session.title.startsWith("Session root"))!.id);
+    const child = byTitle.get("Child title")!, grandchild = byTitle.get("Grandchild title")!, legacy = byTitle.get("Legacy title")!, unlinked = byTitle.get("Unlinked title")!;
+    expect(family.rootId).toBe(family.members[0].session.id);
+    expect(family.launches).toEqual({ "launch-child": child.id });
+    expect(family.members.map(member => member.session.id)).toContain(child.id);
+    expect(family.members.map(member => member.session.id)).toContain(grandchild.id);
+    expect(family.members.map(member => member.session.id)).toContain(legacy.id);
+    expect(family.members.map(member => member.session.id)).toContain(unlinked.id);
+    expect(family.members.map(member => member.session.title)).not.toContain("Cross project");
+    expect(family.members.find(member => member.session.id === child.id)).toMatchObject({ parentId: family.rootId, spawnToolId: "launch-child", label: "Research implementation", depth: 1 });
+    expect(family.members.find(member => member.session.id === grandchild.id)).toMatchObject({ parentId: child.id, spawnToolId: "launch-grandchild", label: "Validate nested work", depth: 2 });
+    expect(family.members.find(member => member.session.id === legacy.id)).toMatchObject({ parentId: null, spawnToolId: null, depth: null });
+    expect(family.members.find(member => member.session.id === unlinked.id)).toMatchObject({ parentId: null, spawnToolId: null, depth: null });
+    expect(recorder.family(child.id).launches).toEqual({ "launch-grandchild": grandchild.id });
+    const orphan = byTitle.get("Orphan title")!;
+    expect(recorder.family(orphan.id)).toMatchObject({ rootId: null, launches: {}, members: [{ session: { id: orphan.id }, parentId: null, spawnEventId: null, spawnToolId: null, depth: null }] });
+  });
+
+  test("refreshes family launches from newly indexed exact tool results", async () => {
+    const fixtureData = await fixture();
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    await mkdir(agents, { recursive: true });
+    const event = (content: unknown) => fixtureData.record(content, { type: "assistant" });
+    await writeFile(fixtureData.file, event([{ type: "tool_use", id: "launch", name: "Agent", input: { description: "Refresh child" } }]) + "\n");
+    await writeFile(join(agents, "agent-refresh.jsonl"), fixtureData.record("Refresh child", { type: "user", sessionId: "refresh" }) + "\n");
+    const recorder = await fixtureData.open();
+    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    expect(recorder.family(root.id).launches).toEqual({});
+    await appendFile(fixtureData.file, event([{ type: "tool_result", tool_use_id: "launch", content: "agentId: refresh" }]) + "\n");
+    await recorder.scan();
+    const child = recorder.list(new URLSearchParams({ agents: "1" })).items[0];
+    expect(recorder.family(root.id).launches).toEqual({ launch: child.id });
+  });
+
+  test("requires a single exact launch identifier before linking or exposing navigation", async () => {
+    const fixtureData = await fixture();
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    await mkdir(agents, { recursive: true });
+    const event = (content: unknown) => fixtureData.record(content, { type: "assistant" });
+    const launch = (id: string, result: string) => [
+      event([{ type: "tool_use", id, name: "Agent", input: { description: id } }]),
+      event([{ type: "tool_result", tool_use_id: id, content: result }]),
+    ];
+    await writeFile(fixtureData.file, [
+      ...launch("inline", "Inline prose mentions agent_id: inline-child but is not metadata."),
+      ...launch("conflict", "agent_id: conflict-child\nagentId: unknown-child"),
+      ...launch("repeat-one", "agent_id: repeated-child"),
+      ...launch("repeat-two", "agent_id: repeated-child"),
+    ].join("\n") + "\n");
+    for (const name of ["inline-child", "conflict-child", "repeated-child"]) {
+      await writeFile(join(agents, `agent-${name}.jsonl`), fixtureData.record(name, { type: "user", sessionId: name }) + "\n");
+    }
+    const recorder = await fixtureData.open();
+    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    const family = recorder.family(root.id);
+    expect(family.launches).toEqual({});
+    for (const member of family.members.filter(member => member.session.isAgent)) {
+      expect(member).toMatchObject({ parentId: null, spawnEventId: null, spawnToolId: null, depth: null });
+    }
+  });
+
+  test("limits large families while retaining the requested descendant", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("Root") + "\n");
+    const recorder = await fixtureData.open();
+    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    let requestedId = "";
+    for (let index = 0; index <= 500; index++) {
+      const id = (1000 + index).toString(16).padStart(24, "0");
+      recorder.db.query("INSERT INTO sessions(id,session_id,source,cwd,title,started,updated,agent) VALUES (?,?,?,?,?,?,?,1)")
+        .run(id, `limit-${index}`, join(agents, `agent-limit-${index}.jsonl`), "C:\\work\\orbit", `Limited ${index}`, "2026-09-19T12:00:00Z", "2026-09-19T12:00:00Z");
+      if (index === 500) requestedId = id;
+    }
+    const family = recorder.family(requestedId);
+    expect(family).toMatchObject({ rootId: root.id, limited: true });
+    expect(family.members).toHaveLength(501);
+    expect(family.launches).toEqual({});
+    expect(family.members.find(member => member.session.id === requestedId)).toMatchObject({ parentId: null, depth: null });
+  });
+
+  test("matches structured launch metadata and annotated marker lines without using the event owner", async () => {
+    const fixtureData = await fixture();
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    await mkdir(agents, { recursive: true });
+    const launch = (id: string, content: unknown, metadata = {}) => [
+      fixtureData.record([{ type: "tool_use", id, name: "Agent", input: { description: id } }], { type: "assistant" }),
+      fixtureData.record([{ type: "tool_result", tool_use_id: id, content }], metadata),
+    ];
+    await writeFile(fixtureData.file, [
+      ...launch("structured", "agentId: structured-child (synthetic continuation annotation)", { toolUseResult: { agentId: "structured-child" } }),
+      ...launch("text-fallback", [{ type: "text", text: "Synthetic completion" }, { type: "text", text: "agent_id: text-child (synthetic continuation annotation)" }]),
+      ...launch("owner-only", "Synthetic completion without launch metadata", { agentId: "owner-child" }),
+      ...launch("conflicting", "agentId: other-child (synthetic continuation annotation)", { toolUseResult: { agentId: "conflict-child" } }),
+      ...launch("prose", "agentId: prose-child mentioned in prose, not a metadata annotation"),
+    ].join("\n") + "\n");
+    for (const name of ["structured-child", "text-child", "owner-child", "conflict-child", "other-child", "prose-child"]) {
+      await writeFile(join(agents, `agent-${name}.jsonl`), fixtureData.record(name, { sessionId: name }) + "\n");
+    }
+    const recorder = await fixtureData.open();
+    const root = recorder.list(new URLSearchParams()).items[0];
+    const family = recorder.family(root.id);
+    const childId = (title: string) => family.members.find(member => member.session.title === title)!.session.id;
+    expect(family.launches).toEqual({ structured: childId("structured-child"), "text-fallback": childId("text-child") });
+    for (const title of ["owner-child", "conflict-child", "other-child", "prose-child"]) {
+      expect(family.members.find(member => member.session.title === title)).toMatchObject({ parentId: null, spawnToolId: null });
+    }
+  });
+
+  test("large families retain exact root launch targets beyond the initial member window", async () => {
+    const fixtureData = await fixture();
+    const launch = (id: string, agentId: string) => [
+      fixtureData.record([{ type: "tool_use", id, name: "Agent", input: { description: id } }], { type: "assistant" }),
+      fixtureData.record([{ type: "tool_result", tool_use_id: id, content: `agentId: ${agentId}` }]),
+    ];
+    await writeFile(fixtureData.file, [
+      ...launch("inside", "limit-0"), ...launch("outside", "late-child"),
+      ...launch("repeated-one", "limit-1"), ...launch("repeated-two", "limit-1"),
+      ...launch("duplicate", "limit-2"), ...launch("cross-project", "foreign-child"),
+      ...launch("missing", "missing-child"),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const root = recorder.list(new URLSearchParams()).items[0];
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    const insert = recorder.db.query("INSERT INTO sessions(id,session_id,source,cwd,title,started,updated,agent) VALUES (?,?,?,?,?,?,?,1)");
+    for (let index = 0; index <= 500; index++) {
+      insert.run((1000 + index).toString(16).padStart(24, "0"), `limit-${index}`, join(agents, `agent-limit-${index}.jsonl`), "C:\\work\\orbit", `Limited ${index}`, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    }
+    const lateId = "f".repeat(24);
+    insert.run(lateId, "late-child", join(agents, "agent-late-child.jsonl"), "C:\\work\\orbit", "Later child", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
+    insert.run("e".repeat(24), "duplicate", join(agents, "nested", "subagents", "agent-limit-2.jsonl"), "C:\\work\\orbit", "Duplicate outside window", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
+    insert.run("d".repeat(24), "foreign-child", join(fixtureData.data, "projects", "other", "session-a", "subagents", "agent-foreign-child.jsonl"), "C:\\work\\other", "Other project", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
+    const family = recorder.family(root.id);
+    expect(family.limited).toBe(true);
+    expect(family.members).toHaveLength(501);
+    expect(family.launches).toEqual({ inside: (1000).toString(16).padStart(24, "0"), outside: lateId });
+    expect(family.members.find(member => member.session.id === lateId)).toMatchObject({ label: "outside", parentId: null, spawnEventId: null, spawnToolId: null, depth: null });
+    expect(family.members.every(member => member.parentId === null && member.spawnEventId === null)).toBe(true);
+  });
+
+  test("large families retain a viewed subagent and its own exact launch targets", async () => {
+    const fixtureData = await fixture();
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    await mkdir(agents, { recursive: true });
+    await writeFile(fixtureData.file, fixtureData.record("Root") + "\n");
+    await writeFile(join(agents, "agent-viewed.jsonl"), [
+      fixtureData.record("Viewed worker", { sessionId: "viewed" }),
+      fixtureData.record([{ type: "tool_use", id: "direct", name: "Task", input: { description: "Direct recording" } }], { type: "assistant", sessionId: "viewed" }),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "direct", content: "agent_id: direct-child" }], { sessionId: "viewed" }),
+      fixtureData.record([{ type: "tool_use", id: "self", name: "Agent", input: {} }], { type: "assistant", sessionId: "viewed" }),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "self", content: "agentId: viewed" }], { sessionId: "viewed" }),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const viewed = recorder.list(new URLSearchParams({ agents: "only" })).items[0];
+    const insert = recorder.db.query("INSERT INTO sessions(id,session_id,source,title,started,updated,agent) VALUES (?,?,?,?,?,?,1)");
+    for (let index = 0; index <= 500; index++) {
+      insert.run((1000 + index).toString(16).padStart(24, "0"), `filler-${index}`, join(agents, `agent-filler-${index}.jsonl`), "Filler", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    }
+    const targetId = "f".repeat(24);
+    insert.run(targetId, "direct-child", join(agents, "agent-direct-child.jsonl"), "Direct target", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
+    const family = recorder.family(viewed.id);
+    expect(family.limited).toBe(true);
+    expect(family.members).toHaveLength(501);
+    expect(family.launches).toEqual({ direct: targetId });
+    expect(family.members.map(member => member.session.id)).toContain(viewed.id);
+    expect(family.members.find(member => member.session.id === targetId)).toMatchObject({ parentId: null, spawnEventId: null, depth: null });
+  });
+
+  test("does not fabricate parentage from cyclic launch evidence", async () => {
+    const fixtureData = await fixture();
+    const agents = join(fixtureData.project, "session-a", "subagents");
+    await mkdir(agents, { recursive: true });
+    const event = (sessionId: string, content: unknown) => JSON.stringify({ type: "assistant", sessionId, message: { role: "assistant", content } });
+    await writeFile(fixtureData.file, fixtureData.record("Root") + "\n");
+    await writeFile(join(agents, "agent-one.jsonl"), [
+      event("one", [{ type: "tool_use", id: "to-two", name: "Agent", input: {} }]),
+      event("one", [{ type: "tool_result", tool_use_id: "to-two", content: "agentId: two" }]),
+    ].join("\n") + "\n");
+    await writeFile(join(agents, "agent-two.jsonl"), [
+      event("two", [{ type: "tool_use", id: "to-one", name: "Task", input: {} }]),
+      event("two", [{ type: "tool_result", tool_use_id: "to-one", content: "agent_id: one" }]),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    const family = recorder.family(root.id);
+    expect(family.members.filter(member => member.session.isAgent)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ parentId: null, spawnEventId: null, spawnToolId: null, depth: null }),
+      expect.objectContaining({ parentId: null, spawnEventId: null, spawnToolId: null, depth: null }),
+    ]));
+  });
 });
 
 test("search parser treats phrases and exclusions as data", () => {

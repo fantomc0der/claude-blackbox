@@ -13,6 +13,23 @@
   .subagent-toggle[aria-pressed="true"] .subagent-toggle-track { background: var(--accent); }
   .subagent-toggle[aria-pressed="true"] .subagent-toggle-track::after { transform: translateX(10px); background: var(--bg); }
   .subagent-access { white-space: nowrap; }
+  .session-heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+  .session-heading-title h2 { min-width: 0; flex: 1 1 240px; }
+  .session-identity { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; color: var(--text); font-size: var(--text-support); font-weight: 500; }
+  .session-family { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; font-size: var(--text-support); }
+  .session-lineage { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; min-width: 0; }
+  .session-lineage a { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 26px; color: var(--accent); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+  .session-lineage a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .family-role, .family-note { color: var(--muted); }
+  .family-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+  .family-jump { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-width: 0; color: var(--muted); }
+  .family-jump > span { flex-shrink: 0; }
+  .family-jump select { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); font: inherit; text-overflow: ellipsis; }
+  .family-error { color: var(--muted); }
+  .tool-subagent-link { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; border-top: 1px solid var(--line); font-size: var(--text-support); }
+  .tool-subagent-title { display: flex; align-items: center; gap: 6px; flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+  .tool-subagent-title svg { flex-shrink: 0; }
+  .tool-subagent-link .text-button { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
   .session-context { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
   .session-context > .session-path, .session-context > .session-snippet { min-width: 0; flex: 1; }
   .session-kind { flex-shrink: 0; margin-top: 7px; border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--muted); font-size: var(--text-meta); line-height: 1.4; font-weight: 500; white-space: nowrap; }
@@ -24,16 +41,25 @@
   .subagent-dialog-heading > div { min-width: 0; }
   .subagent-dialog-heading h2 { margin: 0; font-size: 1.125rem; }
   .subagent-dialog-heading p { margin: 6px 0 0; color: var(--muted); font-size: var(--text-support); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subagent-dialog-heading p a { color: var(--accent); text-underline-offset: 3px; }
   .subagent-selection { padding: 0 24px 16px; border-bottom: 1px solid var(--line); }
   .subagent-selection label { display: block; margin-bottom: 6px; font-size: var(--text-support); }
   .subagent-selection label span { color: var(--muted); }
   .subagent-selection select { width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); padding: 6px 10px; font: inherit; font-size: var(--text-control); }
   .subagent-metadata { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; color: var(--muted); font-size: var(--text-meta); }
   .subagent-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subagent-preview-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; }
+  .subagent-preview-actions > span { color: var(--muted); font-size: var(--text-meta); }
   .subagent-transcript { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: 20px 24px; scrollbar-gutter: stable; }
   .subagent-status { color: var(--muted); font-size: var(--text-body); }
   .subagent-dialog-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 10px 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--text-meta); }
   @media (max-width: 680px) {
+    .family-jump { flex: 1 1 140px; }
+    .family-jump > span { display: none; }
+    .session-family { gap: 8px; }
+    .session-lineage { column-gap: 12px; }
+    .session-lineage a:not(:last-child) { max-width: calc(50% - 6px); }
+    .tool-subagent-link .secondary-button { min-height: 36px; }
     .library .subagent-toggle-label { display: none; }
     .subagent-dialog { width: calc(100vw - 16px); height: calc(100dvh - 24px); }
     .subagent-dialog-heading { padding: 16px; }

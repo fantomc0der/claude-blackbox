@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { createDemo } from "../scripts/demo";
@@ -125,6 +125,47 @@ for (const name of ["first", "second"]) {
     sessionId: "subagent-parent", isSidechain: true, cwd: "/synthetic/delegated-worktree",
   })).join("\n") + "\n");
 }
+const familyRootId = "session-family-root";
+const familyAgent = (id: string, description: string, prompt: string, name = "Agent") => ({ type: "tool_use", id, name, input: { description, prompt } });
+const familyResult = (toolUseId: string, agentId: string) => ({ type: "tool_result", tool_use_id: toolUseId, content: `agentId: ${agentId}` });
+const familyRecord = (title: string, sessionId: string, agentId: string, parentUuid: string, sequence: number, type = "user") => ({
+  ...event(title, sequence, type), uuid: `${sessionId}-${sequence}`, sessionId, agentId, parentUuid,
+  isSidechain: true, cwd: "/synthetic/session-family", customTitle: sequence ? undefined : title,
+});
+await writeFile(join(folder, `${familyRootId}.jsonl`), [
+  { ...event("Session family root", 0), uuid: "family-root-user", sessionId: familyRootId, customTitle: "Session family root" },
+  { ...event("", 1, "assistant"), uuid: "family-root-launches", sessionId: familyRootId, message: { role: "assistant", content: [
+    familyAgent("family-child-tool", "Implementation worker", "Inspect the implementation path."),
+    familyAgent("family-sibling-tool", "Review worker", "Review the sibling change.", "Task"),
+    familyAgent("family-missing-tool", "Unavailable worker", "This launch has no recording."),
+  ], model: "claude-sonnet-4-5" } },
+  { ...event("", 2), uuid: "family-root-results", sessionId: familyRootId, message: { role: "user", content: [
+    familyResult("family-child-tool", "family-child"), familyResult("family-sibling-tool", "family-sibling"),
+  ], model: "claude-sonnet-4-5" } },
+  { ...event("Root conclusion", 3, "assistant"), uuid: "family-root-conclusion", sessionId: familyRootId },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+const familyFolder = join(folder, familyRootId, "subagents");
+const familyChild = (title: string, sessionId: string, agentId: string, parentUuid: string) => [
+  familyRecord(title, sessionId, agentId, parentUuid, 0),
+  familyRecord("System-only family row", sessionId, agentId, parentUuid, 1, "system"),
+  familyRecord(`${title} conversation result`, sessionId, agentId, parentUuid, 2, "assistant"),
+];
+await mkdir(familyFolder, { recursive: true });
+await rm(join(familyFolder, "agent-family-orphan.jsonl"), { force: true });
+await writeFile(join(familyFolder, "agent-family-child.jsonl"), [...familyChild("Implementation worker", "family-child", "family-child-tool", "family-root-launches"), {
+  ...familyRecord("", "family-child", "family-child-tool", "family-child-2", 3, "assistant"), uuid: "family-child-launches",
+  message: { role: "assistant", content: [familyAgent("family-nested-tool", "Nested implementation worker", "Inspect the nested implementation path.")], model: "claude-sonnet-4-5" },
+}, {
+  ...familyRecord("", "family-child", "family-child-tool", "family-child-launches", 4), uuid: "family-child-results",
+  message: { role: "user", content: [familyResult("family-nested-tool", "family-nested")], model: "claude-sonnet-4-5" },
+}].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(familyFolder, "agent-family-sibling.jsonl"), familyChild("Review worker", "family-sibling", "family-sibling-tool", "family-root-launches").map(record => JSON.stringify(record)).join("\n") + "\n");
+const nestedFolder = join(familyFolder, "agent-family-child", "subagents");
+await mkdir(nestedFolder, { recursive: true });
+await writeFile(join(nestedFolder, "agent-family-nested.jsonl"), familyChild("Nested implementation worker", "family-nested", "family-nested-tool", "family-child-launches").map(record => JSON.stringify(record)).join("\n") + "\n");
+const orphanFolder = join(folder, "missing-root", "subagents");
+await mkdir(orphanFolder, { recursive: true });
+await writeFile(join(orphanFolder, "agent-family-orphan.jsonl"), familyChild("Orphan worker", "missing-root", "family-orphan-tool", "missing-parent-event").map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);

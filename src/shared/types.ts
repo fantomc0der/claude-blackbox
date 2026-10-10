@@ -133,6 +133,22 @@ export interface SessionPage {
   sessionsWithUsage: number;
 }
 
+export interface SessionFamilyMember {
+  session: Session;
+  parentId: string | null;
+  spawnEventId: string | null;
+  spawnToolId: string | null;
+  label: string;
+  depth: number | null;
+}
+
+export interface SessionFamily {
+  rootId: string | null;
+  members: SessionFamilyMember[];
+  launches: Record<string, string>;
+  limited?: boolean;
+}
+
 export interface EventPage {
   items: ReplayEvent[];
   total: number;

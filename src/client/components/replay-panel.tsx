@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import type { ContentBlock, EventPage, ReplayEvent, Session } from "../../shared/types";
+import type { ContentBlock, EventPage, ReplayEvent, Session, SessionFamily } from "../../shared/types";
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
@@ -10,8 +10,10 @@ import type { Navigate } from "../lib/location";
 import { clearReplayFilters, replayFilters } from "../lib/replay-filters";
 import { withSelectedOption } from "../lib/filter-options";
 import { Icon } from "./icon";
-import { EventCard } from "./event-card";
-import { SubagentAccess } from "./subagent-dialog";
+import { EventCard, type SubagentNavigation } from "./event-card";
+import { SubagentDialog } from "./subagent-dialog";
+import { SessionFamilyNavigation } from "./session-family";
+import { isPlainNavigation, recalledReplayPosition, rememberReplayPosition, replayPositionKey, sessionDestination, sessionHref } from "../lib/session-navigation";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
 
@@ -67,6 +69,49 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const [error, setError] = createSignal("");
   const [updated, setUpdated] = createSignal(false);
   const [retry, setRetry] = createSignal(0);
+  const [family, setFamily] = createSignal<SessionFamily | null>(null);
+  const [familyPending, setFamilyPending] = createSignal(true);
+  const [familyError, setFamilyError] = createSignal("");
+  const [familyRetry, setFamilyRetry] = createSignal(0);
+  const [previewId, setPreviewId] = createSignal("");
+  const [restoreScroll, setRestoreScroll] = createSignal<(() => void) | null>(null);
+  const familyRoot = () => family()?.members.find(member => member.session.id === family()?.rootId)?.session || null;
+  const sessionTitle = () => (props.session?.isAgent ? family()?.members.find(member => member.session.id === props.id)?.label : null) || props.session?.title || "";
+  const resumeTarget = () => props.session?.isAgent ? familyRoot() : props.session;
+  let positionKey = untrack(() => replayPositionKey(props.id, props.params));
+  const href = (id: string, event: string | null = null) => sessionHref(props.params, id, event);
+  const openSession = (id: string, event: string | null = null) => {
+    rememberReplayPosition(positionKey, scroll?.scrollTop || 0);
+    setPreviewId("");
+    props.navigate(sessionDestination(id, event));
+  };
+  const followSession = (event: MouseEvent, id: string, anchor: string | null = null) => {
+    if (!isPlainNavigation(event)) return;
+    event.preventDefault();
+    openSession(id, anchor);
+  };
+  const subagentNavigation = createMemo<SubagentNavigation>(() => {
+    const members = new Map(family()?.members.map(member => [member.session.id, member]) || []);
+    const targets = Object.fromEntries(Object.entries(family()?.launches || {}).flatMap(([toolId, id]) => {
+      const member = members.get(id);
+      return member ? [[toolId, { id, label: member.label }]] : [];
+    }));
+    return { targets, pending: familyPending(), failed: Boolean(familyError()), href, follow: followSession, preview: setPreviewId };
+  });
+  createEffect(() => ({ id: props.id, revision: props.revision, retry: familyRetry() }), state => {
+    const controller = new AbortController();
+    setFamilyPending(true); setFamilyError("");
+    void request<SessionFamily>(`/api/sessions/${state.id}/family`, { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) setFamily(data); })
+      .catch(error => { if (!controller.signal.aborted && !isAbort(error)) { setFamily(null); setFamilyError(error.message); } })
+      .finally(() => { if (!controller.signal.aborted) setFamilyPending(false); });
+    return () => controller.abort();
+  });
+  createEffect(() => ({ restore: restoreScroll(), ready: !familyPending() && props.session?.id === props.id }), state => {
+    if (!state.restore || !state.ready) return;
+    let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => state.restore?.()); });
+    return () => cancelAnimationFrame(frame);
+  });
   const [details, setDetails] = createSignal<HTMLDetailsElement>();
   const [detailsMenu, setDetailsMenu] = createSignal<HTMLDivElement>();
   const [filterDetails, setFilterDetails] = createSignal<HTMLDetailsElement>();
@@ -119,6 +164,8 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     if (state.anchor && !state.offset) { params.set("anchor", state.anchor); if (state.context) params.set("context", "1"); }
     const key = params.toString();
     const navigation = key !== lastKey;
+    const nextPositionKey = replayPositionKey(state.id, untrack(() => props.params));
+    const savedPosition = navigation || initial ? recalledReplayPosition(nextPositionKey) : undefined;
     lastKey = key;
     if (navigation || initial) setPending(true);
     setError("");
@@ -143,13 +190,15 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         setOffset(nextOffset);
         props.navigate({ replayOffset: String(nextOffset), event: null, context: null }, true);
       }
-      requestAnimationFrame(() => {
+      setRestoreScroll(() => () => {
         if (sequence !== requestSequence) return;
+        positionKey = nextPositionKey;
         if (jumpBottom) { scroll?.scrollTo({ top: scroll.scrollHeight }); jumpBottom = false; }
-        else if (navigation || initial) scroll?.scrollTo({ top: 0 });
+        else if (navigation || initial) scroll?.scrollTo({ top: savedPosition ?? 0 });
         else if (follow) scroll?.scrollTo({ top: scroll.scrollHeight });
-        if (state.anchor && (navigation || initial)) scroll?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(state.anchor)}"]`)?.scrollIntoView({ block: "center" });
+        if (state.anchor && savedPosition === undefined && (navigation || initial)) scroll?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(state.anchor)}"]`)?.scrollIntoView({ block: "center" });
         initial = false;
+        setRestoreScroll(null);
       });
     }).catch(error => { if (!isAbort(error)) { setError(error.message); setPending(false); } });
     return () => controller.abort();
@@ -188,6 +237,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     catch (error) { props.notify(error instanceof Error ? error.message : "Could not update bookmark"); }
   };
   const updateReplay = (values: Record<string, string | null>, replace = false) => {
+    rememberReplayPosition(positionKey, scroll?.scrollTop || 0);
     setUpdated(false);
     props.navigate({ ...values, replayOffset: values.replayOffset === undefined ? null : values.replayOffset, event: values.event === undefined ? null : values.event, context: values.context === undefined ? null : values.context }, replace);
   };
@@ -246,14 +296,13 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   return <section class={['replay-panel', { 'overview-hidden': !props.overviewVisible }]} aria-label="Session replay">
     <header class="replay-panel-heading">
       <div class="replay-title-row">
-        <div class="replay-heading-content"><Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <><h2 title={session().title}>{session().title}</h2><div class="replay-usage" aria-label="Session usage"><Show when={session().usage.requests} fallback="No token usage recorded"><span title={tokenCount(session().usage.totalTokens)}>{compact(session().usage.totalTokens)} tokens</span><span>{usageCost(session().usage)} estimated API cost</span><Show when={session().usage.unpricedRequests}><span class="usage-warning">Incomplete pricing</span></Show></Show></div></>}</Show></div>
+        <div class="replay-heading-content"><Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <><div class="session-heading-title"><Show when={session().isAgent}><span class="session-identity"><Icon name="branch" size={14} />Subagent</span></Show><h2 title={session().title}>{sessionTitle()}</h2></div><div class="replay-usage" aria-label="Session usage"><Show when={session().usage.requests} fallback="No token usage recorded"><span title={tokenCount(session().usage.totalTokens)}>{compact(session().usage.totalTokens)} tokens</span><span>{usageCost(session().usage)} estimated API cost</span><Show when={session().usage.unpricedRequests}><span class="usage-warning">Incomplete pricing</span></Show></Show></div></>}</Show></div>
         <button class="icon-button replay-close" aria-label="Close replay" title="Back to session library" onClick={props.close}><Icon name="close" size={18} /></button>
       </div>
       <div class="replay-actions">
         <Show when={props.session}>{session => <>
-          <button class="secondary-button resume-command" onClick={() => void copy(resumeCommand(session()), "Resume command")}><Icon name="terminal" size={15} />Copy resume command</button>
+          <Show when={resumeTarget()}>{target => <button class="secondary-button resume-command" onClick={() => void copy(resumeCommand(target()), session().isAgent ? "Main session resume command" : "Resume command")}><Icon name="terminal" size={15} />{session().isAgent ? "Copy main session resume command" : "Copy resume command"}</button>}</Show>
           <SessionActions session={session()} onBookmark={() => void bookmark()} />
-          <Show when={!session().isAgent}><SubagentAccess session={session()} revision={props.revision} /></Show>
           <details class="session-details" ref={setDetails}>
             <summary class="text-button"><span class="session-actions-label">Session actions</span><span class="session-details-label">Session details</span><Icon name="down" size={14} /></summary>
             <div class="session-details-menu" ref={setDetailsMenu} role="region" aria-label="Session details">
@@ -283,6 +332,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
           <button class="layout-button overview-toggle" aria-expanded={props.overviewVisible ? "true" : "false"} aria-controls="recording-overview" onClick={props.toggleOverview}>{props.overviewVisible ? "Hide overview" : "Show overview"}</button>
         </div>
       </div>
+      <Show when={props.session}>{session => <SessionFamilyNavigation session={session()} family={family()} pending={familyPending()} error={familyError()} retry={() => setFamilyRetry(value => value + 1)} href={href} follow={followSession} open={openSession} preview={setPreviewId} />}</Show>
     </header>
     <div class="replay-controls">
       <div class="replay-tabs" role="group" aria-label="Replay content">
@@ -307,11 +357,11 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       </div></details>
     </div>
     <Show when={error()}><div class="error-banner" role="alert">{error()}<button class="text-button" onClick={() => setRetry(value => value + 1)}>Retry</button></div></Show>
-    <div class="replay-body"><div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
+    <div class="replay-body"><div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; if (element.isConnected && props.params.get("session") === props.id && !pending() && !initial && positionKey === replayPositionKey(props.id, props.params)) rememberReplayPosition(positionKey, element.scrollTop); }}>
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
-        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !search() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={event().id === props.anchor} onShowContext={revealContext} />}</For>
+        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !search() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{extraFilterCount() ? "End of matching records." : "You're all caught up."}<small>{extraFilterCount() ? "Reset filters to return to the conversation." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">
@@ -323,5 +373,6 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     </aside></div>
     <Show when={updated()}><button class="new-events" onClick={latestUnfiltered}><Icon name="down" size={15} />Recording updated · Show latest unfiltered</button></Show>
     <footer class="replay-footer"><span><Icon name="shield" size={12} />Read-only replay</span><span>{pending() ? "Reading recording…" : `${page() ? Math.min(page()!.offset + 1, page()!.total) : 0}–${Math.min((page()?.offset || 0) + (page()?.items.length || 0), page()?.total || 0)} of ${page()?.total || 0} records`}</span><div><button class="text-button" onClick={() => { setOffset(0); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null }); }}>Beginning</button><button class="text-button" aria-label="Jump to latest" onClick={latest}><span class="replay-jump-full">Jump to latest</span><span class="replay-jump-short" aria-hidden="true">Latest</span><Icon name="down" size={12} /></button></div></footer>
+    <Show when={previewId() && family()}><SubagentDialog parent={familyRoot()} members={family()!.members.filter(member => member.session.isAgent)} selected={previewId()} revision={props.revision} href={href} follow={followSession} close={() => setPreviewId("")} /></Show>
   </section>;
 }

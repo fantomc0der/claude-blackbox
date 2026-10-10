@@ -106,7 +106,7 @@ test("subagent labels stay visible in full, split and mobile session lists", asy
   await page.getByLabel("Text size").selectOption("larger");
   expect(await rows.evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth + 1))).toBe(true);
   await page.screenshot({ path: "test-results/subagent-list-labels.png" });
-  await page.goto("/?agents=only");
+  await page.goto("/?agents=only&q=Subagent");
   await expect(rows).toHaveCount(2);
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });

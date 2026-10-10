@@ -36,6 +36,11 @@ test("serves paginated records, local bookmarks and faithful export", async () =
   expect(result.headers.get("access-control-allow-origin")).toBeNull();
   const events = await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/events?limit=1`));
   expect((await events.json()).items).toHaveLength(1);
+  const family = await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/family`));
+  expect(family.status).toBe(200);
+  expect(await family.json()).toMatchObject({ rootId: id, launches: {}, members: [{ session: { id }, parentId: null, spawnEventId: null, spawnToolId: null, depth: 0 }] });
+  const subagents = await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/subagents`));
+  expect(await subagents.json()).toEqual([]);
   const download = await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/export`));
   expect(download.headers.get("content-disposition")).toContain("attachment");
   expect(JSON.parse((await download.text()).trim()).message.content).toBe("Hello");
