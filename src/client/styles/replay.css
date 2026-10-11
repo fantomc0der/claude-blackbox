@@ -93,7 +93,7 @@
 .timeline-track svg { position: relative; display: block; overflow: visible; }
 .replay-timeline-strip.pending .timeline-track { background: linear-gradient(to top, var(--raised) 2px, transparent 2px); }
 .replay-timeline-strip.dragging .timeline-track { cursor: grabbing; }
-.timeline-bar { fill: var(--muted); opacity: .5; }
+.timeline-bar { fill: var(--muted); opacity: .75; }
 .timeline-bin.current .timeline-bar, .timeline-bin.hovered .timeline-bar { fill: var(--text); opacity: .92; }
 .timeline-ghost { fill: var(--muted); opacity: .17; }
 .timeline-error { fill: var(--danger); }
@@ -108,4 +108,4 @@
 .replay-range { font-variant-numeric: tabular-nums; }
 .replay-page-step { display: inline-flex; align-items: center; gap: 5px; }
 .replay-page-step:disabled { opacity: .4; cursor: default; }
-@media (max-width: 680px) { .replay-timeline-strip { padding-inline: 16px; } .replay-pager { gap: 4px; } .replay-page-step { justify-content: center; min-width: 44px; min-height: 44px; } }
+@media (max-width: 680px) { .replay-timeline-strip { padding-inline: 16px; } .replay-pager { gap: 4px; } .replay-page-step { position: relative; justify-content: center; min-width: 44px; min-height: 42px; } .replay-page-step::before { content: ""; position: absolute; inset: -1px 0; } }

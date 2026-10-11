@@ -40,7 +40,8 @@ test("the strip and replay shortcuts page without scrolling to the end of a page
   await expect(firstCard(page)).toContainText("Timeline scrubber verification");
   await page.keyboard.press("PageDown");
   await expect(firstCard(page)).toContainText("Timeline event 60");
-  await page.locator(".replay-event").nth(3).click({ position: { x: 4, y: 4 } });
+  // An expanded raw record is reading state, not an open menu, so it must not swallow the shortcut.
+  await page.locator(".replay-event").nth(3).locator("details.replay-raw > summary").click();
   await page.keyboard.press("]");
   await expect(page.locator(".replay-range")).toHaveText("121–180 of 200 records");
   await expect(page.locator(".replay-footer [aria-live=polite]")).toHaveText("Records 121 to 180 of 200");
@@ -69,6 +70,12 @@ test("the strip near the end keeps a full page and brings the chosen record into
     return document.elementFromPoint(box.left + box.width / 2, box.top + 30)?.closest(".replay-event")?.textContent || "";
   });
   await expect.poll(topCard).toMatch(/Timeline event 19\d\b/);
+  // Stepping back from a choice on the clamped last page moves through earlier records instead of sticking.
+  const chosen = Number((await topCard()).match(/Timeline event (\d+)/)![1]);
+  await strip(page).focus();
+  for (let step = 0; step < 3; step++) await page.keyboard.press("ArrowLeft");
+  await expect.poll(async () => Number((await topCard()).match(/Timeline event (\d+)/)?.[1] ?? chosen)).toBeLessThan(chosen);
+  await expect(page).toHaveURL(/replayOffset=140/);
 });
 
 test("recordings that fit on one page show no activity strip", async ({ page }) => {
