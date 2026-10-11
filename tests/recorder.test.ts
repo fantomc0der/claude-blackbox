@@ -154,6 +154,67 @@ describe("recording index", () => {
     expect(recorder.events(id, new URLSearchParams()).total).toBe(2);
   });
 
+  test("timeline buckets map filtered records to page offsets on a whole-recording time axis", async () => {
+    const fixtureData = await fixture();
+    const at = (timestamp: string) => ({ timestamp });
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Leading note", at("")),
+      fixtureData.record("Fix auth", at("2026-09-19T12:00:00Z")),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "call-1", content: "retry failed", is_error: true }], at("2026-09-19T12:00:30Z")),
+      fixtureData.record("Undated between", at("")),
+      fixtureData.record("retry again", at("2026-09-19T12:05:10Z")),
+      fixtureData.record("Clock went backwards", at("2026-09-19T11:59:00Z")),
+      fixtureData.record("Follow up retry", at("2026-09-20T09:00:00Z")),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const id = recorder.list(new URLSearchParams()).items[0].id;
+    const all = recorder.timeline(id, new URLSearchParams({ kind: "all" }));
+    expect(all).toEqual({ total: 7, unfilteredTotal: 7, bucketMs: 60_000, buckets: [
+      { at: null, all: 1, count: 1, first: 0, last: 0, errors: 0 },
+      { at: "2026-09-19T12:00:00.000Z", all: 3, count: 3, first: 1, last: 3, errors: 1 },
+      { at: "2026-09-19T12:05:00.000Z", all: 2, count: 2, first: 4, last: 5, errors: 0 },
+      { at: "2026-09-20T09:00:00.000Z", all: 1, count: 1, first: 6, last: 6, errors: 0 },
+    ] });
+    const params = new URLSearchParams({ kind: "all", q: "retry" });
+    const matches = recorder.timeline(id, params);
+    expect(matches.total).toBe(recorder.events(id, params).total);
+    expect(matches.buckets.map(bucket => [bucket.all, bucket.count, bucket.first])).toEqual([[1, 0, null], [3, 1, 0], [2, 1, 1], [1, 1, 2]]);
+    for (const bucket of matches.buckets.filter(bucket => bucket.first !== null)) {
+      const page = recorder.events(id, new URLSearchParams({ kind: "all", q: "retry", offset: String(bucket.first), limit: "1" }));
+      expect(page.items[0].timestamp.slice(0, 16)).toBe(bucket.at!.slice(0, 16));
+    }
+  });
+
+  test("filtered timeline records keep the bucket the whole recording gives them", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Opening", { timestamp: "2026-09-19T10:00:00Z" }),
+      fixtureData.record("needle without a timestamp", { timestamp: "" }),
+      fixtureData.record("Later", { timestamp: "2026-09-19T11:00:00Z" }),
+      fixtureData.record("needle again", { timestamp: "2026-09-19T11:00:30Z" }),
+      fixtureData.record("needle from a clock that stepped back", { timestamp: "2026-09-19T10:30:00Z" }),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const id = recorder.list(new URLSearchParams()).items[0].id;
+    const timeline = recorder.timeline(id, new URLSearchParams({ kind: "all", q: "needle" }));
+    expect(timeline.buckets).toEqual([
+      { at: "2026-09-19T10:00:00.000Z", all: 2, count: 1, first: 0, last: 0, errors: 0 },
+      { at: "2026-09-19T11:00:00.000Z", all: 3, count: 2, first: 1, last: 2, errors: 0 },
+    ]);
+  });
+
+  test("timeline coarsens long recordings without losing records", async () => {
+    const fixtureData = await fixture();
+    const start = Date.parse("2026-09-19T00:00:00Z");
+    await writeFile(fixtureData.file, Array.from({ length: 1600 }, (_, index) => fixtureData.record(`Minute ${index}`, { timestamp: new Date(start + index * 60_000).toISOString() })).join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const timeline = recorder.timeline(recorder.list(new URLSearchParams()).items[0].id, new URLSearchParams({ kind: "all" }));
+    expect(timeline.bucketMs).toBe(600_000);
+    expect(timeline.buckets).toHaveLength(160);
+    expect(timeline.buckets.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(1600);
+    expect(timeline.buckets.every((bucket, index) => bucket.first === index * 10 && bucket.last === index * 10 + 9)).toBe(true);
+  });
+
   test("indexes tool-only content, supports phrase/exclusion and combined filters", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, [fixtureData.record("Fix auth"), fixtureData.record([

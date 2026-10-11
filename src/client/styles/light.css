@@ -64,7 +64,7 @@
   .search-box input, .replay-find input, .list-caption select { background: transparent; }
   .filter-tab.active { color: var(--text); background: var(--light-selected); border-color: var(--light-line-strong); }
   .filter-count, .bookmarked { background: var(--light-selected); }
-  .filter-menu, .session-details-menu, .shortcut-popover { background: var(--surface); border-color: var(--line); box-shadow: 0 15px 55px var(--light-shadow); }
+  .filter-menu, .session-details-menu, .shortcut-popover, .timeline-tip { background: var(--surface); border-color: var(--line); box-shadow: 0 15px 55px var(--light-shadow); }
   .filter-chip { color: var(--text); border-color: var(--light-line-strong); background: var(--light-inset); }
   .result-count { background: var(--raised); color: var(--muted); }
   .session-row { border-color: var(--line); }

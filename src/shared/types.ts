@@ -158,3 +158,16 @@ export interface EventPage {
   hiddenTotal: number;
   facets: { tools: string[]; models: string[]; directories: string[]; limited: boolean };
 }
+
+/**
+ * One time bucket of a recording. `all` counts every record, `count` only those matching the replay filters, whose
+ * page offsets run from `first` to `last` (null when none match). `at` is null for records before any timestamp.
+ */
+export interface TimelineBucket { at: string | null; all: number; count: number; first: number | null; last: number | null; errors: number }
+
+export interface EventTimeline {
+  total: number;
+  unfilteredTotal: number;
+  bucketMs: number;
+  buckets: TimelineBucket[];
+}
