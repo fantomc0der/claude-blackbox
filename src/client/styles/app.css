@@ -441,8 +441,6 @@
     .replay-actions > .session-secondary-actions { display: flex; }
     .session-details-label { display: inline; }
     .session-actions-label, .session-details-menu > .session-secondary-actions { display: none; }
-    .session-details { position: relative; }
-    .session-details-menu { left: auto; right: 0; width: 380px; }
     .session-details-menu h3 { margin: 0; padding: 0; border: 0; }
   }
   @media (min-width: 1600px) {

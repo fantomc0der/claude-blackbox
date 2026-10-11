@@ -12,7 +12,7 @@
   .subagent-toggle-track::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
   .subagent-toggle[aria-pressed="true"] .subagent-toggle-track { background: var(--accent); }
   .subagent-toggle[aria-pressed="true"] .subagent-toggle-track::after { transform: translateX(10px); background: var(--bg); }
-  .subagent-access { white-space: nowrap; }
+  .family-controls .subagent-access { min-height: 0; height: var(--family-control-height); padding: 0 12px; white-space: nowrap; }
   .session-heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
   .session-heading-title h2 { min-width: 0; flex: 1 1 240px; }
   .session-identity { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; color: var(--text); font-size: var(--text-support); font-weight: 500; }
@@ -21,10 +21,10 @@
   .session-lineage a { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 26px; color: var(--accent); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
   .session-lineage a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .family-role, .family-note { color: var(--muted); }
-  .family-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+  .family-controls { --family-control-height: max(36px, calc(1.5 * var(--text-control) + 14px)); display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
   .family-jump { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-width: 0; color: var(--muted); }
   .family-jump > span { flex-shrink: 0; }
-  .family-jump select { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); font: inherit; text-overflow: ellipsis; }
+  .family-jump select { width: 100%; min-width: 0; height: var(--family-control-height); padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); font: inherit; font-size: var(--text-control); text-overflow: ellipsis; }
   .family-error { color: var(--muted); }
   .tool-subagent-link { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; border-top: 1px solid var(--line); font-size: var(--text-support); }
   .tool-subagent-title { display: flex; align-items: center; gap: 6px; flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; color: var(--text); }
