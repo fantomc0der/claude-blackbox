@@ -71,8 +71,9 @@ export function ReplayTimeline(props: { id: string; filters: string; growth: num
   let lastFilters = "";
   let commitTimer: ReturnType<typeof setTimeout> | undefined;
   let grab: { pointer: number; window: number; moved: boolean; inside: boolean } | null = null;
-  let fetch: { timer: ReturnType<typeof setTimeout>; controller: AbortController } | null = null;
-  const cancelFetch = () => { if (fetch) { clearTimeout(fetch.timer); fetch.controller.abort(); fetch = null; } };
+  let scheduled: ReturnType<typeof setTimeout> | undefined;
+  let inflight: AbortController | undefined;
+  const cancelFetch = () => { clearTimeout(scheduled); scheduled = undefined; inflight?.abort(); };
 
   createEffect(() => ({ id: props.id, filters: props.filters, growth: props.growth }), state => {
     const key = `${state.id}?${state.filters}`;
@@ -80,15 +81,16 @@ export function ReplayTimeline(props: { id: string; filters: string; growth: num
     lastFilters = key;
     // A new filter refetches at once. A growing recording refetches at most every 1.5 seconds: a refresh already
     // scheduled is kept rather than restarted, so steady growth still updates the strip.
-    if (growing && fetch) return;
-    cancelFetch();
-    const controller = new AbortController();
-    const current = fetch = { controller, timer: setTimeout(() => {
+    if (growing && scheduled) return;
+    if (!growing) cancelFetch();
+    scheduled = setTimeout(() => {
+      scheduled = undefined;
+      inflight?.abort();
+      const controller = inflight = new AbortController();
       void request<EventTimeline>(`/api/sessions/${state.id}/timeline?${state.filters}`, { signal: controller.signal })
         .then(next => { if (!controller.signal.aborted) setData(next); })
-        .catch(error => { if (!isAbort(error)) setData(null); })
-        .finally(() => { if (fetch === current) fetch = null; });
-    }, growing ? 1500 : 0) };
+        .catch(error => { if (!isAbort(error)) setData(null); });
+    }, growing ? 1500 : 0);
   });
   createEffect(() => ({ offset: props.offset, filters: props.filters }), (state, previous) => {
     if (state.offset !== landing || (previous && state.filters !== previous.filters)) { setCursor(null); landing = null; }
