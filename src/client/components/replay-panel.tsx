@@ -326,17 +326,22 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const current = page();
     if (!current) return;
     const start = Math.max(0, Math.min(target, current.total - pageSize));
-    if (start === offset() && !props.anchor) { revealPosition(current, target); return; }
+    if (start === offset() && !props.anchor) {
+      // When that page is still loading, reveal the record once it lands rather than against the previous page.
+      if (start === current.offset) revealPosition(current, target);
+      else seekTarget = target;
+      return;
+    }
     setOffset(start);
     updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: start ? String(start) : null });
     seekTarget = target;
   };
-  const turnPage = (direction: -1 | 1, announce = false) => {
+  const turnPage = (direction: -1 | 1) => {
     const current = page();
     if (!current || (direction < 0 ? !current.offset : current.offset + current.limit >= current.total)) return false;
     // The same steps as the in-transcript Previous and Next buttons, so every way of paging lands on the same pages.
     const next = direction < 0 ? Math.max(0, current.offset - pageSize) : current.offset + current.limit;
-    announceRange = announce;
+    announceRange = true;
     setOffset(next);
     updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: next ? String(next) : null });
     return true;
@@ -346,7 +351,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       if (event.key !== "[" && event.key !== "]" || event.metaKey || event.ctrlKey !== event.altKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (target?.matches("input,textarea,select") || target?.isContentEditable || document.querySelector("[role=dialog], dialog[open], .session-details[open], .replay-filters[open], .filter-popover[open], .app-shell.nav-open")) return;
-      if (!turnPage(event.key === "[" ? -1 : 1, true)) return;
+      if (!turnPage(event.key === "[" ? -1 : 1)) return;
       event.preventDefault();
       // The cards are about to be replaced, so keep focus on the transcript rather than letting it fall to the page.
       if (scroll?.contains(document.activeElement) || document.activeElement === document.body) scroll?.focus({ preventScroll: true });

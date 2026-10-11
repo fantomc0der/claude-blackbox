@@ -53,6 +53,7 @@ test("the strip and replay shortcuts page without scrolling to the end of a page
   await expect(page.locator(".replay-range")).toHaveText("61–120 of 200 records");
   await page.getByRole("button", { name: "Next page" }).click();
   await expect(page.locator(".replay-range")).toHaveText("121–180 of 200 records");
+  await expect(page.locator(".replay-footer [aria-live=polite]")).toHaveText("Records 121 to 180 of 200");
   await page.getByRole("button", { name: "Previous page" }).click();
   await expect(page.locator(".replay-range")).toHaveText("61–120 of 200 records");
 });

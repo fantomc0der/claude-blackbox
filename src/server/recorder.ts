@@ -838,7 +838,7 @@ export class Recorder {
       if (this.replayTimelines.size >= 32) this.replayTimelines.delete(this.replayTimelines.keys().next().value!);
       this.replayTimelines.set(id, unfiltered);
     }
-    const rows = filter === "e.session_id=?" ? unfiltered.rows : this.timelineRows(filter, bindings);
+    const rows = filter === "e.session_id=?" ? unfiltered.rows : this.timelineRows(filter, bindings, id);
     // Coarsen minute buckets to 10 minutes, hours, or days until the response stays small on very long recordings.
     const [width, bucketMs] = timelineGranularities.find(([length]) => new Set(unfiltered.rows.map(row => row.at?.slice(0, length))).size <= timelineBucketLimit) ?? timelineGranularities.at(-1)!;
     const key = (at: string | null) => at === null ? null : `${at.slice(0, width)}${"0000-00-00T00:00".slice(width)}:00.000Z`;
@@ -857,15 +857,18 @@ export class Recorder {
     };
   }
 
-  // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Undated
-  // records ride with the latest earlier timestamp in the same set.
-  private timelineRows(filter: string, bindings: SQLQueryBindings[]): TimelineRow[] {
-    return this.db.query<TimelineRow, SQLQueryBindings[]>(`WITH filtered AS (
-        SELECT row_number() OVER (ORDER BY e.sequence) - 1 AS position, e.error,
-          max(nullif(e.timestamp,'')) OVER (ORDER BY e.sequence ROWS UNBOUNDED PRECEDING) AS stamp
-        FROM events e WHERE ${filter})
+  // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Each record's
+  // time is the latest timestamp at or before it in the whole recording, so undated records and a clock that steps
+  // backwards land in the same bucket whether or not a filter hides their neighbours.
+  private timelineRows(filter: string, bindings: SQLQueryBindings[], id?: string): TimelineRow[] {
+    const stamp = "max(nullif(e.timestamp,'')) OVER (ORDER BY e.sequence ROWS UNBOUNDED PRECEDING)";
+    const source = id
+      ? `SELECT row_number() OVER (ORDER BY sequence) - 1 AS position, error, stamp FROM (
+          SELECT e.sequence, e.error, ${stamp} AS stamp, (${filter}) AS matched FROM events e WHERE e.session_id=?) WHERE matched`
+      : `SELECT row_number() OVER (ORDER BY e.sequence) - 1 AS position, e.error, ${stamp} AS stamp FROM events e WHERE ${filter}`;
+    return this.db.query<TimelineRow, SQLQueryBindings[]>(`WITH filtered AS (${source})
       SELECT substr(stamp,1,16) AS at, count(*) AS count, min(position) AS first, max(position) AS last, sum(error) AS errors
-      FROM filtered GROUP BY at ORDER BY first`).all(...bindings);
+      FROM filtered GROUP BY at ORDER BY first`).all(...bindings, ...(id ? [id] : []));
   }
 
   private facetValues(kind: string, id?: string): { values: string[]; limited: boolean } {

@@ -185,6 +185,24 @@ describe("recording index", () => {
     }
   });
 
+  test("filtered timeline records keep the bucket the whole recording gives them", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Opening", { timestamp: "2026-09-19T10:00:00Z" }),
+      fixtureData.record("needle without a timestamp", { timestamp: "" }),
+      fixtureData.record("Later", { timestamp: "2026-09-19T11:00:00Z" }),
+      fixtureData.record("needle again", { timestamp: "2026-09-19T11:00:30Z" }),
+      fixtureData.record("needle from a clock that stepped back", { timestamp: "2026-09-19T10:30:00Z" }),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const id = recorder.list(new URLSearchParams()).items[0].id;
+    const timeline = recorder.timeline(id, new URLSearchParams({ kind: "all", q: "needle" }));
+    expect(timeline.buckets).toEqual([
+      { at: "2026-09-19T10:00:00.000Z", all: 2, count: 1, first: 0, last: 0, errors: 0 },
+      { at: "2026-09-19T11:00:00.000Z", all: 3, count: 2, first: 1, last: 2, errors: 0 },
+    ]);
+  });
+
   test("timeline coarsens long recordings without losing records", async () => {
     const fixtureData = await fixture();
     const start = Date.parse("2026-09-19T00:00:00Z");
