@@ -257,7 +257,7 @@
   .session-details-menu dt { color: #8b978f; font-size: var(--text-meta); margin-top: 15px; }
   .session-details-menu dd { margin: 5px 0 0; font-size: var(--text-support); overflow-wrap: anywhere; line-height: 1.6; }
   .session-details-menu p { color: #8b978f; font-size: var(--text-meta); line-height: 1.7; margin: 15px 0 0; }
-  .session-details-menu dd button { min-height: 44px; padding: 0; text-align: left; overflow-wrap: anywhere; }
+  .session-details-menu dd button { min-height: 0; padding: 0; line-height: inherit; text-align: left; overflow-wrap: anywhere; }
   .replay-controls { flex-shrink: 0; padding: 0 24px; border-bottom: 1px solid var(--line); }
   .replay-tabs { display: flex; flex-wrap: wrap; gap: 0 20px; }
   .replay-tab { min-height: 45px; padding: 0; font-size: var(--text-control); color: #98a39c; border-bottom: 2px solid transparent; }
@@ -491,6 +491,8 @@
     .replay-actions .icon-button, .mobile-menu, .sidebar-mobile-close, .workspace-group, .workspace-filter-toggle { min-width: 44px; min-height: 44px; }
     .workspace-controls select, .workspace-filter input { min-height: 44px; }
     .source-option { min-height: 44px; }
+    .session-details-menu dd button { position: relative; }
+    .session-details-menu dd button::after { content: ""; position: absolute; inset: -13px 0; }
   }
 }
 @layer components {
