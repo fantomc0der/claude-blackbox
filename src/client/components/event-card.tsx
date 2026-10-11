@@ -16,7 +16,7 @@ import {
   resultImages,
   resultText,
   safeDataImage,
-  toolPreview,
+  toolPreviewParts,
   toolTitle,
   truncate,
 } from "../lib/content";
@@ -173,12 +173,13 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
 
 function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string; subagents?: SubagentNavigation }) {
   const [open, setOpen] = createSignal(untrack(() => Boolean(props.result?.is_error || props.highlight || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || ""))));
-  const preview = () => toolPreview(props.block);
+  const preview = createMemo(() => toolPreviewParts(props.block));
+  const previewText = () => preview().head + preview().tail;
   const status = () => props.result?.is_error === true ? "error" : props.result ? "success" : "pending";
   const recording = () => props.subagents?.targets[props.block.id || ""];
   createEffect(() => Boolean(props.highlight || props.result?.is_error), value => { if (value) setOpen(true); });
   return <section class={`tool-card ${props.result?.is_error ? "tool-card-error" : ""}`}>
-    <button class="tool-summary" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => { setOpen(!open()); }}><span class="tool-status" aria-label={`Tool ${status()}`}>{status() === "error" ? "!" : status() === "success" ? "✓" : "→"}</span><span>{toolTitle(props.block.name)}</span><Show when={preview()}><span class="tool-preview">{preview()}</span></Show><span class="tool-disclosure" aria-hidden="true">{open() ? "−" : "+"}</span></button>
+    <button class="tool-summary" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => { setOpen(!open()); }}><span class="tool-status" aria-label={`Tool ${status()}`}>{status() === "error" ? "!" : status() === "success" ? "✓" : "→"}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden">{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show><span class="tool-disclosure" aria-hidden="true">{open() ? "−" : "+"}</span></button>
     <Show when={props.subagents && /^(agent|task)$/i.test(props.block.name || "")}>
       <div class="tool-subagent-link"><Show when={recording()} fallback={<span class="family-note">{props.subagents?.pending ? "Finding linked recording…" : props.subagents?.failed ? "Linked recordings unavailable. Retry from Session family." : "No linked recording available."}</span>}>{target => <>
         <span class="tool-subagent-title" title={target().label}><Icon name="branch" size={14} />{target().label}</span>

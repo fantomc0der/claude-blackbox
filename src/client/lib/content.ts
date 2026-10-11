@@ -43,19 +43,30 @@ export function isToolResultEvent(event: Pick<ReplayEvent, "blocks">): boolean {
   return event.blocks.length > 0 && event.blocks.every(block => block.type === "tool_result");
 }
 
-export function toolPreview(block: ContentBlock): string {
+const previewKeys = ["command", "file_path", "path", "query", "pattern", "description", "prompt"];
+const pathPreviewKeys = new Set(["file_path", "path"]);
+
+// The cap only bounds pathological inputs such as long heredocs; the summary
+// row's CSS ellipsis decides how much of this the current viewport shows.
+// Paths split before their final segment so the file name can stay visible
+// while the directory gives up space first.
+export function toolPreviewParts(block: ContentBlock): { head: string; tail: string } {
   const input = getToolInput(block);
-  const candidates = [
-    input.command,
-    input.file_path,
-    input.path,
-    input.query,
-    input.pattern,
-    input.description,
-    input.prompt,
-  ];
-  const value = candidates.find((candidate) => typeof candidate === "string" && candidate.trim());
-  return typeof value === "string" ? truncate(value.replace(/\s+/g, " "), 96) : "";
+  const key = previewKeys.find(candidate => {
+    const value = input[candidate];
+    return typeof value === "string" && value.trim() !== "";
+  });
+  if (!key) return { head: "", tail: "" };
+  const value = (input[key] as string).replace(/\s+/g, " ").trim();
+  if (!pathPreviewKeys.has(key)) return { head: truncate(value, 1000), tail: "" };
+  const split = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\")) + 1;
+  const head = value.slice(0, split), tail = truncate(value.slice(split), 1000), room = 1000 - tail.length;
+  return { head: head.length <= room ? head : room > 1 ? `…${head.slice(head.length - room + 1)}` : "", tail };
+}
+
+export function toolPreview(block: ContentBlock): string {
+  const { head, tail } = toolPreviewParts(block);
+  return head + tail;
 }
 
 export function truncate(value: string, maximum = 240): string {

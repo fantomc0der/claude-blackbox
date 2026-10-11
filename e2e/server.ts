@@ -125,6 +125,16 @@ await writeFile(join(folder, "image-read.jsonl"), [
   { ...event("", 3), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "read-unpaired-1", content: [{ type: "image", source: imageSource }] }] } },
   { ...event("", 4, "assistant"), message: { role: "assistant", content: [{ type: "text", text: "Attached a document block" }, { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from("%PDF-1.4").toString("base64") } }] } },
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+export const longPreviewCommand = `bun test ${Array.from({ length: 3 }, (_, index) => `tests/synthetic-preview-suite-${index + 1}.test.ts`).join(" ")} --timeout 30000 --bail`;
+export const longPreviewPath = "/synthetic/browser-tests/packages/recorder-preview/src/components/replay/summaries/very-deeply-nested-folder/tool-preview-target.tsx";
+await writeFile(join(folder, "long-tool-preview.jsonl"), [
+  event("Long tool preview verification", 0),
+  { ...event("", 1, "assistant"), message: { role: "assistant", content: [
+    { type: "tool_use", id: "long-preview-bash", name: "Bash", input: { command: longPreviewCommand } },
+    { type: "tool_use", id: "long-preview-read", name: "Read", input: { file_path: longPreviewPath } },
+    { type: "tool_use", id: "long-preview-mcp", name: "mcp__playwright__browser_run_code", input: { description: longPreviewCommand } },
+  ] } },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "subagent-parent.jsonl"),Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
 const agentsFolder = join(folder, "subagent-parent", "subagents");
 await mkdir(agentsFolder, { recursive: true });
