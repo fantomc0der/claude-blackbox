@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boundedDiff, contentToText, imageMeta, resultImages, resultText, safeDataImage, toolTitle } from "../src/client/lib/content";
+import { boundedDiff, contentToText, imageMeta, resultImages, resultText, safeDataImage, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
 
 describe("replay content helpers", () => {
   test("keeps mixed nested content in source order", () => {
@@ -61,5 +61,23 @@ describe("replay content helpers", () => {
     expect(toolTitle("TodoWrite")).toBe("TodoWrite");
     expect(toolTitle("mcp__playwright__browser_click")).toBe("playwright · browser_click");
     expect(toolTitle()).toBe("Tool");
+  });
+
+  test("leaves tool previews long enough for wide viewports to show", () => {
+    const command = `bun test ${"tests/a-fairly-long-test-file-name.test.ts ".repeat(8)}--timeout 30000`;
+    expect(toolPreview({ type: "tool_use", name: "Bash", input: { command: `  ${command}\n` } })).toBe(command);
+    expect(toolPreview({ type: "tool_use", name: "Bash", input: { command: "x".repeat(5000) } })).toHaveLength(1000);
+  });
+
+  test("splits path previews before the file name", () => {
+    expect(toolPreviewParts({ type: "tool_use", name: "Read", input: { file_path: "C:\\code\\app\\src\\index.ts" } })).toEqual({ head: "C:\\code\\app\\src\\", tail: "index.ts" });
+    expect(toolPreviewParts({ type: "tool_use", name: "Glob", input: { pattern: "**/*.ts", path: "/repo/src/" } })).toEqual({ head: "/repo/src/", tail: "" });
+    expect(toolPreviewParts({ type: "tool_use", name: "Edit", input: { file_path: "README.md" } })).toEqual({ head: "", tail: "README.md" });
+    expect(toolPreviewParts({ type: "tool_use", name: "Read", input: { file_path: "C:\\code/app\\src/index.ts" } })).toEqual({ head: "C:\\code/app\\src/", tail: "index.ts" });
+    const deep = toolPreviewParts({ type: "tool_use", name: "Read", input: { file_path: `/${"nested/".repeat(200)}index.ts` } });
+    expect(deep.tail).toBe("index.ts");
+    expect(deep.head.length + deep.tail.length).toBe(1000);
+    expect(deep.head).toStartWith("…");
+    expect(deep.head).toEndWith("nested/");
   });
 });
