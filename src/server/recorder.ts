@@ -2,12 +2,16 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, DirectoryUsage, EventPage, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, UsageSummary, WorkspaceGroup } from "../shared/types";
+import type { Catalog, DirectoryUsage, EventPage, EventTimeline, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { emptyUsage, normalizeModel, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
+
+const timelineBucketLimit = 1500;
+const timelineGranularities = [[16, 60_000], [15, 600_000], [13, 3_600_000], [10, 86_400_000]] as const;
+type TimelineRow = { at: string | null; count: number; first: number; last: number; errors: number };
 
 interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
@@ -198,6 +202,7 @@ export class Recorder {
   private workspaceUsage: Map<string, UsageSummary> | null = null;
   private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "facetsLimited"> | null = null;
   private replayFacets = new Map<string, EventPage["facets"]>();
+  private replayTimelines = new Map<string, { total: number; rows: TimelineRow[] }>();
 
   private constructor(dataDir: string, stateDir: string, db: Database) {
     this.dataDir = resolve(dataDir);
@@ -447,7 +452,7 @@ export class Recorder {
 
   private publish(ids: string[]): void {
     this.catalogFacets = null;
-    for (const id of ids) this.replayFacets.delete(id);
+    for (const id of ids) { this.replayFacets.delete(id); this.replayTimelines.delete(id); }
     this.emit(ids);
   }
 
@@ -759,7 +764,7 @@ export class Recorder {
     return { items, total, offset, limit, usage, directories, modelUsage, sessionsWithUsage: directoryCounts.reduce((sum, directory) => sum + directory.withUsage, 0) };
   }
 
-  events(id: string, params: URLSearchParams): EventPage {
+  private eventFilter(id: string, params: URLSearchParams): { filter: string; bindings: SQLQueryBindings[] } {
     const bindings: SQLQueryBindings[] = [id];
     let filter = "e.session_id=?";
     const kind = params.get("kind");
@@ -790,6 +795,11 @@ export class Recorder {
       const date = dateBound(params.get(field), field === "before");
       if (date) { filter += ` AND e.timestamp!='' AND e.timestamp${comparison}?`; bindings.push(date); }
     }
+    return { filter, bindings };
+  }
+
+  events(id: string, params: URLSearchParams): EventPage {
+    const { filter, bindings } = this.eventFilter(id, params);
     const total = this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total FROM events e WHERE ${filter}`).get(...bindings)!.total;
     const limit = Math.max(1, pageNumber(params.get("limit"), 80, 200));
     let offset = pageNumber(params.get("offset"), 0, 1_000_000);
@@ -813,6 +823,49 @@ export class Recorder {
       this.replayFacets.set(id, facets);
     }
     return { items, total, offset, limit, unfilteredTotal, hiddenTotal, facets };
+  }
+
+  // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Undated
+  // records ride with the latest earlier timestamp, which also keeps every bucket a contiguous run of positions.
+  // The whole recording sets the axis, so changing tabs or filters never slides activity sideways; `all` carries it.
+  timeline(id: string, params: URLSearchParams): EventTimeline {
+    const { filter, bindings } = this.eventFilter(id, params);
+    const unfilteredTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=?").get(id)!.total;
+    let unfiltered = this.replayTimelines.get(id);
+    if (unfiltered?.total !== unfilteredTotal) {
+      unfiltered = { total: unfilteredTotal, rows: this.timelineRows("e.session_id=?", [id]) };
+      this.replayTimelines.delete(id);
+      if (this.replayTimelines.size >= 32) this.replayTimelines.delete(this.replayTimelines.keys().next().value!);
+      this.replayTimelines.set(id, unfiltered);
+    }
+    const rows = filter === "e.session_id=?" ? unfiltered.rows : this.timelineRows(filter, bindings);
+    // Coarsen minute buckets to 10 minutes, hours, or days until the response stays small on very long recordings.
+    const [width, bucketMs] = timelineGranularities.find(([length]) => new Set(unfiltered.rows.map(row => row.at?.slice(0, length))).size <= timelineBucketLimit) ?? timelineGranularities.at(-1)!;
+    const key = (at: string | null) => at === null ? null : `${at.slice(0, width)}${"0000-00-00T00:00".slice(width)}:00.000Z`;
+    const buckets = new Map<string | null, TimelineBucket>();
+    const bucket = (at: string | null) => buckets.get(key(at)) ?? buckets.set(key(at), { at: key(at), all: 0, count: 0, first: null, last: null, errors: 0 }).get(key(at))!;
+    for (const row of unfiltered.rows) bucket(row.at).all += row.count;
+    for (const row of rows) {
+      const target = bucket(row.at);
+      target.count += row.count; target.errors += row.errors;
+      target.first = Math.min(target.first ?? row.first, row.first);
+      target.last = Math.max(target.last ?? row.last, row.last);
+    }
+    return {
+      total: rows.reduce((sum, row) => sum + row.count, 0), unfilteredTotal, bucketMs,
+      buckets: [...buckets.values()].sort((left, right) => left.at === right.at ? 0 : left.at === null ? -1 : right.at === null ? 1 : left.at < right.at ? -1 : 1),
+    };
+  }
+
+  // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Undated
+  // records ride with the latest earlier timestamp in the same set.
+  private timelineRows(filter: string, bindings: SQLQueryBindings[]): TimelineRow[] {
+    return this.db.query<TimelineRow, SQLQueryBindings[]>(`WITH filtered AS (
+        SELECT row_number() OVER (ORDER BY e.sequence) - 1 AS position, e.error,
+          max(nullif(e.timestamp,'')) OVER (ORDER BY e.sequence ROWS UNBOUNDED PRECEDING) AS stamp
+        FROM events e WHERE ${filter})
+      SELECT substr(stamp,1,16) AS at, count(*) AS count, min(position) AS first, max(position) AS last, sum(error) AS errors
+      FROM filtered GROUP BY at ORDER BY first`).all(...bindings);
   }
 
   private facetValues(kind: string, id?: string): { values: string[]; limited: boolean } {

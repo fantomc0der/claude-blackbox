@@ -146,6 +146,14 @@ A search-icon button reveals an inline name/path filter and moves focus into it.
 
 Controls reuse theme tokens, native focus rings, and existing type sizes. Mobile controls have 44px minimum targets; the workspace list keeps its independent scroll area and the footer remains available on compact laptops.
 
+## Replay Activity Strip
+
+When a replay's filtered set spans more than one 60-record page, a 48px strip sits between the replay controls and the transcript at every width: a 30px track of bars, then a 12px axis of 11px monospace local times. Bars count matching records per time bin on an axis set by the whole recording, so tabs and filters change heights but never move activity sideways. While the set is narrowed, a faint ghost of every record sits behind the matches. The loaded page is an outlined window in the accent (lime in dark mode, graphite in light); bars inside it use the text color and bars outside it the muted color. A 2px Danger Rose cap marks bins with errors, except in the errors-only view.
+
+Time is linear inside active stretches. Up to six of the longest idle stretches collapse into fixed-width breaks drawn as a double slash with the duration above it (`95m`, `15h`), so a session resumed the next day stays readable; every stretch keeps at least three bins so short bursts stay clickable. The recording's end time is always labelled; stretch start times appear where they fit, with the date at the first label and at day changes.
+
+The strip is one slider tab stop. Click or drag (committing on release) to start a page at a bin's first record; arrows step between bins, Page Up/Down by page, Home/End to the ends. Near the end the page clamps to a full last page and scrolls the chosen record into view. Previous and Next sit in the footer between Beginning and Jump to latest, and `[` / `]` page from anywhere in the replay except while typing or with a menu, dialog, or drawer open.
+
 ## Typography
 
 **Display Font:** Segoe UI Variable with Segoe UI and system-sans fallbacks.

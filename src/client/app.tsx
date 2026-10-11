@@ -20,7 +20,7 @@ function ShortcutPopover(props: { close: () => void; trigger: HTMLButtonElement 
     const release = dismissable(panel, props.close, props.trigger);
     return () => { release(); restore(panel); };
   });
-  return <div class="shortcut-popover" role="dialog" aria-label="Keyboard shortcuts" ref={panel}><div><h3>Move a little faster.</h3><button class="icon-button tiny" aria-label="Close shortcuts" onClick={props.close}><Icon name="close" size={15} /></button></div><p><span>Search every recording</span><kbd>Ctrl / ⌘ K</kbd></p><p><span>Quick search</span><kbd>/</kbd></p><p><span>Move through recordings</span><kbd>↑ ↓</kbd></p><p><span>Open focused recording</span><kbd>Enter</kbd></p><p><span>Clear search / close overlay</span><kbd>Esc</kbd></p><p><span>Show these shortcuts</span><kbd>?</kbd></p></div>;
+  return <div class="shortcut-popover" role="dialog" aria-label="Keyboard shortcuts" ref={panel}><div><h3>Move a little faster.</h3><button class="icon-button tiny" aria-label="Close shortcuts" onClick={props.close}><Icon name="close" size={15} /></button></div><p><span>Search every recording</span><kbd>Ctrl / ⌘ K</kbd></p><p><span>Quick search</span><kbd>/</kbd></p><p><span>Move through recordings</span><kbd>↑ ↓</kbd></p><p><span>Open focused recording</span><kbd>Enter</kbd></p><p><span>Previous / next replay page</span><kbd>[ ]</kbd></p><p><span>Clear search / close overlay</span><kbd>Esc</kbd></p><p><span>Show these shortcuts</span><kbd>?</kbd></p></div>;
 }
 
 function usageScope(query: string | null): string | null {

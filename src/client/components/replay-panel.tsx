@@ -13,9 +13,12 @@ import { Icon } from "./icon";
 import { EventCard, type SubagentNavigation } from "./event-card";
 import { SubagentDialog } from "./subagent-dialog";
 import { SessionFamilyNavigation } from "./session-family";
+import { ReplayTimeline } from "./replay-timeline";
 import { isPlainNavigation, recalledReplayPosition, rememberReplayPosition, replayPositionKey, sessionDestination, sessionHref } from "../lib/session-navigation";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock> };
+
+const pageSize = 60;
 
 function outlineLabel(event: ReplayEvent): string {
   if (event.error) return "Error";
@@ -121,6 +124,17 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   let jumpBottom = false;
   let following = false;
   let requestSequence = 0;
+  // The record the reader chose on the timeline, revealed when a page holding it arrives. Matched on arrival rather
+  // than per request, because clearing an anchor re-runs the request that the seek started.
+  let seekTarget: number | null = null;
+  let announceRange = false;
+  const [announcement, setAnnouncement] = createSignal("");
+  const filterQuery = createMemo(() => {
+    const params = new URLSearchParams({ kind: kind() });
+    if (errorsOnly()) params.set("errors", "1");
+    for (const [key, value] of [["q", search()], ["tool", tool()], ["model", model()], ["cwd", cwd()], ["after", after()], ["before", before()]]) if (value) params.set(key!, value!);
+    return params.toString();
+  });
   // Measured when needed rather than cached from scroll events: expanding a card at the end of the page moves the
   // reader away from the end without any scroll event, and a cached flag would then snap them back on the next refresh.
   const nearEnd = () => Boolean(scroll) && scroll.scrollHeight > scroll.clientHeight && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
@@ -156,14 +170,8 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   createEffect(() => ({ id: props.id, kind: kind(), q: search(), offset: offset(), tool: tool(), model: model(), cwd: cwd(), after: after(), before: before(), errors: errorsOnly(), anchor: props.anchor, context: props.params.get("context") === "1", revision: props.revision, retry: retry() }), state => {
     const sequence = ++requestSequence;
     const controller = new AbortController();
-    const params = new URLSearchParams({ kind: state.kind, offset: String(state.offset), limit: "60" });
-    if (state.errors) params.set("errors", "1");
-    if (state.q) params.set("q", state.q);
-    if (state.tool) params.set("tool", state.tool);
-    if (state.model) params.set("model", state.model);
-    if (state.cwd) params.set("cwd", state.cwd);
-    if (state.after) params.set("after", state.after);
-    if (state.before) params.set("before", state.before);
+    const params = new URLSearchParams(filterQuery());
+    params.set("offset", String(state.offset)); params.set("limit", String(pageSize));
     if (state.anchor && !state.offset) { params.set("anchor", state.anchor); if (state.context) params.set("context", "1"); }
     const key = params.toString();
     const navigation = key !== lastKey;
@@ -191,6 +199,9 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         return previous && JSON.stringify(previous.raw) === JSON.stringify(event.raw) ? previous : event;
       });
       setPage(next); setPending(false);
+      const target = seekTarget !== null && seekTarget >= next.offset && seekTarget < next.offset + next.items.length ? seekTarget : null;
+      if (target !== null) seekTarget = null;
+      if (announceRange && navigation) { announceRange = false; setAnnouncement(`Records ${Math.min(next.offset + 1, next.total)} to ${next.offset + next.items.length} of ${next.total}`); }
       let keepAtEnd = false;
       if (grew && atEnd && overflow && following) {
         // Jump to latest was requested earlier and the reader stayed at the end, so keep showing the newest records.
@@ -204,6 +215,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         if (sequence !== requestSequence) return;
         positionKey = nextPositionKey;
         if (jumpBottom) { scroll?.scrollTo({ top: scroll.scrollHeight }); jumpBottom = false; }
+        else if (target !== null) revealPosition(next, target);
         else if (navigation || initial) scroll?.scrollTo({ top: savedPosition ?? 0 });
         else if (keepAtEnd) scroll?.scrollTo({ top: scroll.scrollHeight });
         if (state.anchor && savedPosition === undefined && (navigation || initial)) scroll?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(state.anchor)}"]`)?.scrollIntoView({ block: "center" });
@@ -300,6 +312,44 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     updateReplay(clearReplayFilters({ replayKind: "all", replayOffset: target ? String(target) : null }));
     if (samePage) requestAnimationFrame(() => { scroll?.scrollTo({ top: scroll.scrollHeight }); jumpBottom = false; });
   };
+  const revealPosition = (current: ReplayPage, position: number) => {
+    if (position <= current.offset) { scroll?.scrollTo({ top: 0 }); return; }
+    // The Conversation view can hide a tool-result card, so fall forward to the next card that is on screen.
+    for (const event of current.items.slice(position - current.offset)) {
+      const card = scroll?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(event.id)}"]`);
+      if (card) { card.scrollIntoView({ block: "start" }); return; }
+    }
+    scroll?.scrollTo({ top: 0 });
+  };
+  const goTo = (target: number) => {
+    const current = page();
+    if (!current) return;
+    const start = Math.max(0, Math.min(target, current.total - pageSize));
+    if (start === offset() && !props.anchor) { revealPosition(current, target); return; }
+    seekTarget = target;
+    setOffset(start);
+    updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: start ? String(start) : null });
+  };
+  const turnPage = (direction: -1 | 1, announce = false) => {
+    const current = page();
+    if (!current || (direction < 0 ? !current.offset : current.offset + current.limit >= current.total)) return false;
+    announceRange = announce;
+    goTo(direction < 0 ? Math.max(0, current.offset - pageSize) : current.offset + current.limit);
+    return true;
+  };
+  createEffect(() => props.id, () => {
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key !== "[" && event.key !== "]" || event.metaKey || event.ctrlKey !== event.altKey) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.matches("input,textarea,select") || target?.isContentEditable || document.querySelector("[role=dialog], dialog[open], details[open], .app-shell.nav-open")) return;
+      if (!turnPage(event.key === "[" ? -1 : 1, true)) return;
+      event.preventDefault();
+      // The cards are about to be replaced, so keep focus on the transcript rather than letting it fall to the page.
+      if (scroll?.contains(document.activeElement) || document.activeElement === document.body) scroll?.focus({ preventScroll: true });
+    };
+    window.addEventListener("keydown", keyboard);
+    return () => window.removeEventListener("keydown", keyboard);
+  });
   const outline = () => visibleEvents().filter(event => event.category === "message" || event.error || event.toolNames.length).slice(0, 24);
   const jumpToEvent = (id: string) => {
     scroll.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
@@ -368,8 +418,9 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         <button class="text-button" onClick={resetReplay}>Reset replay filters</button>
       </div></details>
     </div>
+    <Show when={(page()?.total ?? props.session?.eventCount ?? 0) > pageSize}><ReplayTimeline id={props.id} filters={filterQuery()} growth={page()?.unfilteredTotal || 0} offset={page()?.offset ?? offset()} shown={page()?.items.length || 0} total={page()?.total || 0} pageSize={pageSize} narrowed={isFiltered()} errorsOnly={errorsOnly()} seek={goTo} /></Show>
     <Show when={error()}><div class="error-banner" role="alert">{error()}<button class="text-button" onClick={() => setRetry(value => value + 1)}>Retry</button></div></Show>
-    <div class="replay-body"><div class="replay-scroll" ref={scroll} aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; if (element.isConnected && props.params.get("session") === props.id && !pending() && !initial && positionKey === replayPositionKey(props.id, props.params)) rememberReplayPosition(positionKey, element.scrollTop); }}>
+    <div class="replay-body"><div class="replay-scroll" ref={scroll} tabindex="-1" aria-busy={pending() ? "true" : "false"} onScroll={event => { const element = event.currentTarget; if (element.isConnected && props.params.get("session") === props.id && !pending() && !initial && positionKey === replayPositionKey(props.id, props.params)) rememberReplayPosition(positionKey, element.scrollTop); }}>
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
@@ -384,7 +435,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <p class="inspector-note"><Icon name="shield" size={13} />An original record. Nothing rewritten.</p>
     </aside></div>
     <Show when={updated()}><button class="new-events" onClick={() => extraFilterCount() ? latestUnfiltered() : latest()}><Icon name="down" size={15} />{extraFilterCount() ? "Recording updated · Show latest unfiltered" : "Recording updated · Show latest"}</button></Show>
-    <footer class="replay-footer"><span><Icon name="shield" size={12} />Read-only replay</span><span>{pending() ? "Reading recording…" : `${page() ? Math.min(page()!.offset + 1, page()!.total) : 0}–${Math.min((page()?.offset || 0) + (page()?.items.length || 0), page()?.total || 0)} of ${page()?.total || 0} records`}</span><div><button class="text-button" onClick={() => { setOffset(0); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null }); }}>Beginning</button><button class="text-button" aria-label="Jump to latest" onClick={latest}><span class="replay-jump-full">Jump to latest</span><span class="replay-jump-short" aria-hidden="true">Latest</span><Icon name="down" size={12} /></button></div></footer>
+    <footer class="replay-footer"><span><Icon name="shield" size={12} />Read-only replay</span><nav class="replay-pager" aria-label="Recording pages"><button class="text-button" onClick={() => { setOffset(0); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null }); }}>Beginning</button><button class="text-button replay-page-step" aria-label="Previous page" title="Previous page ( [ )" disabled={!page()?.offset} onClick={() => turnPage(-1)}><Icon name="back" size={13} /><span class="replay-jump-full">Previous</span></button><span class="replay-range">{pending() ? "Reading recording…" : `${page() ? Math.min(page()!.offset + 1, page()!.total) : 0}–${Math.min((page()?.offset || 0) + (page()?.items.length || 0), page()?.total || 0)} of ${page()?.total || 0} records`}</span><button class="text-button replay-page-step" aria-label="Next page" title="Next page ( ] )" disabled={!page() || page()!.offset + page()!.limit >= page()!.total} onClick={() => turnPage(1)}><span class="replay-jump-full">Next</span><Icon name="arrow" size={13} /></button><button class="text-button" aria-label="Jump to latest" onClick={latest}><span class="replay-jump-full">Jump to latest</span><span class="replay-jump-short" aria-hidden="true">Latest</span><Icon name="down" size={12} /></button></nav><span class="visually-hidden" aria-live="polite">{announcement()}</span></footer>
     <Show when={previewId() && family()}><SubagentDialog parent={familyRoot()} members={family()!.members.filter(member => member.session.isAgent)} selected={previewId()} revision={props.revision} href={href} follow={followSession} close={() => setPreviewId("")} /></Show>
   </section>;
 }

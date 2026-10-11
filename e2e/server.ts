@@ -33,6 +33,9 @@ await writeFile(join(folder, "redacted-reasoning.jsonl"), [event("Redacted reaso
 await writeFile(join(folder, "live-recording.jsonl"), JSON.stringify(event("Live update verification", 0)) + "\n");
 const prose = (text: string) => `${text}\n\n${"Recorded prose that gives each card enough height to scroll. ".repeat(4)}`;
 await writeFile(join(folder, "tail-recording.jsonl"), Array.from({ length: 20 }, (_, index) => JSON.stringify(event(index ? prose(`Tail recording event ${index}`) : "Tail recording verification", index, index % 2 ? "assistant" : "user"))).join("\n") + "\n");
+const timelineStart = Date.parse("2026-01-02T09:00:00Z");
+// Two stretches of minute-by-minute activity separated by four idle hours, for the replay activity strip.
+await writeFile(join(folder, "timeline-recording.jsonl"), Array.from({ length: 200 }, (_, index) => JSON.stringify({ ...event(index ? prose(`Timeline event ${index}`) : "Timeline scrubber verification", index, index % 2 ? "assistant" : "user"), timestamp: new Date(timelineStart + (index < 100 ? index : index + 240) * 60_000).toISOString() })).join("\n") + "\n");
 await writeFile(join(folder, "tail-neighbor-recording.jsonl"), JSON.stringify(event("Tail neighbor verification", 0)) + "\n");
 await writeFile(join(folder, "full-page-recording.jsonl"), Array.from({ length: 60 }, (_, index) => JSON.stringify(event(index ? prose(`Full page event ${index}`) : "Full page verification", index, index % 2 ? "assistant" : "user"))).join("\n") + "\n");
 await writeFile(join(folder, "late-match-recording.jsonl"), Array.from({ length: 80 }, (_, index) => JSON.stringify(event(index === 70 ? "Needleword appears late in this recording" : index ? `Late match event ${index}` : "Late match verification", index, index % 2 ? "assistant" : "user"))).join("\n") + "\n");

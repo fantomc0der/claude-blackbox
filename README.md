@@ -102,6 +102,8 @@ Library filters select **whole recordings**. A model filter matches historical m
 
 Replay filters select **records inside one recording**, across every page. Mixed text/tool/thinking records remain discoverable in each relevant view. Reasoning records whose text the API never returned (the default for newer models, which keep only an encrypted signature) stay out of the Conversation and Thinking views and appear under All events as a plain note. Tool filters include matching calls and their recorded results; an error constraint can narrow that to failures. Model and directory constraints use metadata actually present on each record, not inferred values. Missing timestamps cannot match date bounds. Matching counts distinguish a filtered view from the full transcript, and surrounding-context links restore original chronological evidence. Changing sessions clears the previous replay scope; library search and filters remain independent.
 
+Recordings longer than one page show an **activity strip** above the transcript: a bar chart of matching records over local time, with long idle stretches folded into labelled breaks (`95m`, `15h`). The outlined window is the page on screen. Click or drag the strip to open the page that starts at that moment, or focus it and use the arrow keys, Page Up/Down, Home, and End. **Previous** and **Next** sit in the footer beside **Beginning** and **Jump to latest**. Filters change the bar heights but keep the whole recording's time axis, so activity never moves sideways; a faint ghost shows every record behind the matches.
+
 Cost bounds use only recordings with complete pricing coverage, so a partial estimate cannot silently qualify as a known final amount. Token bounds exclude recordings without usage. A recorded zero remains distinct from missing or entirely unpriced usage. Invalid numeric bounds are ignored by the API; reversed valid bounds match nothing. All filters and sorts are read-only and never modify source transcripts.
 
 Resetting filters preserves your chosen recording order. Compact counts in the replay toolbar have exact totals in their tooltip and footer. Date-only API bounds use UTC; timestamp bounds must include `Z` or an explicit offset. Filter choices show up to 200 values per dimension and indicate when that list is limited. Malformed or oversized metadata stays available in raw records and full-record search rather than becoming misleading filter choices.
@@ -142,6 +144,7 @@ Verified viewport sizes include **1280×720**, **1366×768**, **1920×1080**, **
 | Arrow keys | Move between focused recordings, including the desktop grid |
 | `Enter` | Open the focused recording |
 | `Esc` | Clear the focused search, dismiss navigation/help, or close the replay |
+| `[` / `]` | Previous or next page of the open replay |
 | `?` | Show shortcuts |
 
 ## Demo
