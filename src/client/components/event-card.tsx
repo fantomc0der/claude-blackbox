@@ -12,6 +12,7 @@ import {
   isImageBlock,
   isRecord,
   isToolResultEvent,
+  mentions,
   prettyValue,
   resultImages,
   resultText,
@@ -172,12 +173,14 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
 }
 
 function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string; subagents?: SubagentNavigation }) {
-  const [open, setOpen] = createSignal(untrack(() => Boolean(props.result?.is_error || props.highlight || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || ""))));
+  // A highlight opens only the calls whose input or result contains it, so a highlighted replay does not unfold every call.
+  const highlighted = createMemo(() => Boolean(props.highlight) && (mentions(getToolInput(props.block), props.highlight!) || mentions(resultText(props.result), props.highlight!)));
+  const [open, setOpen] = createSignal(untrack(() => Boolean(props.result?.is_error || highlighted() || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || ""))));
   const preview = createMemo(() => toolPreviewParts(props.block));
   const previewText = () => preview().head + preview().tail;
   const status = () => props.result?.is_error === true ? "error" : props.result ? "success" : "pending";
   const recording = () => props.subagents?.targets[props.block.id || ""];
-  createEffect(() => Boolean(props.highlight || props.result?.is_error), value => { if (value) setOpen(true); });
+  createEffect(() => Boolean(highlighted() || props.result?.is_error), value => { if (value) setOpen(true); });
   return <section class={`tool-card ${props.result?.is_error ? "tool-card-error" : ""}`}>
     <button class="tool-summary" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => { setOpen(!open()); }}><span class="tool-status" aria-label={`Tool ${status()}`}>{status() === "error" ? "!" : status() === "success" ? "✓" : "→"}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden">{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show><span class="tool-disclosure" aria-hidden="true">{open() ? "−" : "+"}</span></button>
     <Show when={props.subagents && /^(agent|task)$/i.test(props.block.name || "")}>
@@ -203,8 +206,8 @@ function HiddenReasoning(props: { label: string; detail: string }) {
 
 function ThinkingBlock(props: { block: ContentBlock; highlight?: string }) {
   const [open, setOpen] = createSignal(false);
-  createEffect(() => props.highlight, value => { if (value) setOpen(true); });
   const text = () => getString(props.block.thinking) ?? getString(props.block.text) ?? "";
+  createEffect(() => Boolean(props.highlight) && mentions(text(), props.highlight!), value => { if (value) setOpen(true); });
   if (!text()) return <HiddenReasoning label="Reasoning not returned by the API" detail="The model reasoned here, but the API's thinking display setting returned only an encrypted signature, so there is no text to show." />;
   return <details class="tool-thinking" open={open()} onToggle={(event) => { setOpen(event.currentTarget.open); }}><summary>Reasoning</summary><Show when={open()}><CodePanel title="Recorded reasoning" value={props.block.thinking ?? props.block.text ?? ""} highlight={props.highlight} /></Show></details>;
 }

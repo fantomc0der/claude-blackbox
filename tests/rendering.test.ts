@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boundedDiff, contentToText, imageMeta, resultImages, resultText, safeDataImage, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
+import { boundedDiff, contentToText, imageMeta, mentions, resultImages, resultText, safeDataImage, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
 
 describe("replay content helpers", () => {
   test("keeps mixed nested content in source order", () => {
@@ -79,5 +79,17 @@ describe("replay content helpers", () => {
     expect(deep.head.length + deep.tail.length).toBe(1000);
     expect(deep.head).toStartWith("…");
     expect(deep.head).toEndWith("nested/");
+  });
+
+  test("finds a highlight term in nested recorded values without regard to case", () => {
+    const input = { command: "bun test", options: [{ label: "Retry budget" }], attempts: 3, quiet: true };
+    expect(mentions(input, "retry")).toBe(true);
+    expect(mentions(input, "BUN TEST")).toBe(true);
+    expect(mentions(input, "3")).toBe(true);
+    expect(mentions(input, "true")).toBe(true);
+    expect(mentions(input, "label")).toBe(false);
+    expect(mentions(input, "deploy")).toBe(false);
+    expect(mentions(input, "")).toBe(false);
+    expect(mentions(undefined, "retry")).toBe(false);
   });
 });

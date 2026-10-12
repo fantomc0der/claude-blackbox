@@ -3,7 +3,7 @@ import type { ContentBlock, EventPage, ReplayEvent, Session, SessionFamily } fro
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
-import { compact, dateTime, modelName, resumeCommand, tokenCount, usageCost } from "../lib/format";
+import { compact, dateTime, modelName, resumeCommand, searchHighlight, tokenCount, usageCost } from "../lib/format";
 import { TokenBreakdown, UsageNote } from "./usage-panel";
 import { anchoredMenu } from "../lib/anchor";
 import type { Navigate } from "../lib/location";
@@ -57,7 +57,7 @@ function SessionActions(props: { session: Session; onBookmark: () => void }) {
 export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; params: URLSearchParams; navigate: Navigate; traversal: () => boolean; changed: () => void; close: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void; overviewVisible: boolean; toggleOverview: () => void }) {
   let scroll!: HTMLDivElement;
   const initialFilters = untrack(() => replayFilters(props.params));
-  const [kind, setKind] = createSignal(untrack(() => props.anchor) ? "all" : initialFilters.kind);
+  const [kind, setKind] = createSignal(initialFilters.kind);
   const [query, setQuery] = createSignal(initialFilters.q);
   const [search, setSearch] = createSignal(initialFilters.q);
   const [offset, setOffset] = createSignal(initialFilters.offset);
@@ -138,6 +138,9 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   // Measured when needed rather than cached from scroll events: expanding a card at the end of the page moves the
   // reader away from the end without any scroll event, and a cached flag would then snap them back on the next refresh.
   const nearEnd = () => Boolean(scroll) && scroll.scrollHeight > scroll.clientHeight && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+  // Marks the replay's own find term, or else the term a library search matched. The library query only highlights:
+  // its phrase-per-term semantics differ from the replay's substring find, so it never narrows the records shown.
+  const highlight = () => search() || searchHighlight(props.params.get("q") || "");
 
   createEffect(() => details(), element => element && dismissableDetails(element));
   createEffect(() => ({ details: details(), menu: detailsMenu() }), elements => elements.details && elements.menu && anchoredMenu(elements.details, elements.menu));
@@ -145,7 +148,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   createEffect(() => ({ details: filterDetails(), menu: filterMenu() }), elements => elements.details && elements.menu && anchoredMenu(elements.details, elements.menu));
 
   createEffect(() => props.anchor, value => {
-    if (value) { setKind("all"); setOffset(0); }
+    if (value) { setKind(replayFilters(untrack(() => props.params)).kind); setOffset(0); }
   });
 
   createEffect(() => props.params, params => {
@@ -218,7 +221,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         else if (target !== null) revealPosition(next, target);
         else if (navigation || initial) scroll?.scrollTo({ top: savedPosition ?? 0 });
         else if (keepAtEnd) scroll?.scrollTo({ top: scroll.scrollHeight });
-        if (state.anchor && savedPosition === undefined && (navigation || initial)) scroll?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(state.anchor)}"]`)?.scrollIntoView({ block: "center" });
+        if (state.anchor && savedPosition === undefined && (navigation || initial)) revealAnchor(state.anchor);
         initial = false;
         setRestoreScroll(null);
       });
@@ -325,6 +328,14 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       if (card) { card.scrollIntoView({ block: "start" }); return; }
     }
     scroll?.scrollTo({ top: 0 });
+  };
+  // Brings the anchored card's header to the top of the transcript, under the replay tabs. The page's first card is
+  // already there, so the page start stays in view above it.
+  const revealAnchor = (id: string) => {
+    const card = scroll?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`);
+    if (!card) return;
+    if (card === scroll.querySelector(".replay-event")) scroll.scrollTo({ top: 0 });
+    else card.scrollIntoView({ block: "start" });
   };
   const goTo = (target: number) => {
     const current = page();
@@ -437,7 +448,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
-        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !search() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} highlight={search()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
+        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !search() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{extraFilterCount() ? "End of matching records." : "You're all caught up."}<small>{extraFilterCount() ? "Reset filters to return to the conversation." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">

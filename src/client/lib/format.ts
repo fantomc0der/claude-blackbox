@@ -56,6 +56,15 @@ export function resumeCommand(session: Pick<Session, "cwd" | "sessionId">): stri
   return session.cwd ? windows ? `Set-Location -LiteralPath ${quote(session.cwd)} -ErrorAction Stop; ${resume}` : `cd -- ${quote(session.cwd)} && ${resume}` : resume;
 }
 
+// The term the server matched a search result's snippet and record with: its first included term or quoted phrase
+// that has a letter or digit, read the same way as `parseSearch` in the server.
 export function searchHighlight(query: string): string {
-  return query.match(/"([^"]+)"/)?.[1] || query.split(/\s+/).find(term => term && !term.startsWith("-")) || "";
+  let terms = 0;
+  for (const match of query.slice(0, 1000).matchAll(/(-?)(?:"([^"]+)"|(\S+))/g)) {
+    const value = (match[2] || match[3] || "").trim();
+    if (!value) continue;
+    if (match[1] !== "-" && /[\p{L}\p{N}]/u.test(value)) return value;
+    if (++terms === 12) break;
+  }
+  return "";
 }

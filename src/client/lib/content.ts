@@ -82,6 +82,15 @@ export function prettyValue(value: unknown): string {
   }
 }
 
+// Whether any recorded string or scalar inside a value contains the term, ignoring case.
+export function mentions(value: unknown, term: string): boolean {
+  const needle = term.toLowerCase();
+  const visit = (entry: unknown): boolean => typeof entry === "string" ? entry.toLowerCase().includes(needle)
+    : typeof entry === "number" || typeof entry === "boolean" ? String(entry).toLowerCase().includes(needle)
+    : Array.isArray(entry) ? entry.some(visit) : isRecord(entry) && Object.values(entry).some(visit);
+  return Boolean(needle) && visit(value);
+}
+
 export function isImageBlock(block: ContentBlock): boolean {
   return block.type === "image";
 }
