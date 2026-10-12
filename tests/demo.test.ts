@@ -32,6 +32,20 @@ test("demo catalog includes a multi-day session that fills more than one replay 
   expect(layout.bins.filter(bin => bin.errors > 0).length).toBeGreaterThanOrEqual(2);
 });
 
+test("demo catalog never reuses an event uuid across recordings", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blackbox-demo-"));
+  cleanup.push(() => removeTestDirectory(root));
+  await createDemo(root);
+  const uuids: string[] = [];
+  for await (const file of new Bun.Glob("**/*.jsonl").scan({ cwd: root, absolute: true })) {
+    for (const line of (await Bun.file(file).text()).split("\n")) {
+      if (line) uuids.push(JSON.parse(line).uuid);
+    }
+  }
+  expect(uuids.length).toBeGreaterThan(60);
+  expect(new Set(uuids).size).toBe(uuids.length);
+});
+
 test("demo catalog includes a parent session whose agent recordings link back to their launches", async () => {
   const recorder = await indexedDemo();
   const parent = recorder.list(new URLSearchParams({ q: "Audit keyboard paths across the component library" })).items[0]!;

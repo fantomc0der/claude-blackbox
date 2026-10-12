@@ -732,6 +732,12 @@ function buildRecords(session: DemoSession, sessionIndex: number): JsonRecord[] 
   return records;
 }
 
+/**
+ * `buildRecords` numbers its event UUIDs by position in `sessions` (1 to `sessions.length`), so story recordings
+ * continue from the next free series to keep every UUID unique across the catalog.
+ */
+const STORY_SERIES_START = sessions.length + 1;
+
 interface StoryOptions {
   sessionId: string;
   workspace: keyof typeof workspaces;
@@ -846,7 +852,7 @@ function ledgerExportRecording(): DemoRecording {
     workspace,
     branch: "feat/streaming-ledger-exports",
     model: "claude-opus-4-5",
-    series: 0x10,
+    series: STORY_SERIES_START,
   });
   const exporter = "src/ledger/export-ledger.ts";
   const route = "src/routes/ledger-export.ts";
@@ -1005,9 +1011,9 @@ function keyboardAuditRecordings(): DemoRecording[] {
     },
   ];
   const model = "claude-sonnet-4-5";
-  const parent = story({ sessionId: parentId, workspace, branch, model, series: 0x11 });
+  const parent = story({ sessionId: parentId, workspace, branch, model, series: STORY_SERIES_START + 1 });
   const worker = (agent: AgentLaunch, index: number) => {
-    const recording = story({ sessionId: parentId, workspace, branch, model, series: 0x12 + index, agentId: agent.agentId });
+    const recording = story({ sessionId: parentId, workspace, branch, model, series: STORY_SERIES_START + 2 + index, agentId: agent.agentId });
     recording.at(1, 15, 4 + index);
     recording.prompt(agent.prompt);
     return recording;
