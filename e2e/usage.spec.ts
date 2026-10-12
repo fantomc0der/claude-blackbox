@@ -24,6 +24,39 @@ test("usage totals cover every matching page and expose a keyboard accessible br
   await expect(panel.locator(".usage-matrix tfoot")).toContainText(usageCost(listing.usage));
 });
 
+test("usage totals keep hidden subagents, state their share and match the sidebar", async ({ page }) => {
+  const hidden = recorder.list(new URLSearchParams());
+  const shown = recorder.list(new URLSearchParams({ agents: "1" }));
+  expect(hidden.hiddenAgents).toBeGreaterThan(0);
+  expect(hidden.hiddenAgentUsage.costUSD).toBeGreaterThan(0);
+  expect(hidden.usage).toEqual(shown.usage);
+  await page.goto("/");
+  const summary = page.getByLabel("Usage and estimated cost");
+  await expect(summary).toContainText(usageCost(hidden.usage));
+  await expect(summary.locator(".usage-total-cost")).toHaveAttribute("title", `Includes ${usageCost(hidden.hiddenAgentUsage)} est. from ${hidden.hiddenAgents} subagent recordings hidden from the list`);
+  await summary.click();
+  const scope = page.locator(".usage-panel .usage-scope").first();
+  await expect(scope).toContainText(`All ${hidden.total} matching recordings, across every page, plus ${hidden.hiddenAgents} subagent recordings hidden from the list. ${hidden.sessionsWithUsage} of ${hidden.total + hidden.hiddenAgents} report usage. This total includes ${usageCost(hidden.hiddenAgentUsage)} est. from ${hidden.hiddenAgents} subagent recordings hidden from the list. Each row shows only its own recording's cost, so the visible rows add up to less.`);
+  await page.locator(".sidebar").getByRole("button", { name: "Show subagents", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("agents")).toBe("1");
+  await expect(summary).toContainText(usageCost(shown.usage));
+  await expect(scope).toContainText(`All ${shown.total} matching recordings, across every page. ${shown.sessionsWithUsage} report usage.`);
+  await expect(scope).not.toContainText("hidden from the list");
+  await expect(summary.locator(".usage-total-cost")).not.toHaveAttribute("title", /./);
+  const catalog = await recorder.catalog();
+  const worktree = catalog.workspaces.find(workspace => workspace.name === "delegated-worktree")!;
+  expect(worktree.usage).toEqual(recorder.list(new URLSearchParams({ workspace: worktree.id })).usage);
+  await page.goto(`/?workspace=${encodeURIComponent(worktree.id)}`);
+  await expect(page.locator(".breadcrumbs")).toContainText("delegated-worktree");
+  await expect(summary).toContainText(usageCost(worktree.usage));
+  await expect(page.locator(".session-row")).toHaveCount(0);
+  await summary.click();
+  await expect(scope).toContainText(`All 0 matching recordings, across every page, plus ${worktree.count} subagent recordings hidden from the list. ${worktree.count} of ${worktree.count} report usage.`);
+  await page.locator(".sidebar").getByRole("button", { name: "Show subagents", exact: true }).click();
+  await expect(page.locator(".session-row")).toHaveCount(worktree.count);
+  await expect(summary).toContainText(usageCost(worktree.usage));
+});
+
 test("group expense matrix switches between folders and per-request model effort totals", async ({ page }) => {
   const catalog = await recorder.catalog();
   const paths = ["atlas-api", "blackbox"].map(name => catalog.workspaces.find(workspace => workspace.name === name)!.paths[0]);

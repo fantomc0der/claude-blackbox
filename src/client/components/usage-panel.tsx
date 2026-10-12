@@ -4,6 +4,14 @@ import { compact, effortName, modelName, tokenCount, usageCost } from "../lib/fo
 import { sortUsage, type UsageSort } from "../lib/usage-sort";
 import { Icon } from "./icon";
 
+/** How much of a total the subagent recordings hidden from the list contribute, as an amount or as unpriced tokens. */
+function hiddenShare(page: SessionPage): string {
+  const usage = page.hiddenAgentUsage;
+  const recordings = `${tokenCount(page.hiddenAgents)} subagent ${page.hiddenAgents === 1 ? "recording" : "recordings"} hidden from the list`;
+  if (usage.unpricedRequests === usage.requests) return `${compact(usage.totalTokens)} unpriced tokens from ${recordings}`;
+  return `${usageCost(usage)} est. from ${recordings}`;
+}
+
 export function TokenBreakdown(props: { usage: UsageSummary }) {
   return <dl class="token-breakdown">
     <div><dt>Input</dt><dd>{tokenCount(props.usage.inputTokens)}</dd></div>
@@ -47,14 +55,14 @@ export function UsagePanel(props: { page: SessionPage | null; pending: boolean; 
       <Show when={ready()} fallback={<span class="usage-loading" aria-label="Usage not yet available">—</span>}>{page => <>
         <Show when={page().usage.requests} fallback={<span class="usage-empty">{page().total ? "No usage recorded" : "No matching recordings"}</span>}>
           <span class="usage-total" title={`${tokenCount(page().usage.totalTokens)} tokens, including cache reads and writes`}>{compact(page().usage.totalTokens)} <span>tokens</span></span>
-          <span class="usage-total usage-total-cost">{usageCost(page().usage)} <span>est.</span></span>
+          <span class="usage-total usage-total-cost" title={page().hiddenAgentUsage.requests ? `Includes ${hiddenShare(page())}` : undefined}>{usageCost(page().usage)} <span>est.</span></span>
         </Show>
       </>}</Show>
       <span class="usage-expand"><span>Breakdown</span><Icon name="down" size={14} /></span>
     </summary>
     <div class="usage-body">
       <Show when={ready()} fallback={<p class="usage-scope">Usage for this selection will appear here when available.</p>}>{page => <>
-        <p class="usage-scope">All {tokenCount(page().total)} matching recordings, across every page. {tokenCount(page().sessionsWithUsage)} report usage.</p>
+        <p class="usage-scope">All {tokenCount(page().total)} matching recordings, across every page<Show when={page().hiddenAgents}>, plus {tokenCount(page().hiddenAgents)} subagent {page().hiddenAgents === 1 ? "recording" : "recordings"} hidden from the list</Show>. {tokenCount(page().sessionsWithUsage)}<Show when={page().hiddenAgents}> of {tokenCount(page().total + page().hiddenAgents)}</Show> report usage.<Show when={page().hiddenAgentUsage.requests}> This total includes {hiddenShare(page())}.<Show when={page().total}> Each row shows only its own recording's cost, so the visible rows add up to less.</Show></Show></p>
         <Show when={page().usage.requests} fallback={<p class="usage-note">These transcripts do not contain assistant token usage. Missing usage is not counted as zero spend.</p>}>
           <Show when={page().directories.length > 1}>
             <div class="usage-view-switch" role="group" aria-label="Expense breakdown">
