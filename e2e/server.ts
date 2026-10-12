@@ -39,6 +39,17 @@ await writeFile(join(folder, "timeline-recording.jsonl"), Array.from({ length: 2
 await writeFile(join(folder, "tail-neighbor-recording.jsonl"), JSON.stringify(event("Tail neighbor verification", 0)) + "\n");
 await writeFile(join(folder, "full-page-recording.jsonl"), Array.from({ length: 60 }, (_, index) => JSON.stringify(event(index ? prose(`Full page event ${index}`) : "Full page verification", index, index % 2 ? "assistant" : "user"))).join("\n") + "\n");
 await writeFile(join(folder, "late-match-recording.jsonl"), Array.from({ length: 80 }, (_, index) => JSON.stringify(event(index === 70 ? "Needleword appears late in this recording" : index ? `Late match event ${index}` : "Late match verification", index, index % 2 ? "assistant" : "user"))).join("\n") + "\n");
+// One search hit in prose and one in tool output, with enough tall records on each side that the anchored card can reach the top.
+const handoffCall = (sequence: number, id: string, command: string) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command } }], model: "claude-sonnet-4-5" } });
+const handoffResult = (sequence: number, id: string, output: string) => ({ ...event("", sequence), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: output }] } });
+await writeFile(join(folder, "search-handoff.jsonl"), [
+  event("Search handoff verification", 0),
+  ...Array.from({ length: 14 }, (_, index) => event(prose(`Handoff lead-in ${index + 1}`), index + 1, index % 2 ? "user" : "assistant")),
+  event(`${prose("Comparing the rollout options.")}\n\nThe Lanternwick decision keeps the retry budget unchanged.`, 15, "assistant"),
+  handoffCall(16, "handoff-call-1", "bun test billing"),
+  handoffResult(17, "handoff-call-1", "Quillmoss check passed after 3 attempts"),
+  ...Array.from({ length: 14 }, (_, index) => event(prose(`Handoff follow-up ${index + 1}`), index + 18, index % 2 ? "user" : "assistant")),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "system-interleaved-recording.jsonl"), Array.from({ length: 70 }, (_, index) => JSON.stringify(event(index ? `Interleaved event ${index}` : "System interleaved verification", index, index > 0 && index <= 5 ? "system" : index % 2 ? "assistant" : "user"))).join("\n") + "\n");
 await writeFile(join(folder, "filtered-live-recording.jsonl"), JSON.stringify(event("Filtered live verification", 0)) + "\n");
 await writeFile(join(folder, "unsafe-markdown.jsonl"), [event("Unsafe markdown verification", 0), event('<script>window.blackboxXss = true</script><img src="https://blocked.invalid/pixel" onerror="window.blackboxXss = true"><p class="nav-scrim">Untrusted styling</p>\n[Unsafe](javascript:alert(1))\n![Remote image](https://blocked.invalid/image)\n## Safe content', 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");

@@ -82,6 +82,19 @@ export function prettyValue(value: unknown): string {
   }
 }
 
+// Whether any recorded string or scalar inside a value contains the term, ignoring case. Recorded content is
+// unbounded, so the scan stops after a budget of characters and treats anything beyond it as not mentioning the term.
+export const mentionsBudget = 200_000;
+export function mentions(value: unknown, term: string): boolean {
+  const needle = term.toLowerCase();
+  let remaining = mentionsBudget;
+  const scan = (text: string) => { remaining -= text.length; return remaining >= 0 && text.toLowerCase().includes(needle); };
+  const visit = (entry: unknown): boolean => remaining > 0 && (typeof entry === "string" ? scan(entry)
+    : typeof entry === "number" || typeof entry === "boolean" ? scan(String(entry))
+    : Array.isArray(entry) ? entry.some(visit) : isRecord(entry) && Object.values(entry).some(visit));
+  return Boolean(needle) && visit(value);
+}
+
 export function isImageBlock(block: ContentBlock): boolean {
   return block.type === "image";
 }

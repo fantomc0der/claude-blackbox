@@ -4,7 +4,7 @@ import { anchoredMenu } from "../lib/anchor";
 import { dismissableDetails } from "../lib/dismissable";
 import { compact, dateTime, modelName, searchHighlight, timeAgo, tokenCount, usageCost } from "../lib/format";
 import type { Navigate } from "../lib/location";
-import { clearReplayFilters } from "../lib/replay-filters";
+import { clearReplayFilters, matchReplayKind } from "../lib/replay-filters";
 import { withSelectedOption } from "../lib/filter-options";
 import { Icon } from "./icon";
 import { SubagentToggle } from "./subagent-toggle";
@@ -38,8 +38,9 @@ export function Library(props: LibraryProps) {
   };
   const bookmarksOnly = () => props.params.get("bookmarked") === "1" && !props.params.get("q") && !props.query && chips().length === 1;
   const countUnit = () => `${props.query ? " result" : " recording"}${props.page?.total === 1 ? "" : "s"}`;
-  // A search result opens at its matching record with the preceding records in view, the same as revealing context in a replay.
-  const openSession = (session: Session) => props.navigate(clearReplayFilters({ session: session.id, event: session.matchEventId || null, context: session.matchEventId ? "1" : null }));
+  // A search result opens at its matching record with the preceding records loaded above it, the same as revealing context in a
+  // replay, on the Conversation view when that view shows the record. The replay highlights the term from the library query itself.
+  const openSession = (session: Session) => props.navigate(clearReplayFilters({ session: session.id, event: session.matchEventId || null, context: session.matchEventId ? "1" : null, replayKind: session.matchEventId ? matchReplayKind(session) : null }));
   const discovering = () => Boolean(props.query.trim() || props.params.get("q") || props.params.get("workspace") || chips().length);
   const sort = () => props.params.get("sort") || "recent";
   const recordedSpan = (session: Session) => {

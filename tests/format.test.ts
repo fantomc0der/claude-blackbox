@@ -1,5 +1,21 @@
 import { expect, test } from "bun:test";
-import { modelName, resumeCommand } from "../src/client/lib/format";
+import { modelName, resumeCommand, searchHighlight } from "../src/client/lib/format";
+import { parseSearch } from "../src/server/search";
+
+test("search highlights use the term the server matched records with", () => {
+  expect(searchHighlight("retry")).toBe("retry");
+  expect(searchHighlight("  -draft billing retry")).toBe("billing");
+  expect(searchHighlight('fix "default limit"')).toBe("fix");
+  expect(searchHighlight('"default limit" fix')).toBe("default limit");
+  expect(searchHighlight('-"old plan" rollout')).toBe("rollout");
+  expect(searchHighlight("*** -- retry")).toBe("retry");
+  expect(searchHighlight("-only -excluded")).toBe("");
+  expect(searchHighlight("")).toBe("");
+  for (const query of ["retry", '-"old plan" rollout', "*** retry", 'a"b c', `${"-x ".repeat(12)}late`, `${"-x ".repeat(11)}late`]) {
+    const server = parseSearch(query).find(term => !term.exclude && /[\p{L}\p{N}]/u.test(term.value))?.value || "";
+    expect(searchHighlight(query)).toBe(server);
+  }
+});
 
 test("model names keep their version numbers and variant suffixes", () => {
   expect(modelName("claude-opus-4-5")).toBe("Opus 4.5");

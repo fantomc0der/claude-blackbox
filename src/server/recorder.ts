@@ -735,10 +735,16 @@ export class Recorder {
     const items = rows.map(row => {
       const session = this.session(row);
       if (positive) {
-        const match = this.db.query<{ snippet: string; event_id: string; raw: string }, [string, string]>(`SELECT snippet(event_fts,0,'','', ' … ',28) AS snippet,e.event_id,e.raw
+        const match = this.db.query<{ snippet: string; event_id: string; raw: string; category: ReplayEvent["category"]; role: string }, [string, string]>(`SELECT snippet(event_fts,0,'','', ' … ',28) AS snippet,e.event_id,e.raw,e.category,e.role
           FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ? AND e.session_id=? ORDER BY rank LIMIT 1`)
           .get(ftsPhrase(positive.value), row.id);
-        if (match) { session.snippet = (match.raw.length > snippetLimit ? "" : displaySnippet(match.raw, positive.value)) || match.snippet; session.matchEventId = match.event_id; }
+        if (match) {
+          session.snippet = (match.raw.length > snippetLimit ? "" : displaySnippet(match.raw, positive.value)) || match.snippet;
+          session.matchEventId = match.event_id;
+          // The replay chooses its opening view from these, since the view decides which records the anchor offset counts.
+          session.matchCategory = match.category;
+          if (match.role) session.matchRole = match.role as ReplayEvent["role"];
+        }
       }
       return session;
     });

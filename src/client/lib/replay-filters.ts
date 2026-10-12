@@ -1,3 +1,5 @@
+import type { Session } from "../../shared/types";
+
 export const replayKeys = ["replayKind", "replayQ", "replayTool", "replayModel", "replayCwd", "replayAfter", "replayBefore", "replayOffset", "replayErrors"] as const;
 
 export type ReplayFilterValues = {
@@ -28,6 +30,14 @@ export function replayFilters(params: URLSearchParams): ReplayFilterValues {
     offset: Number.isSafeInteger(offset) && offset > 0 && offset <= 1_000_000 ? offset : 0,
     errors: params.get("replayErrors") === "1",
   };
+}
+
+// The anchor offset is counted inside the opening view, so a search hit must open on a view that shows its record.
+// Conversation leaves out system and hidden-reasoning records and folds a tool result into its call's card; those
+// hits, and any hit of unknown kind, open on All events.
+export function matchReplayKind(match: Pick<Session, "matchCategory" | "matchRole">): "conversation" | "all" {
+  if (match.matchCategory === "message" || match.matchCategory === "thinking") return "conversation";
+  return match.matchCategory === "tool" && match.matchRole === "assistant" ? "conversation" : "all";
 }
 
 export function clearReplayFilters(values: Record<string, string | null> = {}) {

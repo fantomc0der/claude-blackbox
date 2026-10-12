@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
 import { parseSearch } from "../src/server/search";
+import { matchReplayKind } from "../src/client/lib/replay-filters";
 import { removeTestDirectory } from "./helpers";
 import type { IndexProgress } from "../src/shared/types";
 
@@ -257,6 +258,35 @@ describe("recording index", () => {
     expect(snippet.startsWith("type:")).toBe(false);
     expect(snippet).not.toContain("tool_use_id");
     expect(snippet).toContain("The sign in screen still asks for the workspace twice");
+  });
+
+  test("reports each search match's record kind so replay opens on a view that contains it", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Plan the lanternfish rollout"),
+      fixtureData.record([{ type: "thinking", thinking: "Weigh the duskwillow option first", signature: "synthetic" }], { type: "assistant" }),
+      fixtureData.record([{ type: "tool_use", id: "call-9", name: "Bash", input: { command: "bun test quillfeather" } }], { type: "assistant" }),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "call-9", content: "glimmerstone check passed" }]),
+      fixtureData.record("marrowbell hook output", { type: "system" }),
+      fixtureData.record("Rollout planned", { type: "assistant" }),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const expected = {
+      lanternfish: ["message", "user", "conversation"],
+      duskwillow: ["thinking", "assistant", "conversation"],
+      quillfeather: ["tool", "assistant", "conversation"],
+      glimmerstone: ["tool", "user", "all"],
+      marrowbell: ["system", "system", "all"],
+    } as const;
+    for (const [term, [category, role, kind]] of Object.entries(expected)) {
+      const hit = recorder.list(new URLSearchParams({ q: term })).items[0];
+      expect(hit.matchCategory).toBe(category);
+      expect(hit.matchRole).toBe(role);
+      expect(matchReplayKind(hit)).toBe(kind);
+      const page = recorder.events(hit.id, new URLSearchParams({ kind, anchor: hit.matchEventId!, context: "1" }));
+      expect(page.items.map(event => event.id)).toContain(hit.matchEventId!);
+    }
+    expect(recorder.list(new URLSearchParams()).items[0].matchCategory).toBeUndefined();
   });
 
   test("reconciles truncation, same-size replacements and deletion", async () => {

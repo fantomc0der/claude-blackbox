@@ -78,6 +78,8 @@ export interface Session {
   usage: UsageSummary;
   snippet?: string;
   matchEventId?: string;
+  matchCategory?: ReplayEvent["category"];
+  matchRole?: ReplayEvent["role"];
 }
 
 export interface Workspace {
