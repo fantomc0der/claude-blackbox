@@ -111,6 +111,12 @@ test("model expense matrix stays accessible and fits narrow screens in both them
     await page.getByRole("button", { name: theme, exact: true }).click();
     await page.getByLabel("Usage and estimated cost").click();
     await page.getByRole("button", { name: "Model & effort", exact: true }).click();
+    const footer = page.locator(".usage-matrix tfoot tr > *");
+    await expect(footer).toHaveCount(3);
+    const [effortHeading, tokens, cost] = await Promise.all([page.locator(".usage-matrix thead th").nth(1).boundingBox(), footer.nth(1).boundingBox(), footer.nth(2).boundingBox()]);
+    expect(await footer.nth(1).evaluate(cell => getComputedStyle(cell).textAlign)).toBe("right");
+    expect(tokens!.x).toBeGreaterThanOrEqual(effortHeading!.x + effortHeading!.width - 1);
+    expect(tokens!.x + tokens!.width).toBeLessThanOrEqual(cost!.x + 1);
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 844 });
       await expect(page.locator(".usage-matrix")).toBeVisible();

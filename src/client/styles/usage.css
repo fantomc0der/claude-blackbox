@@ -26,7 +26,7 @@
   .usage-directories th, .usage-matrix th { font-weight: 400; color: var(--muted); }
   .usage-directories th, .usage-directories td, .usage-matrix th, .usage-matrix td { padding: 7px 0 7px 14px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .usage-matrix th:first-child { width: 34%; padding-left: 0; text-align: left; }
-  .usage-matrix th:nth-child(2), .usage-matrix td:nth-child(2) { width: 24%; text-align: left; }
+  .usage-matrix thead th:nth-child(2), .usage-matrix tbody td:nth-child(2) { width: 24%; text-align: left; }
   .usage-matrix tbody th { color: var(--text); font-weight: 500; }
   .usage-matrix small { display: block; margin-top: 3px; font-size: var(--text-meta); font-weight: 400; }
   .usage-matrix th small, .usage-effort-missing { color: var(--muted); }
@@ -37,7 +37,6 @@
   .usage-drilldown:hover { color: var(--accent); }
   .usage-drilldown:focus-visible { outline-offset: 2px; }
   .usage-matrix tfoot th, .usage-matrix tfoot td { color: var(--text); font-weight: 550; border-bottom: 0; padding-top: 12px; }
-  .usage-matrix tfoot td { text-align: right; }
   .usage-directories th:first-child, .usage-directories td:first-child { width: 60%; padding-left: 0; text-align: left; }
   .usage-directories button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 32px; padding: 2px; text-align: left; }
   .usage-directories button span { overflow-wrap: anywhere; }
