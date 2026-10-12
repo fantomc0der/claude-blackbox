@@ -449,18 +449,21 @@ describe("recording index", () => {
         { type: "text", text: "Running the probe" },
         { type: "tool_use", name: "Bash", id: "probe", input: { command: "bun run probe --synthetic", timeout: 5000 } },
         { type: "tool_use", name: "Write", id: "write", input: { file_path: "src/out.ts", content: written, options: { mode: "create" } } },
+        { type: "tool_use", name: "Form", id: "wide", input: Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`field${index}`, `value ${index}`])) },
       ], { type: "assistant" }),
       fixtureData.record([
         { type: "tool_result", tool_use_id: "probe", content: "Synthetic probe timed out", is_error: true },
         { type: "tool_result", tool_use_id: "write", content: "Written" },
+        { type: "tool_result", tool_use_id: "wide", content: "Submitted" },
       ]),
       fixtureData.record([{ type: "tool_result", tool_use_id: "unrecorded", content: "Orphaned output" }]),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
     const session = recorder.list(new URLSearchParams()).items[0];
     expect(recorder.events(session.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.sequence)).toEqual([1]);
-    const calls = recorder.calls(session.id, ["probe", "write", "unrecorded", "probe"]);
-    expect(Object.keys(calls).sort()).toEqual(["probe", "write"]);
+    const calls = recorder.calls(session.id, ["probe", "write", "wide", "unrecorded", "probe"]);
+    expect(Object.keys(calls).sort()).toEqual(["probe", "wide", "write"]);
+    expect(Object.keys(calls.wide.input!)).toEqual(Array.from({ length: 32 }, (_, index) => `field${index}`));
     expect(calls.probe).toEqual({ type: "tool_use", id: "probe", name: "Bash", input: { command: "bun run probe --synthetic" } });
     expect(calls.write.name).toBe("Write");
     expect(calls.write.input!.file_path).toBe("src/out.ts");
