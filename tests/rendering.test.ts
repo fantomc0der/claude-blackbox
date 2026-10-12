@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boundedDiff, contentToText, imageMeta, mentions, resultImages, resultText, safeDataImage, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
+import { boundedDiff, contentToText, imageMeta, mentions, mentionsBudget, resultImages, resultText, safeDataImage, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
 
 describe("replay content helpers", () => {
   test("keeps mixed nested content in source order", () => {
@@ -91,5 +91,13 @@ describe("replay content helpers", () => {
     expect(mentions(input, "deploy")).toBe(false);
     expect(mentions(input, "")).toBe(false);
     expect(mentions(undefined, "retry")).toBe(false);
+  });
+
+  test("stops scanning recorded content for a highlight term past the character budget", () => {
+    const filler = "x".repeat(mentionsBudget);
+    expect(mentions({ output: `${filler.slice(0, mentionsBudget - 20)} retry` }, "retry")).toBe(true);
+    expect(mentions({ output: `${filler} retry` }, "retry")).toBe(false);
+    expect(mentions([filler, "retry"], "retry")).toBe(false);
+    expect(mentions(["retry", filler], "retry")).toBe(true);
   });
 });
