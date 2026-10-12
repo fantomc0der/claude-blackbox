@@ -328,8 +328,9 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   };
   // The toggle shows the reader's choice at once and sends it as an explicit state, so quick repeated presses settle on
   // the last one. The refreshed session confirms the choice; once nothing is saving, the session is the truth again.
+  // Saves run one after another, so the server always receives the presses in the order they were made.
   const [bookmarkChoice, setBookmarkChoice] = createSignal<boolean | null>(null);
-  let bookmarkSaves = 0;
+  let bookmarkSaves = 0, bookmarkQueue: Promise<unknown> = Promise.resolve();
   const bookmarked = () => bookmarkChoice() ?? Boolean(props.session?.bookmarked);
   createEffect(() => props.session?.bookmarked, value => { if (value === untrack(bookmarkChoice) || !bookmarkSaves) setBookmarkChoice(null); });
   const bookmark = async () => {
@@ -337,7 +338,9 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const next = !bookmarked();
     setBookmarkChoice(next);
     bookmarkSaves++;
-    try { await request(`/api/sessions/${props.id}/bookmark`, { method: "PUT", body: JSON.stringify({ bookmarked: next }) }); props.changed(); }
+    const save = bookmarkQueue.then(() => request(`/api/sessions/${props.id}/bookmark`, { method: "PUT", body: JSON.stringify({ bookmarked: next }) }));
+    bookmarkQueue = save.catch(() => undefined);
+    try { await save; props.changed(); }
     catch (error) { setBookmarkChoice(null); props.notify(error instanceof Error ? error.message : "Could not update bookmark"); }
     finally { bookmarkSaves--; }
   };
