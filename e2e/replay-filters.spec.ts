@@ -34,10 +34,13 @@ test("replay tabs keep All events last and reset returns to the conversation", a
   await expect(page).toHaveURL(/replayKind=thinking/);
   await expect(page.locator(".timeline-end")).toContainText("Reset filters to return to the conversation.");
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("definitely-not-recorded");
+  await expect(page.locator(".replay-match-count")).toHaveText("No matches");
+  await page.getByRole("checkbox", { name: "Only matching records" }).check();
   await expect(page.locator(".empty-state")).toContainText("choose All events for the full chronology");
   await page.locator(".empty-state").getByRole("button", { name: "Reset replay filters" }).click();
   await expect(page).not.toHaveURL(/replayKind=/);
   await expect(page).not.toHaveURL(/replayQ=/);
+  await expect(page).not.toHaveURL(/replayOnly=/);
   await expect(page.locator(".replay-tab.active")).toHaveText("Conversation");
   await expect(page.locator(".replay-event").first()).toBeVisible();
 });
@@ -60,7 +63,11 @@ test("replay tabs are views that never light the Filters badge", async ({ page }
   await page.getByRole("checkbox", { name: "Only errors" }).check();
   await expect(page.locator(".replay-tab.active")).toHaveText("Errors");
   await expect(badge).toHaveText("1");
+  // A find term only highlights until it is asked to narrow the records, so only then does it count.
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("definitely-not-recorded");
+  await expect(page.locator(".replay-match-count")).toHaveText("No matches");
+  await expect(badge).toHaveText("1");
+  await page.getByRole("checkbox", { name: "Only matching records" }).check();
   await expect(badge).toHaveText("2");
 });
 
@@ -86,9 +93,10 @@ test("replay advanced filters stay usable on mobile and reset the empty state", 
   await page.getByRole("button", { name: "Close replay filters" }).click();
   await expect(page.locator("details.replay-filters")).toHaveJSProperty("open", false);
   await expect(page.locator("details.replay-filters > summary")).toBeFocused();
-  await openFilters(page);
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("definitely-not-recorded");
+  await page.getByRole("checkbox", { name: "Only matching records" }).check();
   await expect(page.locator(".empty-state")).toContainText("No events match these filters");
+  await openFilters(page);
   await page.locator(".replay-filter-menu").getByRole("button", { name: "Reset replay filters" }).click();
   await expect(page).not.toHaveURL(/replayQ/);
   await expect(page.locator(".replay-event").first()).toBeVisible();
@@ -222,12 +230,14 @@ test("filtered live updates explicitly open the latest unfiltered records", asyn
   await page.goto("/?q=Filtered+live+verification");
   await page.locator(".session-row").click();
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("not-a-matching-record");
+  await page.getByRole("checkbox", { name: "Only matching records" }).check();
   await expect(page.locator(".replay-event")).toHaveCount(0);
   await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
   const text = `Filtered update ${crypto.randomUUID()}`;
   await appendFile(resolve(".blackbox/e2e/projects/browser-regressions/filtered-live-recording.jsonl"), JSON.stringify({ type: "user", timestamp: new Date().toISOString(), message: { content: text } }) + "\n");
   await page.getByRole("button", { name: "Recording updated · Show latest unfiltered" }).click();
   await expect(page).not.toHaveURL(/replayQ=/);
+  await expect(page).not.toHaveURL(/replayOnly=/);
   await expect(page).toHaveURL(/replayKind=all/);
   await expect(page.locator(".replay-event").last()).toContainText(text);
 });

@@ -49,6 +49,10 @@ test("the replay's own find term replaces the library highlight", async ({ page 
   await openSearchHit(page, "Lanternwick");
   await page.getByRole("textbox", { name: "Find in this recording" }).fill("retry budget");
   await expect(page).toHaveURL(/replayQ=retry\+budget/);
+  await expect(page.locator(".replay-match-count")).toHaveText("1 match");
+  await expect(page.locator(".replay-event mark")).toHaveText(["retry budget"]);
+  expect(await page.locator(".replay-event").count()).toBeGreaterThan(1);
+  await page.getByRole("checkbox", { name: "Only matching records" }).check();
   await expect(page.locator(".replay-event")).toHaveCount(1);
   await expect(page.locator(".replay-event mark")).toHaveText(["retry budget"]);
 });

@@ -2,7 +2,7 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, DirectoryUsage, EventPage, EventTimeline, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
+import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -10,6 +10,7 @@ import { addUsage, emptyUsage, normalizeModel, readUsage, usageColumns } from ".
 import { facetLimit, isFacetValue } from "./facets";
 
 const timelineBucketLimit = 1500;
+const findMatchLimit = 5000;
 const timelineGranularities = [[16, 60_000], [15, 600_000], [13, 3_600_000], [10, 86_400_000]] as const;
 type TimelineRow = { at: string | null; count: number; first: number; last: number; errors: number };
 
@@ -837,6 +838,21 @@ export class Recorder {
       this.replayFacets.set(id, facets);
     }
     return { items, total, offset, limit, unfilteredTotal, hiddenTotal, facets };
+  }
+
+  // Lists the records that contain `find`, using the same substring test as the `q` filter, at their positions under
+  // the rest of the filter. The client steps through these and pages with `offset=position`, so a match on a later page
+  // is reachable without loading every page in between.
+  matches(id: string, params: URLSearchParams): FindMatches {
+    const find = (params.get("find") || "").slice(0, 1000);
+    if (!find) return { total: 0, limited: false, items: [] };
+    const { filter, bindings } = this.eventFilter(id, params);
+    const limit = Math.max(1, pageNumber(params.get("limit"), findMatchLimit, findMatchLimit));
+    const rows = this.db.query<{ position: number; sequence: number; id: string; total: number }, SQLQueryBindings[]>(`SELECT position, sequence, id, count(*) OVER () AS total FROM (
+        SELECT row_number() OVER (ORDER BY e.sequence) - 1 AS position, e.sequence, e.event_id AS id, instr(lower(e.text),lower(?))>0 AS found
+        FROM events e WHERE ${filter}) WHERE found ORDER BY position LIMIT ?`).all(find, ...bindings, limit);
+    const total = rows[0]?.total ?? 0;
+    return { total, limited: rows.length < total, items: rows.map(({ position, sequence, id }) => ({ position, sequence, id })) };
   }
 
   // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Undated

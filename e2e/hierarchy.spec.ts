@@ -55,9 +55,10 @@ test("replay shows directory transitions without losing per-event provenance", a
   await expect(repeated.locator(".replay-raw pre")).toContainText('"cwd": "/synthetic/browser-tests"');
   await page.getByRole("button", { name: "All events", exact: true }).click();
   await expect(directories).toHaveText(expected);
-  await page.locator(".replay-find input").fill("Still in the worktree");
+  await page.getByRole("textbox", { name: "Find in this recording" }).fill("Still in the worktree");
+  await page.getByRole("checkbox", { name: "Only matching records" }).check();
   await expect(directories).toHaveText(["/synthetic/browser-tests-worktree"]);
-  await page.locator(".replay-find input").fill("");
+  await page.getByRole("textbox", { name: "Find in this recording" }).fill("");
   await expect(directories).toHaveText(expected);
 });
 

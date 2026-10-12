@@ -1,5 +1,5 @@
-import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import type { ContentBlock, EventPage, ReplayEvent, Session, SessionFamily } from "../../shared/types";
+import { createEffect, createMemo, createSignal, flush, For, Show, untrack } from "solid-js";
+import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, SessionFamily } from "../../shared/types";
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
@@ -60,6 +60,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const [kind, setKind] = createSignal(initialFilters.kind);
   const [query, setQuery] = createSignal(initialFilters.q);
   const [search, setSearch] = createSignal(initialFilters.q);
+  const [only, setOnly] = createSignal(initialFilters.only);
   const [offset, setOffset] = createSignal(initialFilters.offset);
   const [tool, setTool] = createSignal(initialFilters.tool);
   const [model, setModel] = createSignal(initialFilters.model);
@@ -129,10 +130,13 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   let seekTarget: number | null = null;
   let announceRange = false;
   const [announcement, setAnnouncement] = createSignal("");
+  // The find term always highlights and can be stepped through; it narrows the records only while the reader asks for
+  // matching records alone.
+  const narrowTerm = () => only() ? search() : "";
   const filterQuery = createMemo(() => {
     const params = new URLSearchParams({ kind: kind() });
     if (errorsOnly()) params.set("errors", "1");
-    for (const [key, value] of [["q", search()], ["tool", tool()], ["model", model()], ["cwd", cwd()], ["after", after()], ["before", before()]]) if (value) params.set(key!, value!);
+    for (const [key, value] of [["q", narrowTerm()], ["tool", tool()], ["model", model()], ["cwd", cwd()], ["after", after()], ["before", before()]]) if (value) params.set(key!, value!);
     return params.toString();
   });
   // Measured when needed rather than cached from scroll events: expanding a card at the end of the page moves the
@@ -155,6 +159,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const next = replayFilters(params);
     if (next.kind !== kind()) setKind(next.kind);
     if (next.q !== query()) { setQuery(next.q); setSearch(next.q); }
+    if (next.only !== only()) setOnly(next.only);
     if (next.offset !== offset()) setOffset(next.offset);
     if (next.tool !== tool()) setTool(next.tool);
     if (next.model !== model()) setModel(next.model);
@@ -164,13 +169,56 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     if (next.errors !== errorsOnly()) setErrorsOnly(next.errors);
   });
 
+  // Narrowing replaces the records, so it starts them over; a highlight alone leaves the reader on their page.
+  const commitQuery = (value: string) => {
+    if (value === untrack(search)) return;
+    setSearch(value); setUpdated(false);
+    if (untrack(only)) { setOffset(0); props.navigate({ replayQ: value || null, replayOffset: null, event: null, context: null }, true); }
+    else props.navigate({ replayQ: value || null }, true);
+  };
   createEffect(() => query(), value => {
     if (value === untrack(search)) return;
-    const timer = setTimeout(() => { setSearch(value); setOffset(0); setUpdated(false); props.navigate({ replayQ: value || null, replayOffset: null, event: null, context: null }, true); }, 180);
+    const timer = setTimeout(() => commitQuery(value), 180);
     return () => clearTimeout(timer);
   });
 
-  createEffect(() => ({ id: props.id, kind: kind(), q: search(), offset: offset(), tool: tool(), model: model(), cwd: cwd(), after: after(), before: before(), errors: errorsOnly(), anchor: props.anchor, context: props.params.get("context") === "1", revision: props.revision, retry: retry() }), state => {
+  // Every record the find term matches under the other filters, so stepping can reach matches on pages not loaded yet.
+  // The key ties the list to the term and filters it was fetched for; a live refresh keeps showing the previous list.
+  const matchKey = () => search() ? `${filterQuery()}\n${search()}` : "";
+  const [matchState, setMatchState] = createSignal<{ key: string; data: FindMatches } | null>(null);
+  const matches = createMemo(() => { const state = matchState(); return state && state.key === matchKey() ? state.data : null; });
+  const [currentMatch, setCurrentMatch] = createSignal("");
+  const matchIndex = createMemo(() => currentMatch() ? matches()?.items.findIndex(item => item.id === currentMatch()) ?? -1 : -1);
+  // A step requested before its term's matches arrived, taken as soon as they do.
+  let pendingStep: -1 | 0 | 1 = 0;
+  // The match a step moved to on another page, revealed once that page is on screen.
+  let pendingMatch = "";
+  let findInput!: HTMLInputElement;
+  // The key whose list could not be fetched. Highlighting does not depend on the list, so only stepping waits on a retry,
+  // which the next step or term change makes.
+  const [matchFailure, setMatchFailure] = createSignal("");
+  const [matchRetry, setMatchRetry] = createSignal(0);
+  const matchesFailed = () => Boolean(matchKey()) && matchFailure() === matchKey() && !matches();
+  createEffect(() => ({ id: props.id, key: matchKey(), filters: filterQuery(), find: search(), revision: props.revision, retry: matchRetry() }), state => {
+    if (!state.key) { pendingStep = 0; return; }
+    const controller = new AbortController();
+    const params = new URLSearchParams(state.filters);
+    params.set("find", state.find);
+    void request<FindMatches>(`/api/sessions/${state.id}/matches?${params}`, { signal: controller.signal }).then(data => {
+      if (controller.signal.aborted) return;
+      setMatchState({ key: state.key, data });
+      setMatchFailure("");
+      // Writes settle on the next flush, so apply this one before the step reads the list.
+      if (pendingStep) { const direction = pendingStep; pendingStep = 0; flush(); step(direction); }
+    }).catch(error => {
+      if (isAbort(error) || untrack(matchState)?.key === state.key) return;
+      setMatchState(null); setMatchFailure(state.key);
+      pendingStep = 0;
+    });
+    return () => controller.abort();
+  });
+
+  createEffect(() => ({ id: props.id, kind: kind(), q: narrowTerm(), offset: offset(), tool: tool(), model: model(), cwd: cwd(), after: after(), before: before(), errors: errorsOnly(), anchor: props.anchor, context: props.params.get("context") === "1", revision: props.revision, retry: retry() }), state => {
     const sequence = ++requestSequence;
     const controller = new AbortController();
     const params = new URLSearchParams(filterQuery());
@@ -218,7 +266,11 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         if (sequence !== requestSequence) return;
         positionKey = nextPositionKey;
         if (jumpBottom) { scroll?.scrollTo({ top: scroll.scrollHeight }); jumpBottom = false; }
-        else if (target !== null) revealPosition(next, target);
+        else if (target !== null) {
+          const card = pendingMatch && cardOf(pendingMatch);
+          pendingMatch = "";
+          if (card) revealAnchor(card); else revealPosition(next, target);
+        }
         else if (navigation || initial) scroll?.scrollTo({ top: savedPosition ?? 0 });
         else if (keepAtEnd) scroll?.scrollTo({ top: scroll.scrollHeight });
         if (state.anchor && savedPosition === undefined && (navigation || initial)) revealAnchor(state.anchor);
@@ -231,7 +283,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
 
   const toolIdsOnPage = createMemo(() => new Set(page()?.items.flatMap(event => event.blocks.filter(block => block.type === "tool_use").map(block => block.id)) || []));
   const visibleEvents = createMemo(() => (page()?.items || []).filter(event => {
-    if (kind() !== "conversation" || search() || errorsOnly() || event.blocks.length === 0) return true;
+    if (kind() !== "conversation" || narrowTerm() || errorsOnly() || event.blocks.length === 0) return true;
     return !event.blocks.every(block => block.type === "tool_result" && toolIdsOnPage().has(block.tool_use_id));
   }));
   const countLabel = () => {
@@ -265,6 +317,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     rememberReplayPosition(positionKey, scroll?.scrollTop || 0);
     setUpdated(false);
     seekTarget = null;
+    pendingMatch = "";
     props.navigate({ ...values, replayOffset: values.replayOffset === undefined ? null : values.replayOffset, event: values.event === undefined ? null : values.event, context: values.context === undefined ? null : values.context }, replace);
   };
   const changeKind = (value: string) => {
@@ -289,14 +342,19 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     setOffset(0);
     updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, [key]: value || null, [key === "replayAfter" ? "replayBefore" : "replayAfter"]: resetOther ? null : other || null });
   };
-  const resetReplay = () => { setQuery(""); setSearch(""); setKind("conversation"); setErrorsOnly(false); setOffset(0); updateReplay(clearReplayFilters()); };
-  const revealContext = (id: string) => { setQuery(""); setSearch(""); setKind("all"); setErrorsOnly(false); setOffset(0); updateReplay(clearReplayFilters({ replayKind: "all", event: id, context: "1" })); };
-  const isFiltered = () => kind() !== "all" || errorsOnly() || Boolean(search() || tool() || model() || cwd() || after() || before());
-  const extraFilterCount = () => [!["conversation", "all"].includes(kind()), errorsOnly(), search(), tool(), model(), cwd(), after(), before()].filter(Boolean).length;
+  // Carries a term still waiting on the find debounce, which would otherwise be read back from the URL as empty.
+  const changeOnly = (checked: boolean) => {
+    setSearch(query()); setOnly(checked); setOffset(0);
+    updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayQ: query() || null, replayOnly: checked ? "1" : null });
+  };
+  const resetReplay = () => { setQuery(""); setSearch(""); setOnly(false); setKind("conversation"); setErrorsOnly(false); setOffset(0); updateReplay(clearReplayFilters()); };
+  const revealContext = (id: string) => { setQuery(""); setSearch(""); setOnly(false); setKind("all"); setErrorsOnly(false); setOffset(0); updateReplay(clearReplayFilters({ replayKind: "all", event: id, context: "1" })); };
+  const isFiltered = () => kind() !== "all" || errorsOnly() || Boolean(narrowTerm() || tool() || model() || cwd() || after() || before());
+  const extraFilterCount = () => [!["conversation", "all"].includes(kind()), errorsOnly(), narrowTerm(), tool(), model(), cwd(), after(), before()].filter(Boolean).length;
   // Tabs are views, not filters: the badge counts only narrowing that the active tab does not already show.
   // The Errors tab is the unfocused errors-only view, so errors on top of a focused view counts that view.
   const tabView = () => errorsOnly() ? kind() === "all" : ["conversation", "tool", "all"].includes(kind());
-  const filterBadgeCount = () => [!tabView(), search(), tool(), model(), cwd(), after(), before()].filter(Boolean).length;
+  const filterBadgeCount = () => [!tabView(), narrowTerm(), tool(), model(), cwd(), after(), before()].filter(Boolean).length;
   const timelineLabel = () => {
     const first = page()?.items[0];
     if (page()?.offset) return `CONTINUED · EVENT ${(first ? first.sequence : page()!.offset) + 1}`;
@@ -314,7 +372,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const latestUnfiltered = () => {
     const target = Math.max(0, (page()?.unfilteredTotal || 0) - 60);
     const samePage = !isFiltered() && offset() === target && !props.anchor;
-    setQuery(""); setSearch(""); setKind("all"); setErrorsOnly(false); setOffset(target);
+    setQuery(""); setSearch(""); setOnly(false); setKind("all"); setErrorsOnly(false); setOffset(target);
     jumpBottom = true;
     following = true;
     updateReplay(clearReplayFilters({ replayKind: "all", replayOffset: target ? String(target) : null }));
@@ -350,6 +408,73 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     setOffset(start);
     updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: start ? String(start) : null });
     seekTarget = target;
+  };
+  // The card on this page that shows a record. Conversation folds a tool result into its call's card, so a match in the
+  // output is shown, and selected, on the call.
+  const cardOf = (id: string) => {
+    const visible = visibleEvents();
+    if (visible.some(event => event.id === id)) return id;
+    const calls = new Set(page()?.items.find(event => event.id === id)?.blocks.flatMap(block => block.type === "tool_result" && block.tool_use_id ? [block.tool_use_id] : []));
+    return calls.size ? visible.find(event => event.blocks.some(block => block.type === "tool_use" && block.id && calls.has(block.id)))?.id || "" : "";
+  };
+  const matchCard = createMemo(() => matchIndex() >= 0 ? cardOf(currentMatch()) : "");
+  // The record at the top of the transcript, where the first step starts looking so the reader does not lose their place.
+  const readingPosition = () => {
+    const current = page();
+    if (!current || !scroll) return 0;
+    const top = scroll.getBoundingClientRect().top;
+    for (const card of scroll.querySelectorAll<HTMLElement>(".replay-event[data-event-id]")) {
+      if (card.getBoundingClientRect().bottom <= top + 1) continue;
+      const index = current.items.findIndex(event => event.id === card.dataset.eventId);
+      if (index >= 0) return current.offset + index;
+    }
+    return current.offset;
+  };
+  const step = (direction: -1 | 1) => {
+    const list = matches()?.items;
+    if (!list?.length) return;
+    let index = matchIndex();
+    if (index < 0) {
+      const from = readingPosition();
+      index = direction > 0 ? list.findIndex(item => item.position >= from) : list.findLastIndex(item => item.position < from);
+      if (index < 0) index = direction > 0 ? 0 : list.length - 1;
+    } else index = (index + direction + list.length) % list.length;
+    // A call and its output can both match yet share one card; move on to the next match on another card so every step
+    // visibly goes somewhere. When every other match is on the current card, take the next record anyway: the selection
+    // stays put but the position still advances, so the count never claims a step that did not happen.
+    if (matchCard()) {
+      for (let next = index, tried = 1; tried < list.length; tried++, next = (next + direction + list.length) % list.length) {
+        if (cardOf(list[next].id) !== matchCard()) { index = next; break; }
+      }
+    }
+    const match = list[index];
+    setCurrentMatch(match.id);
+    const current = page();
+    if (current && current.items[match.position - current.offset]?.id === match.id) {
+      // A page an earlier step is still fetching must not reveal that older match over this one.
+      pendingMatch = "";
+      const card = cardOf(match.id);
+      if (card) revealAnchor(card);
+      return;
+    }
+    goTo(match.position);
+    pendingMatch = seekTarget === match.position ? match.id : "";
+  };
+  const stepFromFind = (direction: -1 | 1) => {
+    if (!query()) return;
+    if (query() !== search() || !matches()) {
+      pendingStep = direction;
+      if (query() === search() && matchesFailed()) setMatchRetry(value => value + 1); else commitQuery(query());
+      return;
+    }
+    step(direction);
+  };
+  const matchStatus = () => {
+    const found = matches();
+    if (!found) return matchesFailed() ? "Matches unavailable" : "— matches";
+    if (!found.total) return "No matches";
+    if (matchIndex() < 0) return found.total === 1 ? "1 match" : `${found.total.toLocaleString()} matches`;
+    return `${(matchIndex() + 1).toLocaleString()} of ${found.total.toLocaleString()}`;
   };
   const turnPage = (direction: -1 | 1) => {
     const current = page();
@@ -427,9 +552,22 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         }</For>
       </div>
       <div class="replay-find"><Icon name="search" size={14} />
-        <input aria-label="Find in this recording" placeholder="Find in this recording…" value={query()} onInput={event => setQuery(event.currentTarget.value)} />
-        <Show when={query()}><button class="icon-button tiny" aria-label="Clear recording search" onClick={() => setQuery("")}><Icon name="close" size={13} /></button></Show>
-        <span class="replay-count" role="status" title={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : undefined} aria-label={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : "Loading recording"}>{countLabel()}</span>
+        <input ref={findInput} aria-label="Find in this recording" aria-keyshortcuts="Enter Shift+Enter" placeholder="Find in this recording…" value={query()} onInput={event => { pendingStep = 0; setQuery(event.currentTarget.value); }} onKeyDown={event => {
+          if (event.key !== "Enter" || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+          event.preventDefault();
+          stepFromFind(event.shiftKey ? -1 : 1);
+        }} />
+        <Show when={query()}><button class="icon-button tiny" aria-label="Clear recording search" onClick={() => { setQuery(""); findInput.focus(); }}><Icon name="close" size={13} /></button></Show>
+        <Show when={query()} fallback={<span class="replay-count" role="status" title={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : undefined} aria-label={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : "Loading recording"}>{countLabel()}</span>}>
+          <div class="replay-find-tools">
+            <span class="replay-count replay-match-count" role="status" title={matchIndex() >= 0 ? `Matching record ${matchIndex() + 1} of ${matches()!.total}. Enter for the next, Shift+Enter for the previous.` : matchesFailed() ? "The matching records could not be listed. Press Enter to try again." : "Enter steps to the next matching record, Shift+Enter to the previous."}>{matchStatus()}<Show when={matchIndex() >= 0}><span class="visually-hidden"> matching records</span></Show></span>
+            <div class="replay-find-steps" role="group" aria-label="Find matches">
+              <button class="icon-button tiny" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={!matches()?.total && !matchesFailed()} onClick={() => stepFromFind(-1)}><Icon name="up" size={14} /></button>
+              <button class="icon-button tiny" aria-label="Next match" title="Next match (Enter)" disabled={!matches()?.total && !matchesFailed()} onClick={() => stepFromFind(1)}><Icon name="down" size={14} /></button>
+            </div>
+            <label class="replay-only" title="Show only the records that contain the find term"><input type="checkbox" aria-label="Only matching records" checked={only()} onChange={event => changeOnly(event.currentTarget.checked)} /><span>Only matching</span></label>
+          </div>
+        </Show>
       </div>
       <details class="replay-filters" ref={setFilterDetails}><summary title="Filter this recording"><Icon name="sliders" size={14} />Filters<Show when={filterBadgeCount()}><span class="filter-count">{filterBadgeCount()}</span></Show></summary><div class="replay-filter-menu" ref={setFilterMenu} role="region" aria-label="Replay filters"><div class="replay-filter-menu-heading"><h3>Replay filters</h3><button class="icon-button tiny replay-filter-menu-close" aria-label="Close replay filters" onClick={() => { const element = filterDetails(); if (!element) return; element.open = false; element.querySelector<HTMLElement>("summary")?.focus(); }}><Icon name="close" size={15} /></button></div><p class="search-help">{page() ? `${page()!.total} matching of ${page()!.unfilteredTotal} recorded events.` : "Loading recording…"} Filters combine; records stay in their original order.</p>
         <Show when={page()?.facets.limited}><p class="search-help">Up to 200 values per filter are shown. Search still covers all recorded content.</p></Show>
@@ -448,7 +586,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
-        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !search() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
+        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !narrowTerm() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={matchCard() ? event().id === matchCard() : event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{extraFilterCount() ? "End of matching records." : "You're all caught up."}<small>{extraFilterCount() ? "Reset filters to return to the conversation." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">

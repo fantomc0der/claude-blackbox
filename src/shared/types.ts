@@ -170,6 +170,17 @@ export interface EventPage {
 }
 
 /**
+ * The records a replay find term matches, in recording order. `position` is the record's ordinal under the same event
+ * filter that `events()` pages by, so it is directly a page offset. `total` counts every match even when `items` stops
+ * at the response limit, which `limited` reports.
+ */
+export interface FindMatches {
+  total: number;
+  limited: boolean;
+  items: Array<{ position: number; sequence: number; id: string }>;
+}
+
+/**
  * One time bucket of a recording. `all` counts every record, `count` only those matching the replay filters, whose
  * page offsets run from `first` to `last` (null when none match). `at` is null for records before any timestamp.
  */

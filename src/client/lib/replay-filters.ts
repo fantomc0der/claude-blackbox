@@ -1,10 +1,12 @@
 import type { Session } from "../../shared/types";
 
-export const replayKeys = ["replayKind", "replayQ", "replayTool", "replayModel", "replayCwd", "replayAfter", "replayBefore", "replayOffset", "replayErrors"] as const;
+export const replayKeys = ["replayKind", "replayQ", "replayOnly", "replayTool", "replayModel", "replayCwd", "replayAfter", "replayBefore", "replayOffset", "replayErrors"] as const;
 
 export type ReplayFilterValues = {
   kind: string;
   q: string;
+  /** Whether the find term also narrows the replay to matching records, rather than only highlighting them. */
+  only: boolean;
   tool: string;
   model: string;
   cwd: string;
@@ -22,6 +24,7 @@ export function replayFilters(params: URLSearchParams): ReplayFilterValues {
   return {
     kind,
     q: params.get("replayQ") || "",
+    only: params.get("replayOnly") === "1",
     tool: params.get("replayTool") || "",
     model: params.get("replayModel") || "",
     cwd: params.get("replayCwd") || "",
