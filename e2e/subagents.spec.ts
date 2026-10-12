@@ -1,25 +1,24 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./harness";
 
-test("subagent visibility is shared across workspaces, library filters and history", async ({ page }) => {
+test("the library switch alone owns subagent visibility across workspaces, filters and history", async ({ page }) => {
   await page.goto("/?q=Subagent");
-  const sidebarToggle = page.locator(".sidebar").getByRole("button", { name: "Show subagents", exact: true });
   const libraryToggle = page.locator(".library").getByRole("button", { name: "Show subagents", exact: true });
   const worktree = page.locator(".workspace-nav-item").filter({ hasText: "delegated-worktree" });
   await expect(page.locator(".session-row")).toHaveCount(1);
   await expect(worktree).toHaveCount(0);
-  await expect(sidebarToggle).toHaveAttribute("aria-pressed", "false");
-  await expect(page.locator(".sidebar-footer").getByRole("button", { name: "Show subagents", exact: true })).toBeVisible();
-  await expect(sidebarToggle).toContainText("All workspaces & lists");
+  await expect(page.locator(".sidebar").getByRole("button", { name: /subagents/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show subagents", exact: true })).toHaveCount(1);
+  await expect(libraryToggle).toHaveAttribute("aria-pressed", "false");
   await libraryToggle.click();
-  await expect(sidebarToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(worktree).toBeVisible();
   await expect(page.locator(".session-row")).toHaveCount(3);
   await expect(page.locator(".session-kind")).toHaveCount(2);
   await expect(page.locator(".session-row").filter({ hasText: "Subagent preview parent" }).locator(".session-kind")).toHaveCount(0);
   await worktree.click();
   await expect(page.locator(".session-row")).toHaveCount(2);
   await expect(libraryToggle).toHaveAttribute("aria-pressed", "true");
-  await sidebarToggle.click();
+  await libraryToggle.click();
   await expect(worktree).toHaveCount(0);
   await expect(page.locator(".session-row")).toHaveCount(0);
   await page.goBack();
@@ -28,11 +27,21 @@ test("subagent visibility is shared across workspaces, library filters and histo
   await page.reload();
   await expect(libraryToggle).toHaveAttribute("aria-pressed", "true");
   await page.locator(".filter-popover > summary").click();
-  await expect(page.getByLabel("Agent recordings")).toHaveValue("1");
-  await page.getByLabel("Agent recordings").selectOption("only");
+  const subagentsOnly = page.getByRole("checkbox", { name: "Subagents only", exact: true });
+  await expect(page.locator(".filter-menu select option").filter({ hasText: /subagents/i })).toHaveCount(0);
+  await expect(subagentsOnly).not.toBeChecked();
+  await subagentsOnly.check();
+  await expect.poll(() => new URL(page.url()).searchParams.get("agents")).toBe("only");
   await expect(page.getByRole("button", { name: "Subagents only", exact: true })).toBeVisible();
-  await page.getByLabel("Agent recordings").selectOption("0");
+  await expect(page.locator(".session-row")).toHaveCount(2);
+  await expect(libraryToggle).toHaveAttribute("aria-pressed", "true");
+  await subagentsOnly.uncheck();
+  await expect.poll(() => new URL(page.url()).searchParams.get("agents")).toBe("1");
+  await expect(page.getByRole("button", { name: "Including subagents", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await libraryToggle.click();
   await expect(libraryToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator(".active-filters")).not.toContainText("subagents");
 });
 
 test("subagent preview keeps the main replay, URL, scroll and keyboard focus in place", async ({ page }) => {

@@ -42,6 +42,28 @@ test("replay tabs keep All events last and reset returns to the conversation", a
   await expect(page.locator(".replay-event").first()).toBeVisible();
 });
 
+test("replay tabs are views that never light the Filters badge", async ({ page }) => {
+  await openReplay(page);
+  const badge = page.locator("details.replay-filters .filter-count");
+  for (const tab of ["Tools", "Errors", "All events", "Conversation"]) {
+    await page.locator(".replay-tab").filter({ hasText: new RegExp(`^${tab}$`) }).click();
+    await expect(page.locator(".replay-tab.active")).toHaveText(tab);
+    await expect(badge).toHaveCount(0);
+  }
+  await openFilters(page);
+  const view = page.getByRole("combobox", { name: "Focused replay view" });
+  await view.selectOption("thinking");
+  await expect(badge).toHaveText("1");
+  await view.selectOption("tool");
+  await expect(page.locator(".replay-tab.active")).toHaveText("Tools");
+  await expect(badge).toHaveCount(0);
+  await page.getByRole("checkbox", { name: "Only errors" }).check();
+  await expect(page.locator(".replay-tab.active")).toHaveText("Errors");
+  await expect(badge).toHaveText("1");
+  await page.getByRole("textbox", { name: "Find in this recording" }).fill("definitely-not-recorded");
+  await expect(badge).toHaveText("2");
+});
+
 test("replay filters persist through reload and browser history on desktop", async ({ page }) => {
   await openReplay(page);
   await openFilters(page);

@@ -23,7 +23,8 @@ test("the workspace list keeps a usable height on laptop displays", async ({ pag
   const wide = await measure(page);
   expect(wide.list).toBeGreaterThanOrEqual(240);
   expect(wide.scrolls).toBe(false);
-  expect(wide.footer).toBeLessThanOrEqual(330);
+  expect(wide.footer).toBeLessThanOrEqual(290);
+  await expect(page.locator(".sidebar-footer").getByRole("button", { name: /subagents/i })).toHaveCount(0);
   await expect(theme).toBeVisible();
   await expect(size).toBeVisible();
   await expect(reading).toBeVisible();
