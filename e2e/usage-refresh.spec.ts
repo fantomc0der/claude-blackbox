@@ -12,13 +12,15 @@ test("usage keeps its layout focus scroll and values through background refreshe
     const panel = page.locator(".usage-panel");
     await expect(panel).toHaveAttribute("aria-busy", "false");
     await page.getByLabel("Usage and estimated cost").click();
+    const breakdown = page.getByRole("region", { name: "Usage breakdown" });
     for (const view of ["Folders", "Model & effort"]) {
-      await panel.getByRole("button", { name: view, exact: true }).click();
-      const table = panel.locator(view === "Folders" ? ".usage-directories" : ".usage-matrix");
+      await breakdown.getByRole("button", { name: view, exact: true }).click();
+      const table = breakdown.locator(view === "Folders" ? ".usage-directories" : ".usage-matrix");
       const button = table.locator("tbody button").first();
       await button.focus();
       const focused = await button.elementHandle();
-      const body = panel.locator(".usage-body");
+      // The breakdown scrolls with the recordings, so the list holds the scroll position to keep.
+      const body = page.locator(".recordings-scroll");
       await body.evaluate(element => { element.scrollTop = element.scrollHeight; });
       const beforeScroll = await body.evaluate(element => element.scrollTop);
       const beforeHeight = (await panel.boundingBox())!.height;
@@ -116,7 +118,7 @@ test("pagination and sorting keep usage for the same selection mounted", async (
   const panel = page.locator(".usage-panel");
   await expect(panel).toHaveAttribute("aria-busy", "false");
   await page.getByLabel("Usage and estimated cost").click();
-  const table = await panel.locator("table").elementHandle();
+  const table = await page.getByRole("region", { name: "Usage breakdown" }).locator("table").elementHandle();
   const cost = await panel.locator(".usage-total-cost").textContent();
   await page.route("**/api/sessions?*", async route => {
     await Bun.sleep(300);

@@ -6,22 +6,51 @@ test("recordings lead the library on short screens in both themes", async ({ pag
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/");
     await page.getByRole("button", { name: theme, exact: true }).click();
-    for (const [width, height] of [[1280, 720], [390, 844], [320, 640]]) {
+    for (const [width, height] of [[1440, 900], [1280, 720], [390, 844], [320, 640]]) {
+      // Desktop screens 820px and shorter trade the hero and archive totals for the compact heading; phones keep both.
+      const short = width > 680 && height <= 820;
       await page.setViewportSize({ width, height });
       await page.goto("/");
       const first = page.locator(".session-row").first();
       await expect(first).toBeVisible();
       const bounds = await first.boundingBox();
-      expect(bounds!.y).toBeLessThan(width === 320 ? 400 : 350);
+      expect(bounds!.y).toBeLessThan(width === 320 ? 400 : short ? 330 : height === 900 ? 420 : 350);
       expect(await page.locator(".recordings-scroll").evaluate(element => element.clientHeight)).toBeGreaterThan(200);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await expect(page.getByLabel("Archive totals")).toBeVisible();
+      await expect(page.getByText("Every prompt, every breakthrough")).toHaveCount(0);
+      const heading = page.locator(".library-heading h1");
+      await expect(heading).toHaveText(short ? "Session library" : "Good work leaves a trail.");
+      await expect(page.getByLabel("Archive totals")).toBeVisible({ visible: !short });
       await page.getByRole("textbox", { name: "Search all recordings" }).fill("authentication");
       await expect(page.getByLabel("Archive totals")).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Session library", exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Clear search", exact: true }).click();
-      await expect(page.getByLabel("Archive totals")).toBeVisible();
+      await expect(page.getByLabel("Archive totals")).toHaveCount(1);
+      await expect(page.getByLabel("Archive totals")).toBeVisible({ visible: !short });
     }
+  }
+});
+
+test("short laptop screens give the hero's height to recording rows and restore it when taller", async ({ page }) => {
+  const heading = page.locator(".library-heading h1");
+  const fullyVisibleRows = () => page.locator(".recordings-scroll").evaluate(scroller => {
+    const box = scroller.getBoundingClientRect();
+    return [...scroller.querySelectorAll(".session-row")].filter(row => { const bounds = row.getBoundingClientRect(); return bounds.top >= box.top - 0.5 && bounds.bottom <= box.bottom + 0.5; }).length;
+  });
+  for (const theme of ["Dark", "Light"]) {
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await page.goto("/");
+    await page.getByRole("button", { name: theme, exact: true }).click();
+    await expect(heading).toHaveText("Good work leaves a trail.");
+    await expect(page.getByLabel("Archive totals")).toBeVisible();
+    await page.setViewportSize({ width: 1100, height: 700 });
+    await expect(heading).toHaveText("Session library");
+    await expect(page.getByLabel("Archive totals")).toBeHidden();
+    // With the hero and archive totals in place, only three full rows fit at this size.
+    await expect.poll(fullyVisibleRows).toBeGreaterThanOrEqual(4);
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await expect(heading).toHaveText("Good work leaves a trail.");
+    await expect(page.getByLabel("Archive totals")).toBeVisible();
   }
 });
 
