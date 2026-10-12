@@ -222,6 +222,7 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 - **Style:** Narrow sidebar, muted section metadata, and selected-item emphasis through the active palette.
 - **Workspace list:** Scrolls inside a guaranteed minimum height, so a short list still occupies the rail and a long one never pushes the footer off-screen.
 - **Mobile:** Navigation becomes the same 250px drawer at the mobile breakpoint; the three reading controls remain in its footer.
+- **Subagent visibility:** Not a sidebar control. The library's Show subagents switch owns it, and the sidebar's counts and workspace list follow that switch.
 
 ### Sidebar Footer
 - **Style:** Theme first as a segmented fieldset, then Text size and Reading width with consistently stacked labels and full-width selectors.
@@ -240,6 +241,8 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 - **Style:** A charcoal container-radius panel of about 300px, capped by the space between its trigger and the viewport floor, scrolling internally with contained overscroll.
 - **Phone:** A full-width bottom sheet up to 80% of the viewport height, with a visible close button that exists only at that size.
 - **Dismissal:** Escape or an outside pointer-down closes it and returns focus to the Filters trigger.
+- **Subagents:** A single Subagents only checkbox is the menu's only subagent choice; plain visibility belongs to the Show subagents switch beside the trigger, and the Including subagents chip reports it.
+- **Replay count:** The replay Filters badge counts only narrowing the active tab does not already show. Conversation, Tools, Errors, and All events are views and never light it; Focused replay view choices outside those tabs, search, and the remaining constraints do.
 
 ### Replay Event
 - **Style:** A bordered transcript card with a monospace header carrying the role, a linked timestamp, and an error flag. The first known directory on each visible page is shown, followed by directory changes rather than repeated identical paths. Filtering or paging establishes the visible context again; exact per-event provenance remains in Raw event.

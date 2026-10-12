@@ -37,7 +37,7 @@ test("usage totals keep hidden subagents, state their share and match the sideba
   await summary.click();
   const scope = page.locator(".usage-panel .usage-scope").first();
   await expect(scope).toContainText(`All ${hidden.total} matching recordings, across every page, plus ${hidden.hiddenAgents} subagent recordings hidden from the list. ${hidden.sessionsWithUsage} of ${hidden.total + hidden.hiddenAgents} report usage. This total includes ${usageCost(hidden.hiddenAgentUsage)} est. from ${hidden.hiddenAgents} subagent recordings hidden from the list. Each row shows only its own recording's cost, so the visible rows add up to less.`);
-  await page.locator(".sidebar").getByRole("button", { name: "Show subagents", exact: true }).click();
+  await page.locator(".library").getByRole("button", { name: "Show subagents", exact: true }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("agents")).toBe("1");
   await expect(summary).toContainText(usageCost(shown.usage));
   await expect(scope).toContainText(`All ${shown.total} matching recordings, across every page. ${shown.sessionsWithUsage} report usage.`);
@@ -52,7 +52,7 @@ test("usage totals keep hidden subagents, state their share and match the sideba
   await expect(page.locator(".session-row")).toHaveCount(0);
   await summary.click();
   await expect(scope).toContainText(`All 0 matching recordings, across every page, plus ${worktree.count} subagent recordings hidden from the list. ${worktree.count} of ${worktree.count} report usage.`);
-  await page.locator(".sidebar").getByRole("button", { name: "Show subagents", exact: true }).click();
+  await page.locator(".library").getByRole("button", { name: "Show subagents", exact: true }).click();
   await expect(page.locator(".session-row")).toHaveCount(worktree.count);
   await expect(summary).toContainText(usageCost(worktree.usage));
 });

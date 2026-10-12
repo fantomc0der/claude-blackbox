@@ -2,10 +2,6 @@
   .subagent-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 2px; color: var(--muted); font-size: var(--text-support); background: transparent; border: 0; cursor: pointer; }
   .subagent-toggle:hover { color: var(--text); }
   .subagent-toggle[aria-pressed="true"] { color: var(--text); }
-  .sidebar-footer > .subagent-toggle { width: 100%; min-height: 40px; padding: 4px 0; margin: 0 0 4px; text-align: left; }
-  .sidebar-footer > .subagent-toggle > svg { display: none; }
-  .sidebar-footer .subagent-toggle-track { margin-left: auto; flex-shrink: 0; }
-  .subagent-toggle-label small { display: block; margin-top: 3px; color: var(--muted); font-size: var(--text-meta); font-weight: 400; line-height: 1.35; }
   .filter-row > .subagent-toggle { margin-left: auto; }
   .library-split .subagent-toggle-label { display: none; }
   .subagent-toggle-track { width: 26px; height: 16px; padding: 3px; border-radius: 10px; background: var(--line); }
