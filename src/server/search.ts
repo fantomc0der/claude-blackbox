@@ -27,7 +27,8 @@ export function numericBound(value: string | null, integer = false): number | nu
 }
 
 // A plain `YYYY-MM-DD` date bounds a whole calendar day: in UTC, or in the zone `offset` minutes east of UTC when that
-// is a whole number within real zone offsets (-14:00 to +14:00). Any other offset is ignored, leaving the UTC day.
+// is a whole number within 14 hours of UTC either way, which covers every real zone (-12:00 to +14:00) with room to
+// spare. Any other offset is ignored, leaving the UTC day.
 export function dateBound(value: string | null, end = false, offset: string | null = null): string | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) return null;
   const minutes = offset && /^[+-]?\d{1,3}$/.test(offset) ? Number(offset) : NaN;
