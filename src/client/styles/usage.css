@@ -89,5 +89,7 @@
     .library .filter-popover > summary { min-height: 44px; min-width: 44px; justify-content: center; }
   }
   @media (max-width: 900px), (max-height: 650px) { .replay-heading-content .replay-usage { display: none; } }
+  /* On short screens a narrow replay pane would wrap usage below the provenance strip; Session details keeps it. */
+  @media (max-height: 820px) { @container replay (max-width: 900px) { .replay-heading-content .replay-usage { display: none; } } }
   @media (prefers-reduced-motion: reduce) { .usage-expand svg { transition: none; } }
 }

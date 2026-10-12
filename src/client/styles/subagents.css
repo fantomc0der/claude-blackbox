@@ -10,7 +10,7 @@
   .subagent-toggle[aria-pressed="true"] .subagent-toggle-track::after { transform: translateX(10px); background: var(--bg); }
   .family-controls .subagent-access { min-height: 0; height: var(--family-control-height); padding: 0 12px; white-space: nowrap; }
   .session-heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
-  .session-heading-title h2 { min-width: 0; flex: 1 1 240px; }
+  .session-heading-title > .replay-title-line { flex: 1 1 240px; }
   .session-identity { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; color: var(--text); font-size: var(--text-support); font-weight: 500; }
   .session-family { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; font-size: var(--text-support); }
   .session-lineage { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; min-width: 0; }
@@ -27,7 +27,7 @@
   .tool-subagent-title svg { flex-shrink: 0; }
   .tool-subagent-link .text-button { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
   .session-context { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
-  .session-context > .session-path, .session-context > .session-snippet { min-width: 0; flex: 1; }
+  .session-context > .session-path { min-width: 0; flex: 1; }
   .session-kind { flex-shrink: 0; margin-top: 7px; border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--muted); font-size: var(--text-meta); line-height: 1.4; font-weight: 500; white-space: nowrap; }
   .subagent-access > span { font-variant-numeric: tabular-nums; color: var(--muted); }
   .subagent-dialog { color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 0; width: min(900px, calc(100vw - 32px)); height: min(840px, calc(100dvh - 48px)); max-width: none; max-height: none; }

@@ -39,6 +39,23 @@ export function dateTime(value: string): string {
   return value ? new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "Not recorded";
 }
 
+// The span from the first to the last recorded moment: a time range within one day, a date range across days. With
+// `days`, a day's times are left out so the range fits narrow panes.
+export function recordedRange(start: string, end: string, options: { days?: boolean; locale?: string; timeZone?: string } = {}): string {
+  const { days = false, locale, timeZone } = options;
+  const times = [Date.parse(start), Date.parse(end)].filter(Number.isFinite);
+  if (!times.length) return "Dates not recorded";
+  const first = new Date(Math.min(...times)), last = new Date(Math.max(...times));
+  const day = new Intl.DateTimeFormat(locale, { timeZone, dateStyle: "short" });
+  const withTime = !days && day.format(first) === day.format(last);
+  return new Intl.DateTimeFormat(locale, withTime ? { timeZone, dateStyle: "medium", timeStyle: "short" } : { timeZone, dateStyle: "medium" }).formatRange(first, last);
+}
+
+// The last segment of a recorded working directory, as the server names an ungrouped workspace.
+export function folderName(path: string): string {
+  return path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || "Unknown folder";
+}
+
 export function modelName(model: string): string {
   if (!model || model === "<synthetic>") return "Model not recorded";
   const variant = model.match(/\[[^\]]*\]$/)?.[0] ?? "";
