@@ -154,7 +154,7 @@ bun run build
 bun run demo
 ```
 
-Open `http://127.0.0.1:12002`. The demo creates 15 explicitly synthetic recordings in `.blackbox/demo` and a separate index in `.blackbox/demo-state`. It never reads or modifies your Claude data. The generator only overwrites its own marked fixture files.
+Open `http://127.0.0.1:12002`. The demo creates 17 explicitly synthetic sessions, including a two-day session long enough to show the replay activity strip and a session that launches three agents, in `.blackbox/demo` and a separate index in `.blackbox/demo-state`. It never reads or modifies your Claude data. The generator only overwrites its own marked fixture files.
 
 ## Development And Verification
 
