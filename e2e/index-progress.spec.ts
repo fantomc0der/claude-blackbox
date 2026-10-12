@@ -61,6 +61,70 @@ test("sidebar shows meaningful indexing progress without refreshing usage or shi
   expect((await status.boundingBox())!.height).toBe(height);
 });
 
+test("long index counts truncate without clipping the activity indicator or hiding full values", async ({ page }) => {
+  await mockProgress(page);
+  await page.route("**/api/catalog", async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), sessions: Number.MAX_SAFE_INTEGER } });
+  });
+  await page.goto("/");
+  const status = page.locator(".index-status");
+  for (const theme of ["Dark", "Light"]) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole("button", { name: theme, exact: true }).click();
+    for (const size of ["standard", "larger"]) {
+      await page.getByLabel("Text size").selectOption(size);
+      for (const width of [1440, 1000, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        if (width === 390) await page.getByLabel("Open workspace navigation").click();
+        await progress(page, { phase: "idle", checked: 0, total: 0 });
+        await expect(status.locator(".index-count-value")).toHaveText("9,007,199,254,740,991");
+        await expect(status.locator(".index-progress")).toHaveAttribute("title", /9,007,199,254,740,991/);
+        expect(await status.locator(".index-count").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+        await progress(page, { phase: "indexing", checked: 123456789, total: Number.MAX_SAFE_INTEGER });
+        const progressbar = status.getByRole("progressbar");
+        await expect(progressbar).toHaveAttribute("aria-valuetext", "Checking files: 123,456,789 / 9,007,199,254,740,991 recording files");
+        await expect(progressbar).toHaveAttribute("title", /123,456,789 \/ 9,007,199,254,740,991/);
+        const count = await status.locator(".index-count").evaluate(element => {
+          const value = element.querySelector(".index-count-value")!;
+          const indicator = element.querySelector(".index-refresh")!.getBoundingClientRect();
+          return {
+            overflowing: element.scrollWidth > element.clientWidth,
+            truncated: value.scrollWidth > value.clientWidth,
+            ellipsis: getComputedStyle(value).textOverflow,
+            indicatorFits: indicator.width > 0 && indicator.right <= element.getBoundingClientRect().right + 1,
+          };
+        });
+        expect(count).toEqual({ overflowing: false, truncated: true, ellipsis: "ellipsis", indicatorFits: true });
+        if (width === 390) await page.locator(".sidebar-mobile-close").click();
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
+  }
+});
+
+test("larger index text keeps the footer frame stable across scan phases", async ({ page }) => {
+  await mockProgress(page);
+  await page.goto("/");
+  await page.getByLabel("Text size").selectOption("larger");
+  const status = page.locator(".index-status");
+  for (const width of [1440, 1000, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (width === 390) await page.getByLabel("Open workspace navigation").click();
+    await progress(page, { phase: "idle", checked: 77, total: 77 });
+    await expect(status).toContainText("Recordings indexed");
+    const height = (await status.boundingBox())!.height;
+    const footerHeight = (await page.locator(".sidebar-footer").boundingBox())!.height;
+    for (const [phase, label] of [["discovering", "Finding recordings"], ["indexing", "Checking files"], ["error", "Scan failed"], ["idle", "Recordings indexed"]] as const) {
+      await progress(page, { phase, checked: 20, total: 77 });
+      await expect(status).toContainText(label);
+      expect((await status.boundingBox())!.height).toBe(height);
+      expect((await page.locator(".sidebar-footer").boundingBox())!.height).toBe(footerHeight);
+    }
+    if (width === 390) await page.locator(".sidebar-mobile-close").click();
+  }
+});
+
 test("quick index checks stay quiet and scan errors allow retry", async ({ page }) => {
   await mockProgress(page);
   await page.goto("/");

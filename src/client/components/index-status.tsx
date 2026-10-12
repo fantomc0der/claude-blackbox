@@ -25,14 +25,13 @@ export function IndexStatus(props: { catalog: Catalog | null; progress: IndexPro
     return props.catalog ? tokenCount(props.catalog.sessions) : "—";
   };
   const determinate = () => visible() && props.progress?.phase === "indexing" && props.progress.total > 0;
-  return <div class={['index-status', { 'index-failed': failed() }]}>
-    <span class={['loading-dot index-refresh', { active: visible() && !failed() }]} aria-hidden="true" />
+  return <div class={['index-status', { 'index-failed': failed(), 'index-idle': !!props.progress && !visible() && !failed() }]}>
     <div class="index-progress" role={visible() && !failed() ? "progressbar" : undefined} aria-label={visible() && !failed() ? "Recording index" : undefined}
       aria-describedby="recording-index-help"
       aria-valuemin={determinate() ? 0 : undefined} aria-valuemax={determinate() ? props.progress!.total : undefined}
       aria-valuenow={determinate() ? props.progress!.checked : undefined} aria-valuetext={visible() && !failed() ? `${label()}: ${count()} recording files` : undefined}
       title={`${label()}: ${count()}. Progress counts recording files, not individual messages. Unreadable sources are reported separately.`}>
-      <span class="index-label">{label()}</span><span class="index-count">{count()}</span>
+      <span class="index-label">{label()}</span><span class="index-count"><span class="index-count-value">{count()}</span><span class={['loading-dot index-refresh', { active: visible() && !failed() }]} aria-hidden="true" /></span>
     </div>
     <span id="recording-index-help" class="visually-hidden">Counts refer to recording files, not individual messages. {failed() ? "The index may be incomplete or out of date. Rescan recordings to retry." : ""}</span>
     <button class="icon-button" title="Rescan recordings" aria-label="Rescan recordings" aria-describedby="recording-index-help" disabled={visible() || props.refreshing} onClick={props.refresh}><Icon name="refresh" size={15} /></button>

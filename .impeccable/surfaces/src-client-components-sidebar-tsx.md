@@ -29,6 +29,14 @@ The footer includes a fixed-height status beside Rescan recordings: finding file
 
 The checking label explicitly names files, and Rescan exposes the full count definition as an accessible description. Scan failures use a static danger-colored dot and label plus an incomplete-index explanation without changing the status height. A polite live region outside the inert mobile drawer explains that indexed recordings remain available but results may be incomplete or out of date. Routine progress counts are not live-announced.
 
+## Footer alignment refinement
+
+The footer alignment refinement gives Theme, Text size, and Reading width shared label/control widths and coordinated wrapping. Their fine-pointer controls share a 32px height; mobile theme buttons retain 44px targets. A divider separates appearance from index/privacy status. The idle indexed count sits beside its left-aligned label, wrapping only when necessary, while busy and failure details remain stacked without reserving an empty indicator column.
+
+Visual review covers dark and light desktop, compact laptop, mobile drawer, and larger-text layouts using synthetic recordings and isolated development state. The mechanical detector reports only pre-existing app.css advisories outside the changed rules; no new palette, raster assets, or product claims are introduced.
+
+Disposition: SHIP. `bun run check` passes type checking, 145 unit tests, and the production build; `bun run test:e2e` passes 162 browser tests, including shared control edges, coordinated wrapping, status alignment, touch targets, and existing indexing/accessibility coverage.
+
 ## Original appearance-control evidence and finish
 
 - **Disposition:** SHIP. The finish reviewer reached the review ceiling with no material fixes; dark remains visually preserved and the approved light palette stays muted, off-white, and mostly grayscale.
