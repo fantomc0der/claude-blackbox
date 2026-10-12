@@ -52,11 +52,14 @@ export function App() {
   const [libraryCollapsed, setLibraryCollapsed] = createSignal(false);
   const [overviewVisible, setOverviewVisible] = createSignal(true);
   const [libraryWidth, setLibraryWidth] = createSignal<number>();
+  const [headingFocus, setHeadingFocus] = createSignal<string | null>(null);
+  const defaultTitle = document.title;
   let searchInput!: HTMLInputElement, helpButton!: HTMLButtonElement;
   let refreshPage = () => {};
   const changed = () => { setRevision(value => value + 1); refreshPage(); };
   const closeReplay = () => {
     const id = params().get("session");
+    setHeadingFocus(null);
     navigate({ session: null, event: null, context: null, ...Object.fromEntries(replayKeys.map(key => [key, null])) });
     requestAnimationFrame(() => {
       const row = id ? document.querySelector<HTMLElement>(`.session-row[data-session-id="${CSS.escape(id)}"]`) : null;
@@ -166,15 +169,35 @@ export function App() {
     finally { setRefreshing(false); }
   };
   const currentWorkspace = () => catalog()?.workspaces.find(workspace => workspace.id === params().get("workspace"));
+  // A recording opened from the keyboard moves focus to its heading once it has loaded, so the next Tab continues into the
+  // replay instead of through every remaining row. Escape or Close replay still returns focus to the row.
+  createEffect(() => { const id = headingFocus(); return id && session()?.id === id ? id : null; }, id => {
+    if (!id) return;
+    setHeadingFocus(null);
+    requestAnimationFrame(() => {
+      if (params().get("session") === id) document.querySelector<HTMLElement>(".replay-panel-heading h2")?.focus({ preventScroll: true });
+    });
+  });
+  createEffect(() => {
+    const id = params().get("session"), term = params().get("q")?.trim();
+    const opened = id && session()?.id === id ? session()!.title.trim() : "";
+    const view = opened || (term ? `Search: ${term}` : currentWorkspace()?.name || (params().get("bookmarked") ? "Bookmarked" : ""));
+    return view ? `${view} · claude-blackbox` : defaultTitle;
+  }, title => { document.title = title; });
+  const skipToTranscript = (event: MouseEvent) => {
+    event.preventDefault();
+    document.querySelector<HTMLElement>(".replay-scroll")?.focus();
+  };
 
   return <div class={['app-shell', { 'has-replay': Boolean(params().get("session")), 'nav-open': navOpen() }]}>
+    <Show when={params().get("session")}><a class="skip-link" href="#replay-transcript" onClick={skipToTranscript}>Skip to transcript</a></Show>
     <a class="skip-link" href="#main-content">Skip to recordings</a>
     <Show when={navOpen()}><button class="nav-scrim" aria-label="Close navigation" onClick={() => setNavOpen(false)} /></Show>
     <Sidebar catalog={catalog()} indexing={indexing()} refreshing={refreshing()} params={params()} navigate={navigate} group={() => setGroupOpen(true)} refresh={() => void refresh()} close={() => setNavOpen(false)} hidden={mobile() && !navOpen()} />
     <main class="main-shell" id="main-content"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu icon-button" aria-label="Open workspace navigation" onClick={() => setNavOpen(true)}><Icon name="menu" /></button><Icon name="box" size={16} /><span>Flight recorder</span><span class="breadcrumb-divider">/</span><strong>{currentWorkspace()?.name || (params().get("bookmarked") ? "Bookmarked" : "All workspaces")}</strong></div><div class="topbar-actions"><Show when={catalog()?.demo}><span class="demo-label">DEMO MODE</span></Show><Show when={catalog() && !catalog()!.indexedAt}><span class="indexing-state" role="status"><span class="live-dot" />Indexing recordings…</span></Show><span class={['connection-state', { disconnected: !connected() }]}><span class="live-dot" />{connected() ? "Connected locally" : "Reconnecting…"}</span><button class="icon-button" ref={helpButton} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(value => !value)}><Icon name="keyboard" size={18} /></button></div></header>
       <Show when={error()}><div class="error-banner" role="alert"><Icon name="alert" size={16} />{error()}<button class="text-button" onClick={changed}>Retry</button></div></Show>
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>
-      <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} usageCurrent={usageScope(pageQuery()) === usageScope(listQuery())} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} />
+      <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} usageCurrent={usageScope(pageQuery()) === usageScope(listQuery())} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} focusReplay={setHeadingFocus} />
         <Show when={params().get("session") && !libraryCollapsed()}><LibraryDivider resize={setLibraryWidth} /></Show>
         <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} params={params()} navigate={navigate} traversal={traversal} changed={changed} close={closeReplay} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} overviewVisible={overviewVisible()} toggleOverview={() => setOverviewVisible(value => !value)} />}</Show>
       </div>

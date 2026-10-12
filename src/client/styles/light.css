@@ -60,7 +60,7 @@
   .secondary-button { background: transparent; color: var(--text); border-color: var(--light-line-strong); }
   .secondary-button:hover:not(:disabled) { background: var(--raised); border-color: var(--muted); }
   .search-box { background: var(--surface); border-color: var(--light-line-strong); color: var(--muted); }
-  .search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .search-box:focus-within { border-color: var(--accent); }
   .search-box input, .replay-find input, .list-caption select { background: transparent; }
   .filter-tab.active { color: var(--text); background: var(--light-selected); border-color: var(--light-line-strong); }
   .filter-count, .bookmarked { background: var(--light-selected); }

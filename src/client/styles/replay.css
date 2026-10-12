@@ -63,7 +63,7 @@
 .replay-controls { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: 0 10px; }
 .replay-tabs { grid-column: 1 / -1; }
 .replay-find { min-width: 0; grid-column: 1; }
-.replay-find input { min-width: 60px; }
+.replay-find input { min-width: 72px; }
 .replay-filters summary { cursor: pointer; color: var(--muted); font-size: var(--text-meta); min-height: 32px; display: inline-flex; align-items: center; gap: 6px; }
 .replay-filters .filter-count { color: var(--accent); font-weight: 700; }
 .replay-filter-menu { position: fixed; z-index: 15; left: var(--menu-left, 16px); top: var(--menu-top, 16px); width: min(360px, calc(100vw - 32px)); max-height: var(--menu-height, 65vh); display: grid; gap: 10px; overflow-y: auto; overscroll-behavior: contain; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 15px 55px color-mix(in srgb, var(--text) 18%, transparent); }
@@ -80,7 +80,7 @@
 /* Stepping stays beside the term; when the row runs out of room only the narrowing switch drops to a second line, where
    it shares the bottom edge with Filters while the tabs keep their underline on the divider. */
 .replay-find:has(.replay-find-tools) { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
-.replay-find:has(.replay-find-tools) input { flex: 1 1 64px; }
+.replay-find:has(.replay-find-tools) input { flex: 1 1 76px; }
 .replay-find-tools { display: contents; }
 .replay-controls:has(.replay-find-tools) .replay-tabs { align-self: end; }
 .replay-controls:has(.replay-find-tools) .replay-filters { align-self: end; margin-bottom: 6px; }
