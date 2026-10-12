@@ -48,13 +48,13 @@ test("the workspace list keeps a usable height on laptop displays", async ({ pag
   expect((await measure(page)).list).toBeGreaterThan(wide.list);
 });
 
-test("reading controls sit beside their labels when they fit and stack together when they do not", async ({ page }) => {
+test("appearance controls share aligned edges and stack together when they do not fit", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".workspace-nav-item").first()).toBeVisible();
   const layout = () => page.locator(".sidebar-footer").evaluate(footer => {
     const row = (label: Element, control: Element) => {
-      const a = label.getBoundingClientRect(), b = control.getBoundingClientRect();
-      return { inline: b.left >= a.right && b.top < a.bottom && b.bottom > a.top, stacked: b.top >= a.bottom - 1, labelHeight: a.height, line: parseFloat(getComputedStyle(label).lineHeight), width: b.width, height: b.height };
+      const labelBox = label.getBoundingClientRect(), controlBox = control.getBoundingClientRect();
+      return { inline: controlBox.left >= labelBox.right && controlBox.top < labelBox.bottom && controlBox.bottom > labelBox.top, stacked: controlBox.top >= labelBox.bottom - 1, labelHeight: labelBox.height, line: parseFloat(getComputedStyle(label).lineHeight), left: controlBox.left, width: controlBox.width, height: controlBox.height };
     };
     const selects = [...footer.querySelectorAll(".sidebar-select")].map(field => row(field.querySelector("span")!, field.querySelector("select")!));
     return { theme: row(footer.querySelector(".theme-control legend")!, footer.querySelector(".theme-options")!), selects, status: footer.querySelector(".index-status")!.getBoundingClientRect().height, rescan: footer.querySelector(".index-status button")!.getBoundingClientRect().height };
@@ -62,11 +62,14 @@ test("reading controls sit beside their labels when they fit and stack together 
   for (const [width, height, inline] of [[1440, 900, true], [1100, 700, false], [1000, 700, false]] as const) {
     await page.setViewportSize({ width, height });
     const footer = await layout();
-    expect(footer.theme.inline).toBe(true);
+    expect(inline ? footer.theme.inline : footer.theme.stacked).toBe(true);
     for (const select of footer.selects) {
       expect(inline ? select.inline : select.stacked).toBe(true);
       expect(select.labelHeight).toBeLessThanOrEqual(select.line + 1);
       expect(select.width).toBeGreaterThanOrEqual(100);
+      expect(select.left).toBeCloseTo(footer.theme.left, 0);
+      expect(select.width).toBeCloseTo(footer.theme.width, 0);
+      expect(select.height).toBe(footer.theme.height);
     }
     expect(footer.status).toBe(36);
     expect(footer.rescan).toBe(36);
@@ -75,7 +78,46 @@ test("reading controls sit beside their labels when they fit and stack together 
   await page.getByRole("button", { name: "Open workspace navigation" }).click();
   const drawer = await layout();
   for (const select of drawer.selects) expect(select.height).toBeGreaterThanOrEqual(44);
+  for (const button of await page.getByRole("group", { name: "Theme", exact: true }).getByRole("button").all()) {
+    expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
   expect(drawer.rescan).toBeGreaterThanOrEqual(44);
+});
+
+test("sidebar footer alignment holds across themes, text sizes, and navigation widths", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".index-status")).toHaveClass(/index-idle/);
+  for (const theme of ["Dark", "Light"]) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole("button", { name: theme, exact: true }).click();
+    for (const size of ["standard", "larger"]) {
+      await page.getByLabel("Text size").selectOption(size);
+      for (const width of [1920, 1440, 1100, 1000, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        if (width === 390) await page.getByRole("button", { name: "Open workspace navigation" }).click();
+        const layout = await page.locator(".sidebar-footer").evaluate(footer => {
+          const themeBox = footer.querySelector(".theme-options")!.getBoundingClientRect();
+          const labelBox = footer.querySelector(".theme-control legend")!.getBoundingClientRect();
+          const indexLabel = footer.querySelector(".index-label")!.getBoundingClientRect();
+          const indexCount = footer.querySelector(".index-count")!.getBoundingClientRect();
+          return {
+            aligned: [...footer.querySelectorAll(".sidebar-select select")].every(select => Math.abs(select.getBoundingClientRect().left - themeBox.left) < 1 && Math.abs(select.getBoundingClientRect().width - themeBox.width) < 1),
+            statusAligned: indexLabel.left === labelBox.left,
+            countInline: Math.abs(indexLabel.top - indexCount.top) < 1,
+            overflows: [...footer.querySelectorAll<HTMLElement>(".theme-options, .index-progress, .index-count")].some(element => element.scrollWidth > element.clientWidth),
+            separated: getComputedStyle(footer.querySelector(".sidebar-status")!).borderTopStyle === "solid",
+          };
+        });
+        expect(layout.aligned).toBe(true);
+        expect(layout.statusAligned).toBe(true);
+        expect(layout.overflows).toBe(false);
+        expect(layout.separated).toBe(true);
+        if (size === "standard" && (width >= 1280 || width === 390)) expect(layout.countInline).toBe(true);
+        if (width === 390) await page.locator(".sidebar-mobile-close").click();
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+    }
+  }
 });
 
 test("every workspace row stays reachable once the list outgrows the sidebar", async ({ page }) => {

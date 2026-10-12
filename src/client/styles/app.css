@@ -92,22 +92,23 @@
   .nav-empty p { margin-bottom: 4px; }
   .workspace-label .workspace-group { gap: 4px; padding-inline: 4px; font-size: var(--text-meta); letter-spacing: 0; flex-shrink: 0; }
   .sidebar-footer { flex-shrink: 0; border-top: 1px solid var(--line); padding: 8px 0 7px; }
-  /* Label left when the control fits beside it; otherwise the control wraps below at full width. The shared label minimum makes both selects switch together. */
-  .sidebar-select { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 6px; margin-bottom: 6px; color: var(--muted); }
-  .sidebar-select > span { flex: 999 0 6.4em; min-width: max-content; line-height: 1.35; }
-  .sidebar-select select { flex: 1 0 8.3em; min-height: 32px; font-size: var(--text-support); padding: 4px 6px; }
-  .sidebar-footer > div { display: flex; align-items: center; gap: 8px; }
-  .sidebar-footer > div > svg { color: var(--accent); }
+  .sidebar-select { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 6px; margin-bottom: 4px; color: var(--muted); }
+  .sidebar-select > span, .theme-control legend { flex: 999 0 6.4em; min-width: max-content; line-height: 1.35; font-size: var(--text-meta); }
+  .sidebar-select select, .theme-options { flex: 1 0 8.6em; min-height: 32px; font-size: var(--text-support); }
+  .sidebar-select select { padding: 4px 6px; }
+  .sidebar-status { margin-top: 6px; border-top: 1px solid var(--line); }
+  .sidebar-privacy { display: flex; align-items: center; gap: 8px; }
+  .sidebar-privacy > svg { color: var(--accent); }
   .sidebar-footer span { font-size: var(--text-meta); }
-  .sidebar-footer button { margin-left: auto; }
-  .sidebar-footer .index-status { min-height: 44px; margin-block: 2px; }
-  .index-status .index-refresh { flex-shrink: 0; margin: 0; visibility: hidden; animation: none; }
-  .index-status .index-refresh.active { visibility: visible; animation: breathe .8s infinite; }
-  .index-status.index-failed .index-refresh { visibility: visible; background: var(--danger); animation: none; }
+  .index-status { display: flex; align-items: center; gap: 4px; min-height: 44px; }
+  .index-status .index-refresh { display: none; flex-shrink: 0; margin: 0; animation: none; }
+  .index-status .index-refresh.active { display: inline-block; animation: breathe .8s infinite; }
+  .index-status.index-failed .index-refresh { display: inline-block; background: var(--danger); animation: none; }
   .index-status.index-failed .index-label { color: var(--danger); }
   .index-progress { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; line-height: 1.35; }
+  .index-idle .index-progress { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
   .index-label { color: var(--muted); }
-  .index-count { font-variant-numeric: tabular-nums; }
+  .index-count { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
   .index-progress > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .index-status > button { flex-shrink: 0; min-width: 44px; min-height: 44px; }
   .sidebar-footer .version-label { flex-shrink: 0; margin-left: auto; font: .6875rem/1.2 var(--mono); letter-spacing: .4px; color: #798181; }
