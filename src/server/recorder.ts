@@ -11,6 +11,8 @@ import { facetLimit, isFacetValue } from "./facets";
 
 const timelineBucketLimit = 1500;
 const findMatchLimit = 5000;
+const callInputKeys = 32;
+const callInputLength = 2000;
 const timelineGranularities = [[16, 60_000], [15, 600_000], [13, 3_600_000], [10, 86_400_000]] as const;
 type TimelineRow = { at: string | null; count: number; first: number; last: number; errors: number };
 
@@ -914,6 +916,27 @@ export class Recorder {
     for (const toolId of new Set(toolIds)) {
       const row = lookup.get(id, toolId);
       if (row) found[toolId] = JSON.parse(row.raw);
+    }
+    return found;
+  }
+
+  // The calls behind tool results, so a result shown without its call can still name the tool and what it ran on. Only
+  // what that header needs travels: the recorded name and the call's top-level text inputs, each capped, so a page of
+  // results never ships a written file's contents a second time. The full call stays in its own event.
+  calls(id: string, toolIds: string[]): Record<string, import("../shared/types").ContentBlock> {
+    const found: Record<string, import("../shared/types").ContentBlock> = Object.create(null);
+    if (!toolIds.length) return found;
+    const lookup = this.db.query<{ name: string; raw: string }, [string, string]>(
+      "SELECT call.name,e.raw FROM tool_calls call JOIN events e ON e.rowid=call.event_row WHERE call.session_id=? AND call.tool_id=?");
+    for (const toolId of new Set(toolIds)) {
+      const row = lookup.get(id, toolId);
+      if (!row) continue;
+      const block = normalize(JSON.parse(row.raw), id, 0, 0).blocks.find(block => block.type === "tool_use" && block.id === toolId);
+      const input: Record<string, string> = {};
+      for (const [key, value] of Object.entries(object(block?.input)).slice(0, callInputKeys)) {
+        if (typeof value === "string") input[key] = value.length > callInputLength ? `${value.slice(0, callInputLength - 1)}…` : value;
+      }
+      found[toolId] = { type: "tool_use", id: toolId, name: row.name, input };
     }
     return found;
   }

@@ -5,7 +5,7 @@ import { compact, modelName, usageCost } from "../lib/format";
 import { EventCard } from "./event-card";
 import { Icon } from "./icon";
 
-type PreviewPage = EventPage & { results: Record<string, ContentBlock> };
+type PreviewPage = EventPage & { results: Record<string, ContentBlock>; calls: Record<string, ContentBlock> };
 
 export function SubagentDialog(props: { parent: Session | null; members: SessionFamilyMember[]; selected: string; revision: number; href: (id: string) => string; follow: (event: MouseEvent, id: string) => void; close: () => void }) {
   let dialog!: HTMLDialogElement;
@@ -68,7 +68,7 @@ export function SubagentDialog(props: { parent: Session | null; members: Session
     <div class="subagent-transcript" ref={transcript} aria-label="Subagent transcript" aria-busy={pending() ? "true" : "false"} tabindex="0">
       <Show when={error()}><div class="error-banner" role="alert">{error()}<button class="text-button" onClick={() => setRetry(value => value + 1)}>Retry</button></div></Show>
       <Show when={pending() && !page()}><p class="subagent-status" role="status">Loading recording…</p></Show>
-      <For each={visibleEvents()}>{event => <EventCard event={event} results={page()?.results} showWorkspace={false} linkEvents={false} />}</For>
+      <For each={visibleEvents()}>{event => <EventCard event={event} results={page()?.results} calls={page()?.calls} showWorkspace={false} linkEvents={false} />}</For>
       <Show when={!pending() && !error() && !page()?.items.length}><p class="subagent-status">No conversation events are available yet. Open the full session to inspect all recorded events.</p></Show>
     </div>
     <footer class="subagent-dialog-footer"><span>Read-only preview · Your current session stays in place</span><div class="pagination">
