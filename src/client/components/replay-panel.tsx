@@ -3,7 +3,7 @@ import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, Sessio
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
-import { compact, dateTime, folderName, modelName, recordedRange, resumeCommand, searchHighlight, tokenCount, usageCost } from "../lib/format";
+import { compact, dateTime, folderName, modelName, recordedRange, resumeCommand, searchHighlight, tokenCount, usageCost, withLocalDays } from "../lib/format";
 import { TokenBreakdown, UsageNote } from "./usage-panel";
 import { anchoredMenu } from "../lib/anchor";
 import type { Navigate } from "../lib/location";
@@ -149,7 +149,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const params = new URLSearchParams({ kind: kind() });
     if (errorsOnly()) params.set("errors", "1");
     for (const [key, value] of [["q", narrowTerm()], ["tool", tool()], ["model", model()], ["cwd", cwd()], ["after", after()], ["before", before()]]) if (value) params.set(key!, value!);
-    return params.toString();
+    return withLocalDays(params.toString());
   });
   // Measured when needed rather than cached from scroll events: expanding a card at the end of the page moves the
   // reader away from the end without any scroll event, and a cached flag would then snap them back on the next refresh.
@@ -607,7 +607,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         <label for="replay-model">Recorded model<select id="replay-model" aria-label="Recorded model" value={model()} onChange={event => changeFilter("replayModel", event.currentTarget.value)}><option value="">Any model</option><For each={withSelectedOption(page()?.facets.models || [], model())}>{value => <option value={value}>{value}</option>}</For></select></label>
         <label for="replay-cwd">Working directory<select id="replay-cwd" aria-label="Working directory" value={cwd()} onChange={event => changeFilter("replayCwd", event.currentTarget.value)}><option value="">Any directory</option><For each={withSelectedOption(page()?.facets.directories || [], cwd())}>{value => <option value={value}>{value}</option>}</For></select></label>
         <label class="replay-errors"><input aria-label="Only errors" type="checkbox" checked={errorsOnly()} onChange={event => changeErrors(event.currentTarget.checked)} />Only errors</label>
-        <div class="replay-date-range"><label for="replay-after">After UTC<input id="replay-after" aria-label="After UTC" type="date" value={after()} onChange={event => changeDate("replayAfter", event.currentTarget.value)} /></label><label for="replay-before">Before UTC<input id="replay-before" aria-label="Before UTC" type="date" value={before()} onChange={event => changeDate("replayBefore", event.currentTarget.value)} /></label></div>
+        <div class="replay-date-range"><label for="replay-after">After<input id="replay-after" aria-label="After" type="date" value={after()} onChange={event => changeDate("replayAfter", event.currentTarget.value)} /></label><label for="replay-before">Before<input id="replay-before" aria-label="Before" type="date" value={before()} onChange={event => changeDate("replayBefore", event.currentTarget.value)} /></label></div>
         <button class="text-button" onClick={resetReplay}>Reset replay filters</button>
       </div></details>
     </div>

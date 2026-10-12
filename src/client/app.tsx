@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from
 import type { Catalog, IndexProgress, Session, SessionPage, WorkspaceGroup } from "../shared/types";
 import { isAbort, request } from "./lib/api";
 import { dismissable, rememberFocus } from "./lib/dismissable";
+import { withLocalDays } from "./lib/format";
 import { createLocation } from "./lib/location";
 import { replayKeys } from "./lib/replay-filters";
 import { createRefreshQueue } from "./lib/refresh-queue";
@@ -105,7 +106,7 @@ export function App() {
     const queue = createRefreshQueue(async signal => {
       setPending(true); setError("");
       try {
-        const data = await request<SessionPage>(`/api/sessions?${query}`, { signal });
+        const data = await request<SessionPage>(`/api/sessions?${withLocalDays(query)}`, { signal });
         if (signal.aborted) return;
         const existing = new Map(page()?.items.map(session => [session.id, session]) || []);
         data.items = data.items.map(session => {

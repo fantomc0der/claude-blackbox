@@ -26,8 +26,15 @@ export function numericBound(value: string | null, integer = false): number | nu
   return Number.isFinite(number) && number <= Number.MAX_SAFE_INTEGER && (!integer || Number.isSafeInteger(number)) ? number : null;
 }
 
-export function dateBound(value: string | null, end = false): string | null {
+// A plain `YYYY-MM-DD` date bounds a whole calendar day: in UTC, or in the zone `offset` minutes east of UTC when that
+// is a whole number within real zone offsets (-14:00 to +14:00). Any other offset is ignored, leaving the UTC day.
+export function dateBound(value: string | null, end = false, offset: string | null = null): string | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) return null;
+  const minutes = offset && /^[+-]?\d{1,3}$/.test(offset) ? Number(offset) : NaN;
+  if (value.length === 10 && Math.abs(minutes) <= 840) {
+    const zone = `${minutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, "0")}:${String(Math.abs(minutes) % 60).padStart(2, "0")}`;
+    return dateBound(`${value}T${end ? "23:59:59.999" : "00:00:00"}${zone}`);
+  }
   if (value.length > 10 && !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return null;
   const calendar = Date.parse(value.slice(0, 10));
   if (!Number.isFinite(calendar) || new Date(calendar).toISOString().slice(0, 10) !== value.slice(0, 10)) return null;

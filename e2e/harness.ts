@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, test as bunTest } from "bun:test";
-import { chromium, expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { chromium, expect, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { recorder, server } from "./server";
 
@@ -15,9 +15,10 @@ afterAll(async () => {
 });
 
 export { expect };
-export function test(name: string, run: (context: { page: Page; context: BrowserContext }) => Promise<void>) {
+// `options` adjusts the browser context, such as a fixed `timezoneId` for tests that depend on the reader's zone.
+export function test(name: string, run: (context: { page: Page; context: BrowserContext }) => Promise<void>, options: BrowserContextOptions = {}) {
   bunTest(name, async () => {
-    const context = await browser.newContext({ baseURL: "http://127.0.0.1:12003", viewport: { width: 1440, height: 1000 } });
+    const context = await browser.newContext({ baseURL: "http://127.0.0.1:12003", viewport: { width: 1440, height: 1000 }, ...options });
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));

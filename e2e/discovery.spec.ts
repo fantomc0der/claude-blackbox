@@ -3,7 +3,7 @@ import { expect, test } from "./harness";
 test("archive filters expose the usage contract and reset cleanly", async ({ page }) => {
   await page.goto("/?after=2026-09-01&before=2026-09-22&minTokens=12&pricing=partial&agents=only");
   await page.locator(".filter-popover > summary").click();
-  await expect(page.getByLabel("Last activity (UTC dates)")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Last activity", exact: true })).toBeVisible();
   await expect(page.getByLabel("Effort")).toBeVisible();
   await expect(page.getByLabel("Pricing")).toHaveValue("partial");
   await expect(page.getByText("Usage & record ranges", { exact: true })).toBeVisible();
