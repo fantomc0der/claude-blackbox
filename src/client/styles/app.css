@@ -108,8 +108,8 @@
   .index-progress { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; line-height: 1.35; }
   .index-idle .index-progress { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
   .index-label { color: var(--muted); }
-  .index-count { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
-  .index-progress > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .index-count { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: 6px; font-variant-numeric: tabular-nums; }
+  .index-label, .index-count-value { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .index-status > button { flex-shrink: 0; min-width: 44px; min-height: 44px; }
   .sidebar-footer .version-label { flex-shrink: 0; margin-left: auto; font: .6875rem/1.2 var(--mono); letter-spacing: .4px; color: #798181; }
   .version-label span { font-size: .6875rem; }
@@ -521,7 +521,7 @@
     .replay-panel-heading h2 { font-size: 20px; }
   }
   @media (pointer: fine) and (min-width: 681px) {
-    .sidebar-footer .index-status { min-height: 36px; }
+    .sidebar-footer .index-status { min-height: max(36px, calc(var(--text-meta) * 2.7 + 2px)); }
     .index-status > button { min-width: 36px; min-height: 36px; }
   }
   @media (max-width: 680px) {
