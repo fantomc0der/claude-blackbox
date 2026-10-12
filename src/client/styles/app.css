@@ -165,6 +165,7 @@
   .date-fields { display: flex; gap: 10px; }
   .date-fields > label { flex: 1; min-width: 0; }
   .search-help { font-size: var(--text-meta); line-height: 1.8; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; margin: 7px 0 0; }
+  .filter-hint { margin: -6px 0 12px; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; }
   .active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 0 0 10px; }
   .filter-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 230px; color: #c4d4b1; border: 1px solid #3e4938; background: #c7ee7907; padding: 5px 7px; border-radius: 5px; font-size: var(--text-meta); }
   .clear-filters { font-size: var(--text-control); color: var(--muted); padding: 5px; }

@@ -367,7 +367,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   return <section class={['replay-panel', { 'overview-hidden': !props.overviewVisible }]} aria-label="Session replay">
     <header class="replay-panel-heading">
       <div class="replay-title-row">
-        <div class="replay-heading-content"><Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <><div class="session-heading-title"><Show when={session().isAgent}><span class="session-identity"><Icon name="branch" size={14} />Subagent</span></Show><h2 title={session().title}>{sessionTitle()}</h2></div><div class="replay-usage" aria-label="Session usage"><Show when={session().usage.requests} fallback="No token usage recorded"><span title={tokenCount(session().usage.totalTokens)}>{compact(session().usage.totalTokens)} tokens</span><span>{usageCost(session().usage)} estimated API cost</span><Show when={session().usage.unpricedRequests}><span class="usage-warning">Incomplete pricing</span></Show></Show></div></>}</Show></div>
+        <div class="replay-heading-content"><Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <><div class="session-heading-title"><Show when={session().isAgent}><span class="session-identity"><Icon name="branch" size={14} />Subagent</span></Show><h2 title={session().title}>{sessionTitle()}</h2></div><div class="replay-usage" aria-label="Session usage"><Show when={session().usage.requests} fallback="No token usage recorded"><span title={tokenCount(session().usage.totalTokens)}>{compact(session().usage.totalTokens)} tokens</span><span title="Covers this recording's own requests; subagent recordings are counted separately">{usageCost(session().usage)} estimated API cost</span><Show when={session().usage.unpricedRequests}><span class="usage-warning">Incomplete pricing</span></Show></Show></div></>}</Show></div>
         <button class="icon-button replay-close" aria-label="Close replay" title="Back to session library" onClick={props.close}><Icon name="close" size={18} /></button>
       </div>
       <div class="replay-actions">
@@ -385,7 +385,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
                 <dt>Branch</dt><dd>{session().branch || "No branch"}</dd>
                 <dt>Model</dt><dd>{modelName(session().model)}</dd>
                 <dt>Activity</dt><dd>{session().messageCount} messages · {session().toolCount} tools</dd>
-                <dt>Est. API cost</dt><dd>{usageCost(session().usage)}</dd>
+                <dt>Est. API cost (this recording)</dt><dd>{usageCost(session().usage)}</dd>
                 <dt>Total tokens</dt><dd>{session().usage.requests ? tokenCount(session().usage.totalTokens) : "Not recorded"}</dd>
                 <dt>Session ID</dt><dd><button class="text-button mono" onClick={() => void copy(session().sessionId, "Session ID")}>{session().sessionId}</button></dd>
                 <dt>First recorded</dt><dd>{dateTime(session().startedAt)}</dd>

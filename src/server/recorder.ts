@@ -6,7 +6,7 @@ import type { Catalog, DirectoryUsage, EventPage, EventTimeline, IndexProgress, 
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
-import { emptyUsage, normalizeModel, readUsage, usageColumns } from "./usage";
+import { addUsage, emptyUsage, normalizeModel, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
 
 const timelineBucketLimit = 1500;
@@ -670,7 +670,9 @@ export class Recorder {
     if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
     if (params.get("errors") === "1") conditions.push("s.errors>0");
     if (params.get("edits") === "1") conditions.push("s.edits>0");
-    if (params.get("agents") !== "1" && params.get("agents") !== "only") conditions.push("s.agent=0");
+    // Hiding subagents only narrows the listing. Their requests were spent on behalf of the main sessions, so the usage
+    // totals keep counting them below. "Subagents only" still scopes both the listing and its usage to the subagents.
+    const hideAgents = params.get("agents") !== "1" && params.get("agents") !== "only";
     if (params.get("agents") === "only") conditions.push("s.agent=1");
     const pricing = params.get("pricing");
     if (pricing === "complete") conditions.push("session_usage.usageRequests>0 AND session_usage.pricedRequests=session_usage.usageRequests");
@@ -711,7 +713,9 @@ export class Recorder {
         if (tool !== "mcp__") bindings.push(tool);
       }
     }
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const scope = (extra: string[]) => [...conditions, ...extra].length ? `WHERE ${[...conditions, ...extra].join(" AND ")}` : "";
+    const usageWhere = scope([]);
+    const where = scope(hideAgents ? ["s.agent=0"] : []);
     const total = this.db.query<{ total: number }, SQLQueryBindings[]>(`SELECT count(*) AS total ${selectionJoins} ${where}`).get(...bindings)!.total;
     const limit = Math.max(1, pageNumber(params.get("limit"), 50, 100));
     const offset = Math.min(pageNumber(params.get("offset"), 0, 1_000_000), Math.floor(Math.max(0, total - 1) / limit) * limit);
@@ -738,30 +742,34 @@ export class Recorder {
       }
       return session;
     });
-    const usageRows = this.db.query<UsageSummary & { dimension: "directory" | "model"; cwd: string; model: string; effort: string | null }, SQLQueryBindings[]>(`WITH ranked AS (
-      SELECT usage.*, s.cwd, row_number() OVER (PARTITION BY request_key ORDER BY sidechain,
+    // Folder rows are split by recording type so the share of hidden subagents comes out of the same deduplicated pass.
+    const usageRows = this.db.query<UsageSummary & { dimension: "directory" | "model"; cwd: string; agent: number; model: string; effort: string | null }, SQLQueryBindings[]>(`WITH ranked AS (
+      SELECT usage.*, s.cwd, s.agent, row_number() OVER (PARTITION BY request_key ORDER BY sidechain,
         input+output+cache_creation+cache_read DESC, recorded DESC, cost DESC, effort IS NULL, s.started, s.id) AS position
       FROM usage_records usage JOIN sessions s ON s.id=usage.session_id
       LEFT JOIN group_paths gp ON gp.path=s.cwd LEFT JOIN groups g ON g.id=gp.group_id
-      LEFT JOIN bookmarks b ON b.session_id=s.id ${sessionUsageJoin} ${where}
+      LEFT JOIN bookmarks b ON b.session_id=s.id ${sessionUsageJoin} ${usageWhere}
     ), selected AS (SELECT * FROM ranked WHERE position=1)
-      SELECT 'directory' AS dimension,cwd,'' AS model,NULL AS effort,${usageColumns} FROM selected GROUP BY cwd
-      UNION ALL SELECT 'model' AS dimension,'' AS cwd,model,effort,${usageColumns} FROM selected GROUP BY model,effort`).all(...bindings);
+      SELECT 'directory' AS dimension,cwd,agent,'' AS model,NULL AS effort,${usageColumns} FROM selected GROUP BY cwd,agent
+      UNION ALL SELECT 'model' AS dimension,'' AS cwd,0 AS agent,model,effort,${usageColumns} FROM selected GROUP BY model,effort`).all(...bindings);
     const directoryCounts = this.db.query<{ cwd: string; sessions: number; withUsage: number }, SQLQueryBindings[]>(
-      `SELECT s.cwd, count(*) AS sessions, sum(EXISTS(SELECT 1 FROM usage_records WHERE session_id=s.id)) AS withUsage ${selectionJoins} ${where} GROUP BY s.cwd`).all(...bindings);
+      `SELECT s.cwd, count(*) AS sessions, sum(EXISTS(SELECT 1 FROM usage_records WHERE session_id=s.id)) AS withUsage ${selectionJoins} ${usageWhere} GROUP BY s.cwd`).all(...bindings);
     const byDirectory = new Map<string, UsageSummary>();
     const modelUsage: ModelUsage[] = [];
-    for (const { dimension, cwd, model, effort, ...usage } of usageRows) {
-      if (dimension === "directory") byDirectory.set(cwd, usage);
-      else modelUsage.push({ model, effort, usage });
+    const hiddenAgentUsage = emptyUsage();
+    for (const { dimension, cwd, agent, model, effort, ...usage } of usageRows) {
+      if (dimension === "model") { modelUsage.push({ model, effort, usage }); continue; }
+      addUsage(byDirectory.get(cwd) ?? byDirectory.set(cwd, emptyUsage()).get(cwd)!, usage);
+      if (agent && hideAgents) addUsage(hiddenAgentUsage, usage);
     }
     modelUsage.sort((left, right) => right.usage.costUSD - left.usage.costUSD || right.usage.totalTokens - left.usage.totalTokens
       || left.model.localeCompare(right.model) || (left.effort || "").localeCompare(right.effort || ""));
     const directories: DirectoryUsage[] = directoryCounts.map(directory => ({ ...directory, usage: byDirectory.get(directory.cwd) || emptyUsage() }))
       .sort((left, right) => right.usage.costUSD - left.usage.costUSD || right.usage.totalTokens - left.usage.totalTokens || left.cwd.localeCompare(right.cwd));
     const usage = emptyUsage();
-    for (const directory of directories) for (const key of Object.keys(usage) as (keyof UsageSummary)[]) usage[key] += directory.usage[key];
-    return { items, total, offset, limit, usage, directories, modelUsage, sessionsWithUsage: directoryCounts.reduce((sum, directory) => sum + directory.withUsage, 0) };
+    for (const directory of directories) addUsage(usage, directory.usage);
+    const counted = directoryCounts.reduce((sums, directory) => ({ sessions: sums.sessions + directory.sessions, withUsage: sums.withUsage + directory.withUsage }), { sessions: 0, withUsage: 0 });
+    return { items, total, offset, limit, usage, directories, modelUsage, sessionsWithUsage: counted.withUsage, hiddenAgents: counted.sessions - total, hiddenAgentUsage };
   }
 
   private eventFilter(id: string, params: URLSearchParams): { filter: string; bindings: SQLQueryBindings[] } {

@@ -297,9 +297,50 @@ describe("indexed usage", () => {
     const page = recorder.list(new URLSearchParams({ agents: "1" }));
     expect(page.usage.requests).toBe(3);
     expect(page.directories.reduce((sum, directory) => sum + directory.usage.requests, 0)).toBe(3);
-    expect(recorder.list(new URLSearchParams({ agents: "0" })).usage.requests).toBe(2);
-    expect(recorder.list(new URLSearchParams()).usage.requests).toBe(2);
+    expect(page).toMatchObject({ total: 3, hiddenAgents: 0, sessionsWithUsage: 3 });
     expect(recorder.list(new URLSearchParams({ cwd: "C:\\clone", agents: "1" })).usage.requests).toBe(3);
+    expect(recorder.list(new URLSearchParams({ agents: "only" }))).toMatchObject({ total: 1, hiddenAgents: 0, sessionsWithUsage: 1, usage: { requests: 1 } });
+  });
+
+  test("a request copied into a hidden subagent counts once, on the main session's side", async () => {
+    const setup = await fixture();
+    const shared = record("shared", { costUSD: 5 });
+    await setup.write("session-a", [shared]);
+    await setup.write("agent-copy", [{ ...shared, isSidechain: true }, record("agent-only", { isSidechain: true, costUSD: 1 })]);
+    const recorder = await setup.open();
+    const hidden = recorder.list(new URLSearchParams());
+    expect(hidden).toMatchObject({ total: 1, hiddenAgents: 1, usage: { requests: 2, costUSD: 6 }, hiddenAgentUsage: { requests: 1, costUSD: 1 } });
+    expect(recorder.list(new URLSearchParams({ agents: "1" })).usage).toEqual(hidden.usage);
+  });
+
+  test("hidden subagents still count toward every usage total, folder and model breakdown", async () => {
+    const setup = await fixture();
+    await setup.write("session-a", [record("main", { costUSD: 1 })]);
+    await setup.write("session-b", [record("other", { cwd: "C:\\work\\other", sessionId: "session-b", costUSD: 8 })]);
+    await setup.write("agent-subtask", [record("agent", { isSidechain: true, costUSD: 2, message: { ...record("agent").message, model: "claude-opus-4-5" } })]);
+    await setup.write("agent-worktree", [record("worktree-agent", { cwd: "C:\\work\\orbit-worktree", isSidechain: true, costUSD: 4 })]);
+    const recorder = await setup.open();
+    const shown = recorder.list(new URLSearchParams({ agents: "1" }));
+    const hidden = recorder.list(new URLSearchParams());
+    expect(shown).toMatchObject({ total: 4, hiddenAgents: 0, sessionsWithUsage: 4, usage: { requests: 4, costUSD: 15 }, hiddenAgentUsage: emptyUsage() });
+    expect(hidden).toMatchObject({ total: 2, hiddenAgents: 2, sessionsWithUsage: 4, usage: { requests: 4, costUSD: 15 }, hiddenAgentUsage: { requests: 2, costUSD: 6, totalTokens: 3800 } });
+    expect(hidden.items.map(session => session.isAgent)).toEqual([false, false]);
+    expect(hidden.usage).toEqual(shown.usage);
+    expect(hidden.directories).toEqual(shown.directories);
+    expect(hidden.modelUsage).toEqual(shown.modelUsage);
+    expect(hidden.directories.map(directory => directory.cwd).toSorted()).toEqual(["C:\\work\\orbit", "C:\\work\\orbit-worktree", "C:\\work\\other"]);
+    expect(hidden.modelUsage.map(row => row.model).toSorted()).toEqual(["claude-opus-4-5", "claude-sonnet-4-5"]);
+    const catalog = await recorder.catalog();
+    for (const workspace of catalog.workspaces) {
+      for (const agents of ["0", "1"]) expect(recorder.list(new URLSearchParams({ workspace: workspace.id, agents })).usage).toEqual(workspace.usage);
+    }
+    const worktree = recorder.list(new URLSearchParams({ workspace: "C:\\work\\orbit-worktree" }));
+    expect(worktree).toMatchObject({ total: 0, hiddenAgents: 1, sessionsWithUsage: 1, usage: { requests: 1, costUSD: 4 } });
+    expect(worktree.hiddenAgentUsage).toEqual(worktree.usage);
+    expect(recorder.list(new URLSearchParams({ q: "worktree-agent" }))).toMatchObject({ total: 0, hiddenAgents: 1, usage: { costUSD: 4 } });
+    expect(recorder.list(new URLSearchParams({ q: "no-such-request" }))).toMatchObject({ total: 0, hiddenAgents: 0, usage: emptyUsage(), hiddenAgentUsage: emptyUsage() });
+    expect(recorder.list(new URLSearchParams({ agents: "only" }))).toMatchObject({ total: 2, hiddenAgents: 0, sessionsWithUsage: 2, usage: { requests: 2, costUSD: 6 }, hiddenAgentUsage: emptyUsage() });
+    expect(recorder.list(new URLSearchParams({ agents: "only", cwd: "C:\\work\\orbit" })).usage.costUSD).toBe(2);
   });
 
   test("tracks missing pricing and does not treat recordings without usage as free", async () => {

@@ -122,6 +122,12 @@ export interface Catalog {
   demo: boolean;
 }
 
+/**
+ * One page of matching recordings. `usage`, `directories`, `modelUsage` and `sessionsWithUsage` cover every matching
+ * recording across all pages plus the `hiddenAgents` subagent recordings that the agent filter leaves out of `items`
+ * and `total`: their requests were spent on behalf of main sessions, so hiding them never lowers the totals.
+ * `hiddenAgentUsage` is their share of `usage`, deduplicated the same way; it is empty while subagents are listed.
+ */
 export interface SessionPage {
   items: Session[];
   total: number;
@@ -131,6 +137,8 @@ export interface SessionPage {
   directories: DirectoryUsage[];
   modelUsage: ModelUsage[];
   sessionsWithUsage: number;
+  hiddenAgents: number;
+  hiddenAgentUsage: UsageSummary;
 }
 
 export interface SessionFamilyMember {

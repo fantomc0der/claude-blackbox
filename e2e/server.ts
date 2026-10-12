@@ -139,10 +139,13 @@ await writeFile(join(folder, "subagent-parent.jsonl"),Array.from({ length: 65 },
 const agentsFolder = join(folder, "subagent-parent", "subagents");
 await mkdir(agentsFolder, { recursive: true });
 for (const name of ["first", "second"]) {
-  await writeFile(join(agentsFolder, `agent-${name}.jsonl`), Array.from({ length: 45 }, (_, index) => JSON.stringify({
-    ...event(index === 0 ? `Subagent child ${name}` : `Delegate ${name} event ${index}\n\nRecorded findings from the delegated task.`, index, index ? "assistant" : "user"),
-    sessionId: "subagent-parent", isSidechain: true, cwd: "/synthetic/delegated-worktree",
-  })).join("\n") + "\n");
+  await writeFile(join(agentsFolder, `agent-${name}.jsonl`), Array.from({ length: 45 }, (_, index) => {
+    const record = event(index === 0 ? `Subagent child ${name}` : `Delegate ${name} event ${index}\n\nRecorded findings from the delegated task.`, index, index ? "assistant" : "user");
+    return JSON.stringify({
+      ...record, uuid: `agent-${name}-${index}`, sessionId: "subagent-parent", isSidechain: true, cwd: "/synthetic/delegated-worktree",
+      message: index ? { ...record.message, usage: { input_tokens: 1200, output_tokens: 300, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } : record.message,
+    });
+  }).join("\n") + "\n");
 }
 const familyRootId = "session-family-root";
 const familyAgent = (id: string, description: string, prompt: string, name = "Agent") => ({ type: "tool_use", id, name, input: { description, prompt } });

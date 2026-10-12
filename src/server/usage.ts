@@ -90,6 +90,12 @@ export function emptyUsage(): UsageSummary {
   return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0, requests: 0, unpricedRequests: 0, recordedCostRequests: 0 };
 }
 
+/** Adds every counter of `source` to `target`; summaries only hold sums, so disjoint request sets combine exactly. */
+export function addUsage(target: UsageSummary, source: UsageSummary): UsageSummary {
+  for (const key of Object.keys(target) as (keyof UsageSummary)[]) target[key] += source[key];
+  return target;
+}
+
 export const usageColumns = `coalesce(sum(input),0) AS inputTokens, coalesce(sum(output),0) AS outputTokens,
   coalesce(sum(cache_creation),0) AS cacheCreationTokens, coalesce(sum(cache_read),0) AS cacheReadTokens,
   coalesce(sum(input+output+cache_creation+cache_read),0) AS totalTokens, coalesce(sum(cost),0) AS costUSD,
