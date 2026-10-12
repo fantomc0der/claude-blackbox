@@ -194,7 +194,12 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   // The match a step moved to on another page, revealed once that page is on screen.
   let pendingMatch = "";
   let findInput!: HTMLInputElement;
-  createEffect(() => ({ id: props.id, key: matchKey(), filters: filterQuery(), find: search(), revision: props.revision }), state => {
+  // The key whose list could not be fetched. Highlighting does not depend on the list, so only stepping waits on a retry,
+  // which the next step or term change makes.
+  const [matchFailure, setMatchFailure] = createSignal("");
+  const [matchRetry, setMatchRetry] = createSignal(0);
+  const matchesFailed = () => Boolean(matchKey()) && matchFailure() === matchKey() && !matches();
+  createEffect(() => ({ id: props.id, key: matchKey(), filters: filterQuery(), find: search(), revision: props.revision, retry: matchRetry() }), state => {
     if (!state.key) { pendingStep = 0; return; }
     const controller = new AbortController();
     const params = new URLSearchParams(state.filters);
@@ -202,9 +207,14 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     void request<FindMatches>(`/api/sessions/${state.id}/matches?${params}`, { signal: controller.signal }).then(data => {
       if (controller.signal.aborted) return;
       setMatchState({ key: state.key, data });
+      setMatchFailure("");
       // Writes settle on the next flush, so apply this one before the step reads the list.
       if (pendingStep) { const direction = pendingStep; pendingStep = 0; flush(); step(direction); }
-    }).catch(error => { if (!isAbort(error) && untrack(matchState)?.key !== state.key) setMatchState(null); });
+    }).catch(error => {
+      if (isAbort(error) || untrack(matchState)?.key === state.key) return;
+      setMatchState(null); setMatchFailure(state.key);
+      pendingStep = 0;
+    });
     return () => controller.abort();
   });
 
@@ -429,12 +439,20 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       index = direction > 0 ? list.findIndex(item => item.position >= from) : list.findLastIndex(item => item.position < from);
       if (index < 0) index = direction > 0 ? 0 : list.length - 1;
     } else index = (index + direction + list.length) % list.length;
-    // A call and its output can both match yet share one card; move on so every step visibly goes somewhere.
-    for (let skipped = 1; skipped < list.length && matchCard() && cardOf(list[index].id) === matchCard(); skipped++) index = (index + direction + list.length) % list.length;
+    // A call and its output can both match yet share one card; move on to the next match on another card so every step
+    // visibly goes somewhere. When every other match is on the current card, take the next record anyway: the selection
+    // stays put but the position still advances, so the count never claims a step that did not happen.
+    if (matchCard()) {
+      for (let next = index, tried = 1; tried < list.length; tried++, next = (next + direction + list.length) % list.length) {
+        if (cardOf(list[next].id) !== matchCard()) { index = next; break; }
+      }
+    }
     const match = list[index];
     setCurrentMatch(match.id);
     const current = page();
     if (current && current.items[match.position - current.offset]?.id === match.id) {
+      // A page an earlier step is still fetching must not reveal that older match over this one.
+      pendingMatch = "";
       const card = cardOf(match.id);
       if (card) revealAnchor(card);
       return;
@@ -444,12 +462,16 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   };
   const stepFromFind = (direction: -1 | 1) => {
     if (!query()) return;
-    if (query() !== search() || !matches()) { pendingStep = direction; commitQuery(query()); return; }
+    if (query() !== search() || !matches()) {
+      pendingStep = direction;
+      if (query() === search() && matchesFailed()) setMatchRetry(value => value + 1); else commitQuery(query());
+      return;
+    }
     step(direction);
   };
   const matchStatus = () => {
     const found = matches();
-    if (!found) return "— matches";
+    if (!found) return matchesFailed() ? "Matches unavailable" : "— matches";
     if (!found.total) return "No matches";
     if (matchIndex() < 0) return found.total === 1 ? "1 match" : `${found.total.toLocaleString()} matches`;
     return `${(matchIndex() + 1).toLocaleString()} of ${found.total.toLocaleString()}`;
@@ -538,10 +560,10 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         <Show when={query()}><button class="icon-button tiny" aria-label="Clear recording search" onClick={() => { setQuery(""); findInput.focus(); }}><Icon name="close" size={13} /></button></Show>
         <Show when={query()} fallback={<span class="replay-count" role="status" title={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : undefined} aria-label={page() ? `${visibleEvents().length} visible cards; ${page()!.total} matching of ${page()!.unfilteredTotal} recorded events` : "Loading recording"}>{countLabel()}</span>}>
           <div class="replay-find-tools">
-            <span class="replay-count replay-match-count" role="status" title={matchIndex() >= 0 ? `Matching record ${matchIndex() + 1} of ${matches()!.total}. Enter for the next, Shift+Enter for the previous.` : "Enter steps to the next matching record, Shift+Enter to the previous."}>{matchStatus()}<Show when={matchIndex() >= 0}><span class="visually-hidden"> matching records</span></Show></span>
+            <span class="replay-count replay-match-count" role="status" title={matchIndex() >= 0 ? `Matching record ${matchIndex() + 1} of ${matches()!.total}. Enter for the next, Shift+Enter for the previous.` : matchesFailed() ? "The matching records could not be listed. Press Enter to try again." : "Enter steps to the next matching record, Shift+Enter to the previous."}>{matchStatus()}<Show when={matchIndex() >= 0}><span class="visually-hidden"> matching records</span></Show></span>
             <div class="replay-find-steps" role="group" aria-label="Find matches">
-              <button class="icon-button tiny" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={!matches()?.total} onClick={() => stepFromFind(-1)}><Icon name="up" size={14} /></button>
-              <button class="icon-button tiny" aria-label="Next match" title="Next match (Enter)" disabled={!matches()?.total} onClick={() => stepFromFind(1)}><Icon name="down" size={14} /></button>
+              <button class="icon-button tiny" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={!matches()?.total && !matchesFailed()} onClick={() => stepFromFind(-1)}><Icon name="up" size={14} /></button>
+              <button class="icon-button tiny" aria-label="Next match" title="Next match (Enter)" disabled={!matches()?.total && !matchesFailed()} onClick={() => stepFromFind(1)}><Icon name="down" size={14} /></button>
             </div>
             <label class="replay-only" title="Show only the records that contain the find term"><input type="checkbox" aria-label="Only matching records" checked={only()} onChange={event => changeOnly(event.currentTarget.checked)} /><span>Only matching</span></label>
           </div>

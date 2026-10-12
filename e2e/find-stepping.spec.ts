@@ -89,3 +89,58 @@ test("stepping jumps across pages and the matching-records switch narrows throug
   await expect(page.getByRole("checkbox", { name: "Only matching records" })).not.toBeChecked();
   await expect(page.locator(".replay-event")).toHaveCount(60);
 });
+
+test("a call and its output that both match select the call's card once and the next step moves to another card", async ({ page }) => {
+  await openRecording(page, "Kettlewing fold verification");
+  await find(page).fill("Brambleworth");
+  // Three matching records, but Conversation folds the output into its call's card, so only two cards show them.
+  await expect(status(page)).toHaveText("3 matches");
+  await expect(page.locator(".replay-event")).toHaveCount(3);
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toHaveText("1 of 3 matching records");
+  await expect(selected(page)).toHaveCount(1);
+  await expect(selected(page).locator(".tool-summary")).toContainText("grep -rn Brambleworth logs");
+  const callCard = await selected(page).getAttribute("data-event-id");
+  // The output is the second matching record, but it is on the card already selected, so Enter moves past it.
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toHaveText("3 of 3 matching records");
+  await expect(selected(page)).toContainText("The Brambleworth report is ready.");
+  expect(await selected(page).getAttribute("data-event-id")).not.toBe(callCard);
+  // Stepping back reaches the output's record and selects the call's card that shows it.
+  await page.keyboard.press("Shift+Enter");
+  await expect(status(page)).toHaveText("2 of 3 matching records");
+  await expect(selected(page)).toHaveAttribute("data-event-id", callCard!);
+  await expect(find(page)).toBeFocused();
+});
+
+test("when every match folds onto one card, stepping still advances the position on that card", async ({ page }) => {
+  await openRecording(page, "Saltmarsh fold verification");
+  await find(page).fill("Quarrystone");
+  await expect(status(page)).toHaveText("2 matches");
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toHaveText("1 of 2 matching records");
+  await expect(selected(page).locator(".tool-summary")).toContainText("cat Quarrystone.log");
+  const card = await selected(page).getAttribute("data-event-id");
+  // No other card holds a match, so the step takes the output's record on the same card rather than appearing to do
+  // nothing: the selection stays and the count says which record it now stands on.
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toHaveText("2 of 2 matching records");
+  await expect(selected(page)).toHaveCount(1);
+  await expect(selected(page)).toHaveAttribute("data-event-id", card!);
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toHaveText("1 of 2 matching records");
+});
+
+test("a failed match list says so, keeps the highlight, and the next step retries it", async ({ page }) => {
+  let failing = true;
+  await page.route(url => url.pathname.endsWith("/matches"), route => failing ? route.fulfill({ status: 500, json: { error: "Synthetic failure" } }) : route.continue());
+  await openRecording(page, "Kettlewing fold verification");
+  await find(page).fill("Brambleworth");
+  await expect(status(page)).toHaveText("Matches unavailable");
+  await expect(page.locator(".replay-event mark").first()).toHaveText("Brambleworth");
+  await expect(page.getByRole("button", { name: "Next match" })).toBeEnabled();
+  failing = false;
+  await find(page).press("Enter");
+  await expect(status(page)).toHaveText("1 of 3 matching records");
+  await expect(selected(page).locator(".tool-summary")).toContainText("grep -rn Brambleworth logs");
+});

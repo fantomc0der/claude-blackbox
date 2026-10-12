@@ -50,6 +50,20 @@ await writeFile(join(folder, "search-handoff.jsonl"), [
   handoffResult(17, "handoff-call-1", "Quillmoss check passed after 3 attempts"),
   ...Array.from({ length: 14 }, (_, index) => event(prose(`Handoff follow-up ${index + 1}`), index + 18, index % 2 ? "user" : "assistant")),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// A call and its output that both contain the find term fold onto one Conversation card, once beside a separate match
+// and once with no other match at all.
+await writeFile(join(folder, "folded-find.jsonl"), [
+  event("Kettlewing fold verification", 0),
+  handoffCall(1, "folded-call-1", "grep -rn Brambleworth logs"),
+  handoffResult(2, "folded-call-1", "logs/app.log: Brambleworth retry scheduled"),
+  event("The Brambleworth report is ready.", 3, "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "folded-only-find.jsonl"), [
+  event("Saltmarsh fold verification", 0),
+  handoffCall(1, "folded-call-2", "cat Quarrystone.log"),
+  handoffResult(2, "folded-call-2", "Quarrystone ok"),
+  event("Finished reading the log.", 3, "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "system-interleaved-recording.jsonl"), Array.from({ length: 70 }, (_, index) => JSON.stringify(event(index ? `Interleaved event ${index}` : "System interleaved verification", index, index > 0 && index <= 5 ? "system" : index % 2 ? "assistant" : "user"))).join("\n") + "\n");
 await writeFile(join(folder, "filtered-live-recording.jsonl"), JSON.stringify(event("Filtered live verification", 0)) + "\n");
 await writeFile(join(folder, "unsafe-markdown.jsonl"), [event("Unsafe markdown verification", 0), event('<script>window.blackboxXss = true</script><img src="https://blocked.invalid/pixel" onerror="window.blackboxXss = true"><p class="nav-scrim">Untrusted styling</p>\n[Unsafe](javascript:alert(1))\n![Remote image](https://blocked.invalid/image)\n## Safe content', 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
