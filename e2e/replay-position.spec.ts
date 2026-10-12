@@ -104,3 +104,19 @@ test("reopening a recording starts at the beginning while browser Back restores 
   await waitForReplay(page);
   await expect.poll(() => replayScroll(page).evaluate(element => element.scrollTop)).toBe(position);
 });
+
+test("jumping to an outline entry scrolls the replay without moving the application shell", async ({ page }) => {
+  // The hidden labels inside tool cards are absolutely positioned, so a card near the end of the page once extended the panel past the shell and scrollIntoView dragged the whole shell upward.
+  await page.setViewportSize({ width: 2000, height: 1000 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/?q=Session+family+root");
+  await page.getByRole("button", { name: /Session family root/ }).click();
+  await waitForReplay(page);
+  const outline = page.locator(".replay-outline button");
+  await expect(outline.last()).toBeVisible();
+  await outline.last().click();
+  await expect.poll(() => replayScroll(page).evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  expect(await page.locator(".app-shell").evaluate(element => [element.scrollTop, element.scrollHeight - element.clientHeight])).toEqual([0, 0]);
+  expect(await page.locator(".replay-panel").evaluate(element => element.scrollHeight - element.clientHeight)).toBe(0);
+  expect(await page.locator(".topbar").evaluate(element => element.getBoundingClientRect().top)).toBe(0);
+});
