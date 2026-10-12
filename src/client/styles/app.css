@@ -92,10 +92,11 @@
   .nav-empty { padding: 5px 12px; color: var(--muted); font-size: var(--text-support); line-height: 1.7; }
   .nav-empty p { margin-bottom: 4px; }
   .workspace-label .workspace-group { gap: 4px; padding-inline: 4px; font-size: var(--text-meta); letter-spacing: 0; flex-shrink: 0; }
-  .sidebar-footer { flex-shrink: 0; border-top: 1px solid var(--line); padding: 8px 5px 7px; }
-  .sidebar-select { display: grid; gap: 4px; margin-bottom: 8px; color: var(--muted); }
-  .sidebar-select > span { line-height: 1.35; }
-  .sidebar-select select { width: 100%; min-width: 0; font-size: var(--text-control); padding: 6px 9px; }
+  .sidebar-footer { flex-shrink: 0; border-top: 1px solid var(--line); padding: 8px 0 7px; }
+  /* Label left when the control fits beside it; otherwise the control wraps below at full width. The shared label minimum makes both selects switch together. */
+  .sidebar-select { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 6px; margin-bottom: 6px; color: var(--muted); }
+  .sidebar-select > span { flex: 999 0 6.4em; min-width: max-content; line-height: 1.35; }
+  .sidebar-select select { flex: 1 0 8.3em; min-height: 32px; font-size: var(--text-support); padding: 4px 6px; }
   .sidebar-footer > div { display: flex; align-items: center; gap: 8px; }
   .sidebar-footer > div > svg { color: var(--accent); }
   .sidebar-footer span { font-size: var(--text-meta); }
@@ -105,7 +106,7 @@
   .index-status .index-refresh.active { visibility: visible; animation: breathe .8s infinite; }
   .index-status.index-failed .index-refresh { visibility: visible; background: var(--danger); animation: none; }
   .index-status.index-failed .index-label { color: var(--danger); }
-  .index-progress { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; }
+  .index-progress { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; line-height: 1.35; }
   .index-label { color: var(--muted); }
   .index-count { font-variant-numeric: tabular-nums; }
   .index-progress > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -484,13 +485,19 @@
     .search-box { height: 41px; }
     .filter-row { padding-top: 10px; padding-bottom: 8px; }
     .list-caption { padding-block: 10px; }
-    .brand { margin-bottom: 20px; }
-    .workspace-label { margin-top: 18px; }
+    .sidebar { padding-top: 16px; }
+    .brand { margin-bottom: 8px; }
+    .primary-nav .nav-item { min-height: 36px; padding-block: 6px; }
+    .workspace-label { margin-block: 12px 4px; }
     .replay-panel-heading h2 { font-size: 20px; }
+  }
+  @media (pointer: fine) and (min-width: 681px) {
+    .sidebar-footer .index-status { min-height: 36px; }
+    .index-status > button { min-width: 36px; min-height: 36px; }
   }
   @media (max-width: 680px) {
     .replay-actions .icon-button, .mobile-menu, .sidebar-mobile-close, .workspace-group, .workspace-filter-toggle { min-width: 44px; min-height: 44px; }
-    .workspace-controls select, .workspace-filter input { min-height: 44px; }
+    .workspace-controls select, .workspace-filter input, .sidebar-select select { min-height: 44px; }
     .source-option { min-height: 44px; }
     .session-details-menu dd button { position: relative; }
     .session-details-menu dd button::after { content: ""; position: absolute; inset: -13px 0; }

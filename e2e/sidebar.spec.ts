@@ -21,9 +21,9 @@ test("the workspace list keeps a usable height on laptop displays", async ({ pag
   const reading = page.getByLabel("Reading width");
   await expect(page.locator(".workspace-nav-item").first()).toBeVisible();
   const wide = await measure(page);
-  expect(wide.list).toBeGreaterThanOrEqual(240);
+  expect(wide.list).toBeGreaterThanOrEqual(360);
   expect(wide.scrolls).toBe(false);
-  expect(wide.footer).toBeLessThanOrEqual(290);
+  expect(wide.footer).toBeLessThanOrEqual(210);
   await expect(page.locator(".sidebar-footer").getByRole("button", { name: /subagents/i })).toHaveCount(0);
   await expect(theme).toBeVisible();
   await expect(size).toBeVisible();
@@ -34,8 +34,48 @@ test("the workspace list keeps a usable height on laptop displays", async ({ pag
   await expect(theme).toBeVisible();
   await expect(size).toBeVisible();
   await expect(reading).toBeVisible();
+  for (const width of [1100, 1000]) {
+    await page.setViewportSize({ width, height: 700 });
+    const compact = await measure(page);
+    expect(compact.scrolls).toBe(false);
+    expect(compact.list).toBeGreaterThanOrEqual(168);
+    expect(compact.footer).toBeLessThanOrEqual(260);
+    for (const control of [theme, size, reading, page.locator(".index-status"), page.locator(".version-label")]) {
+      await expect(control).toBeInViewport({ ratio: 1 });
+    }
+  }
   await page.setViewportSize({ width: 1920, height: 1080 });
   expect((await measure(page)).list).toBeGreaterThan(wide.list);
+});
+
+test("reading controls sit beside their labels when they fit and stack together when they do not", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".workspace-nav-item").first()).toBeVisible();
+  const layout = () => page.locator(".sidebar-footer").evaluate(footer => {
+    const row = (label: Element, control: Element) => {
+      const a = label.getBoundingClientRect(), b = control.getBoundingClientRect();
+      return { inline: b.left >= a.right && b.top < a.bottom && b.bottom > a.top, stacked: b.top >= a.bottom - 1, labelHeight: a.height, line: parseFloat(getComputedStyle(label).lineHeight), width: b.width, height: b.height };
+    };
+    const selects = [...footer.querySelectorAll(".sidebar-select")].map(field => row(field.querySelector("span")!, field.querySelector("select")!));
+    return { theme: row(footer.querySelector(".theme-control legend")!, footer.querySelector(".theme-options")!), selects, status: footer.querySelector(".index-status")!.getBoundingClientRect().height, rescan: footer.querySelector(".index-status button")!.getBoundingClientRect().height };
+  });
+  for (const [width, height, inline] of [[1440, 900, true], [1100, 700, false], [1000, 700, false]] as const) {
+    await page.setViewportSize({ width, height });
+    const footer = await layout();
+    expect(footer.theme.inline).toBe(true);
+    for (const select of footer.selects) {
+      expect(inline ? select.inline : select.stacked).toBe(true);
+      expect(select.labelHeight).toBeLessThanOrEqual(select.line + 1);
+      expect(select.width).toBeGreaterThanOrEqual(100);
+    }
+    expect(footer.status).toBe(36);
+    expect(footer.rescan).toBe(36);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open workspace navigation" }).click();
+  const drawer = await layout();
+  for (const select of drawer.selects) expect(select.height).toBeGreaterThanOrEqual(44);
+  expect(drawer.rescan).toBeGreaterThanOrEqual(44);
 });
 
 test("every workspace row stays reachable once the list outgrows the sidebar", async ({ page }) => {

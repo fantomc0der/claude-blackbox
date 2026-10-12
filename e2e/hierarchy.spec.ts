@@ -97,6 +97,6 @@ test("reading controls align and mobile navigation has generous hit areas", asyn
     const [size, reading] = await page.locator(".sidebar-select select").evaluateAll(elements => elements.map(element => ({ x: element.getBoundingClientRect().x, width: element.getBoundingClientRect().width })));
     expect(size!.x).toBe(reading!.x);
     expect(size!.width).toBe(reading!.width);
-    expect(reading!.width).toBeGreaterThanOrEqual(150);
+    expect(reading!.width).toBeGreaterThanOrEqual(100);
   }
 });
