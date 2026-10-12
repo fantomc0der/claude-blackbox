@@ -239,6 +239,45 @@ test("one Undo toast collects quick ungroups, holds while hovered, and expiring 
   } finally { await removeGroups(page, names); }
 });
 
+test("a group ungrouped while an Undo is restoring keeps its own Undo toast", async ({ page }) => {
+  await page.goto("/");
+  const names = ["Race first", "Race second"];
+  const first = await createGroup(page, names[0], ["/synthetic/workspaces/orbit", "/synthetic/workspaces/orbit-auth"]);
+  await createGroup(page, names[1], ["/synthetic/workspaces/atlas-api", "/synthetic/workspaces/design-system"]);
+  try {
+    await page.getByRole("button", { name: "Group workspaces", exact: true }).click();
+    const dialog = page.locator("dialog.workspace-dialog");
+    const toast = dialog.locator(".toast");
+    const undo = toast.getByRole("button", { name: "Undo", exact: true });
+    for (const name of names) await expect(dialog.locator(".existing-group", { hasText: name })).toHaveCount(1);
+    await dialog.locator(".existing-group", { hasText: names[0] }).getByRole("button", { name: "Ungroup", exact: true }).click();
+    await expect(toast).toHaveText("Ungrouped Race firstUndo");
+
+    let release!: () => void, posted!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const restoring = new Promise<void>(resolve => { posted = resolve; });
+    await page.route("**/api/groups", async route => {
+      if (route.request().method() === "POST") { posted(); await held; }
+      await route.continue();
+    });
+    await undo.click();
+    await restoring;
+    await dialog.locator(".existing-group", { hasText: names[1] }).getByRole("button", { name: "Ungroup", exact: true }).click();
+    await expect(toast).toHaveText("Ungrouped Race secondUndo");
+    release();
+    await expect(dialog.locator(".existing-group", { hasText: names[0] })).toHaveCount(1);
+    await page.waitForTimeout(400);
+    await expect(toast).toHaveText("Ungrouped Race secondUndo");
+    expect(await groupsNamed(page, [names[0]])).toEqual([first]);
+    expect(await groupsNamed(page, [names[1]])).toEqual([]);
+
+    await page.unroute("**/api/groups");
+    await undo.click();
+    await expect(toast).toHaveText("Restored Race second");
+    expect((await groupsNamed(page, names)).map(group => group.name).sort()).toEqual(names);
+  } finally { await removeGroups(page, names); }
+});
+
 test("session and event pagination remain bounded and navigable", async ({ page }) => {
   const listing = await (await page.request.get("/api/sessions")).json();
   const secondPageCount = Math.min(listing.limit, listing.total - listing.limit);

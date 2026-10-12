@@ -86,7 +86,7 @@
   .error-banner { color: var(--danger); background: var(--light-error-surface); border-color: var(--light-error-line); }
   .warning-banner { color: var(--light-warning); background: var(--light-warning-surface); border-color: var(--light-error-line); }
   .toast { color: var(--text); background: var(--surface); border-color: var(--light-line-strong); box-shadow: 0 6px 35px var(--light-shadow); }
-  .toast-action { color: var(--text); border-color: var(--light-line-strong); }
+  .toast-action { border-color: var(--light-line-strong); }
   .toast-action:hover { background: var(--light-selected); }
   .toast-error { color: var(--danger); background: var(--light-error-surface); border-color: var(--light-error-line); }
 

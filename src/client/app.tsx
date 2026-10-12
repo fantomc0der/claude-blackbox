@@ -174,11 +174,12 @@ export function App() {
   // Ungrouping acts at once and offers Undo in the toast. A group ungrouped while that toast still shows joins it, so a
   // quick second click on the row that slid under the pointer is undone together with the first. Undo re-creates each
   // group through the same POST the dialog uses, keeping its id, so a workspace URL selecting it works again.
-  type Ungrouped = { notice: Notice; groups: WorkspaceGroup[]; selection: { workspace: string; cwd: string | null } | null };
-  let ungroupedBatch: Ungrouped | null = null, restoring = false;
+  type Ungrouped = { notice: Notice; groups: WorkspaceGroup[]; selection: { workspace: string; cwd: string | null } | null; restoring?: boolean };
+  let ungroupedBatch: Ungrouped | null = null;
   const groupNames = (groups: WorkspaceGroup[]) => groups.length === 1 ? groups[0].name : groups.length === 2 ? `${groups[0].name} and ${groups[1].name}` : `${groups.length} groups`;
   const ungrouped = (group: WorkspaceGroup) => {
-    const previous = ungroupedBatch && untrack(toast) === ungroupedBatch.notice ? ungroupedBatch : null;
+    // A batch whose Undo is already restoring cannot take more groups, so this one starts a toast of its own.
+    const previous = ungroupedBatch && !ungroupedBatch.restoring && untrack(toast) === ungroupedBatch.notice ? ungroupedBatch : null;
     const groups = [...(previous?.groups || []), group];
     const selection = previous?.selection || (params().get("workspace") === group.id ? { workspace: group.id, cwd: params().get("cwd") } : null);
     const batch: Ungrouped = { notice: { message: `Ungrouped ${groupNames(groups)}`, action: { label: "Undo", run: () => void undoUngroup(batch) } }, groups, selection };
@@ -187,8 +188,8 @@ export function App() {
     changed();
   };
   const undoUngroup = async (batch: Ungrouped) => {
-    if (restoring || untrack(toast) !== batch.notice) return;
-    restoring = true;
+    if (batch.restoring || untrack(toast) !== batch.notice) return;
+    batch.restoring = true;
     const returnFocus = Boolean(document.activeElement?.closest(".toast"));
     const restored: WorkspaceGroup[] = [], failed: WorkspaceGroup[] = [];
     let reason = "";
@@ -199,14 +200,16 @@ export function App() {
           restored.push(group);
         } catch (error) { failed.push(group); reason ||= error instanceof Error ? error.message : String(error); }
       }
-      ungroupedBatch = null;
+      if (ungroupedBatch === batch) ungroupedBatch = null;
       changed();
       await catalogQueue.refresh();
-    } finally { restoring = false; }
+    } finally { batch.restoring = false; }
     // The workspace view falls back to all workspaces when its group disappears; put the selection back unless the
     // reader has chosen another workspace since.
     const selection = batch.selection && restored.some(group => group.id === batch.selection!.workspace) ? batch.selection : null;
     if (selection && !params().get("workspace")) navigate({ workspace: selection.workspace, cwd: selection.cwd }, true);
+    // A group ungrouped while this restore was in flight now owns the toast and its Undo; leave both alone.
+    if (untrack(toast) !== batch.notice) return;
     setToast(failed.length
       ? { message: `${restored.length ? `Restored ${groupNames(restored)}. ` : ""}Could not restore ${groupNames(failed)}. ${reason}`, error: true }
       : { message: `Restored ${groupNames(restored)}` });
