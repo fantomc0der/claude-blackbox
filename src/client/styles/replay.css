@@ -76,6 +76,20 @@
 .replay-filter-menu input[type="checkbox"] { width: 16px; min-height: 16px; height: 16px; padding: 0; margin: 0; flex: 0 0 16px; }
 .replay-date-range { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .replay-count { color: var(--muted); font-size: var(--text-meta); white-space: nowrap; }
+/* Stepping stays beside the term; when the row runs out of room only the narrowing switch drops to a second line, where
+   it shares the bottom edge with Filters while the tabs keep their underline on the divider. */
+.replay-find:has(.replay-find-tools) { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
+.replay-find:has(.replay-find-tools) input { flex: 1 1 64px; }
+.replay-find-tools { display: contents; }
+.replay-controls:has(.replay-find-tools) .replay-tabs { align-self: end; }
+.replay-controls:has(.replay-find-tools) .replay-filters { align-self: end; margin-bottom: 6px; }
+.replay-match-count { font-variant-numeric: tabular-nums; }
+.replay-find-steps { display: inline-flex; flex-shrink: 0; }
+.replay-find-steps .icon-button:hover:not(:disabled) { color: var(--text); }
+.replay-find .replay-only { display: inline-flex; align-items: center; flex-shrink: 0; gap: 6px; min-height: 32px; margin-left: auto; padding-left: 10px; border-left: 1px solid var(--line); color: var(--muted); font-size: var(--text-meta); white-space: nowrap; cursor: pointer; }
+.replay-find .replay-only:hover, .replay-find .replay-only:has(input:checked) { color: var(--text); }
+.replay-find .replay-only input { flex: 0 0 14px; width: 14px; height: 14px; min-width: 0; margin: 0; padding: 0; }
+.replay-find .replay-only input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .replay-context-button { display: inline-flex; align-items: center; gap: 5px; margin: 0 14px 12px; color: var(--accent); background: transparent; border: 0; padding: 3px 0; font: inherit; font-size: var(--text-meta); cursor: pointer; }
 .replay-context-button:hover { text-decoration: underline; }
 .replay-event-selected { outline: 1px solid color-mix(in srgb, var(--accent) 65%, var(--line)); outline-offset: -1px; }
@@ -84,6 +98,7 @@
 .replay-jump-short { display: none; }
 @media (max-width: 680px) { .replay-jump-full { display: none; } .replay-jump-short { display: inline; } }
 @container replay (min-width: 640px) { .replay-controls { grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 0 12px; } .replay-tabs { grid-column: 1; } .replay-find { grid-column: 2; margin-left: 36px; } .replay-filters { grid-column: 3; } }
+@media (max-width: 680px) { .replay-find-steps .icon-button { min-width: 44px; min-height: 44px; } .replay-find .replay-only { min-height: 44px; } }
 @media (max-width: 680px) { .replay-filters summary, .replay-context-button, .replay-filter-menu select, .replay-filter-menu input:not([type="checkbox"]), .replay-filter-menu .replay-errors { min-height: 44px; } }
 @media (max-width: 680px) { .replay-filters { margin-left: auto; } .replay-filter-menu { left: 0; right: 0; top: auto; bottom: 0; width: auto; max-height: 80dvh; padding: 16px 18px calc(20px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 14px 14px 0 0; box-shadow: 0 -12px 45px color-mix(in srgb, var(--text) 25%, transparent); } .replay-filter-menu-close { display: inline-flex; min-width: 44px; min-height: 44px; } .replay-date-range { grid-template-columns: 1fr; } .replay-footer { gap: 8px; flex-wrap: wrap; } }
 .replay-timeline-strip { flex-shrink: 0; position: relative; z-index: 4; padding: 7px 24px; border-bottom: 1px solid var(--line); }

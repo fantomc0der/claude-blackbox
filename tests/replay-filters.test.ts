@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { matchReplayKind, replayFilters } from "../src/client/lib/replay-filters";
+import { clearReplayFilters, matchReplayKind, replayFilters } from "../src/client/lib/replay-filters";
 
 test("search hits open on Conversation only when that view shows the matching record", () => {
   expect(matchReplayKind({ matchCategory: "message", matchRole: "user" })).toBe("conversation");
@@ -18,4 +18,11 @@ test("an anchored replay keeps a requested view and otherwise shows all events",
   expect(replayFilters(new URLSearchParams("session=a&event=e1&context=1")).kind).toBe("all");
   expect(replayFilters(new URLSearchParams("session=a")).kind).toBe("conversation");
   expect(replayFilters(new URLSearchParams("session=a&q=retry")).q).toBe("");
+});
+
+test("the find term narrows the replay only when the matching-records switch is on", () => {
+  expect(replayFilters(new URLSearchParams("session=a&replayQ=retry"))).toMatchObject({ q: "retry", only: false });
+  expect(replayFilters(new URLSearchParams("session=a&replayQ=retry&replayOnly=1"))).toMatchObject({ q: "retry", only: true });
+  expect(replayFilters(new URLSearchParams("session=a&replayOnly=true")).only).toBe(false);
+  expect(clearReplayFilters()).toHaveProperty("replayOnly", null);
 });

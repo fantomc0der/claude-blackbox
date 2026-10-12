@@ -204,6 +204,35 @@ describe("recording index", () => {
     ]);
   });
 
+  test("find matches list matching records at their positions under the replay filter", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Opening"),
+      fixtureData.record("System needle", { type: "system" }),
+      fixtureData.record("Needle in prose"),
+      fixtureData.record("Plain"),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "call-1", content: "needle failed", is_error: true }]),
+      fixtureData.record("another NEEDLE"),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const id = recorder.list(new URLSearchParams()).items[0].id;
+    const positions = (values: Record<string, string>) => recorder.matches(id, new URLSearchParams(values)).items.map(item => [item.position, item.sequence]);
+    // Conversation leaves out the system record, so later matches sit one position earlier than their sequence.
+    expect(positions({ kind: "conversation", find: "needle" })).toEqual([[1, 2], [3, 4], [4, 5]]);
+    expect(positions({ kind: "all", find: "needle" })).toEqual([[1, 1], [2, 2], [4, 4], [5, 5]]);
+    expect(positions({ kind: "all", errors: "1", find: "needle" })).toEqual([[0, 4]]);
+    // With the find term also narrowing the records, the matches are the whole filtered set.
+    expect(positions({ kind: "conversation", q: "needle", find: "needle" })).toEqual([[0, 2], [1, 4], [2, 5]]);
+    for (const item of recorder.matches(id, new URLSearchParams({ kind: "conversation", find: "needle" })).items) {
+      const page = recorder.events(id, new URLSearchParams({ kind: "conversation", offset: String(item.position), limit: "1" }));
+      expect(page.items[0].id).toBe(item.id);
+    }
+    expect(recorder.matches(id, new URLSearchParams({ kind: "all", find: "needle", limit: "2" }))).toMatchObject({ total: 4, limited: true, items: [{ position: 1 }, { position: 2 }] });
+    expect(recorder.matches(id, new URLSearchParams({ kind: "all", find: "needle" }))).toMatchObject({ total: 4, limited: false });
+    expect(recorder.matches(id, new URLSearchParams({ kind: "all", find: "absent" }))).toEqual({ total: 0, limited: false, items: [] });
+    expect(recorder.matches(id, new URLSearchParams({ kind: "all" }))).toEqual({ total: 0, limited: false, items: [] });
+  });
+
   test("timeline coarsens long recordings without losing records", async () => {
     const fixtureData = await fixture();
     const start = Date.parse("2026-09-19T00:00:00Z");
