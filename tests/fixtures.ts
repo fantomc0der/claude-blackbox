@@ -1,5 +1,5 @@
 export const DEMO_MARKER_FILE = ".blackbox-demo";
-export const DEMO_SESSION_COUNT = 15;
+export const DEMO_SESSION_COUNT = 17;
 export const DEMO_TOOL_RESULT_KEYWORD = "retryBudget";
 
 export const DEMO_SESSION_IDS = {
@@ -18,6 +18,15 @@ export const DEMO_SESSION_IDS = {
   blackboxProvenance: "10000000-0000-4000-8000-00000000000d",
   blackboxLiveReplay: "10000000-0000-4000-8000-00000000000e",
   blackboxDemoCatalog: "10000000-0000-4000-8000-00000000000f",
+  atlasLedgerExports: "10000000-0000-4000-8000-000000000010",
+  designKeyboardAudit: "10000000-0000-4000-8000-000000000011",
+} as const;
+
+/** Agent recordings launched by the keyboard audit, stored under its `subagents` folder as `agent-<id>.jsonl`. */
+export const DEMO_AGENT_IDS = {
+  dialogFocus: "a4d81c07e2b9f356",
+  menuFocus: "a7f20b9c41d6e813",
+  landmarks: "a1c95e3f08a7b264",
 } as const;
 
 export const DEMO_HERO_SESSION_ID = DEMO_SESSION_IDS.orbitAuthHero;

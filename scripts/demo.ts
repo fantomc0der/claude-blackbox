@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import {
+  DEMO_AGENT_IDS,
   DEMO_MARKER_FILE,
   DEMO_SESSION_IDS,
   DEMO_TOOL_RESULT_KEYWORD,
@@ -33,6 +34,12 @@ interface DemoMarker {
   kind: "claude-blackbox-demo";
   version: 1;
   ownedFiles: string[];
+}
+
+interface DemoRecording {
+  file: string;
+  agent: boolean;
+  records: JsonRecord[];
 }
 
 const DEFAULT_DEMO_DIR = ".blackbox/demo";
@@ -725,6 +732,397 @@ function buildRecords(session: DemoSession, sessionIndex: number): JsonRecord[] 
   return records;
 }
 
+/**
+ * `buildRecords` numbers its event UUIDs by position in `sessions` (1 to `sessions.length`), so story recordings
+ * continue from the next free series to keep every UUID unique across the catalog.
+ */
+const STORY_SERIES_START = sessions.length + 1;
+
+interface StoryOptions {
+  sessionId: string;
+  workspace: keyof typeof workspaces;
+  branch: string;
+  model: string;
+  series: number;
+  agentId?: string;
+}
+
+interface ToolStep {
+  error?: boolean;
+  note?: string;
+  minutes?: number;
+}
+
+interface AgentLaunch {
+  agentId: string;
+  description: string;
+  prompt: string;
+}
+
+/**
+ * Writes one recording against an explicit clock, so a story can span several days, sit idle between working
+ * stretches, and launch agents whose own recordings run alongside it. Each record advances the clock by `minutes`.
+ */
+function story(options: StoryOptions) {
+  const records: JsonRecord[] = [];
+  const model = options.model;
+  let clock = 0;
+  let tools = 0;
+  const add = (type: string, body: JsonRecord, minutes: number) => {
+    records.push({
+      type,
+      uuid: eventUuid(options.series, records.length + 1),
+      timestamp: new Date(clock).toISOString(),
+      sessionId: options.sessionId,
+      ...(options.agentId ? { agentId: options.agentId, isSidechain: true } : {}),
+      cwd: workspaces[options.workspace],
+      gitBranch: options.branch,
+      version: "1.0.0",
+      ...body,
+    });
+    clock += minutes * 60_000;
+  };
+  const toolId = () => `toolu_demo_${options.series}_${++tools}`;
+  const result = (id: string, content: unknown, minutes: number, error = false, extra: JsonRecord = {}) =>
+    add("user", { ...userMessage([{ type: "tool_result", tool_use_id: id, content, ...(error ? { is_error: true } : {}) }], model), ...extra }, minutes);
+
+  return {
+    records,
+    at(daysAgo: number, hour: number, minute = 0) {
+      clock = Date.parse(timestampFor(daysAgo, hour, minute));
+    },
+    wait(minutes: number) {
+      clock += minutes * 60_000;
+    },
+    title(title: string) {
+      add("custom-title", { customTitle: title }, 0);
+      add("ai-title", { aiTitle: title }, 0);
+    },
+    prompt(text: string, minutes = 1) {
+      add("user", userMessage([{ type: "text", text }], model), minutes);
+    },
+    say(text: string, thinking?: string, minutes = 1) {
+      const blocks: ContentBlock[] = thinking ? [{ type: "thinking", thinking }] : [];
+      add("assistant", assistantMessage([...blocks, { type: "text", text }], model), minutes);
+    },
+    tool(name: string, input: JsonRecord, output: string, step: ToolStep = {}) {
+      const id = toolId();
+      const blocks: ContentBlock[] = step.note ? [{ type: "text", text: step.note }] : [];
+      add("assistant", assistantMessage([...blocks, { type: "tool_use", id, name, input }], model), 1);
+      result(id, output, step.minutes ?? 2, step.error);
+    },
+    /** Starts agents in parallel from one assistant turn and returns the tool IDs their reports answer. */
+    launch(note: string, agents: AgentLaunch[]): string[] {
+      const ids = agents.map(toolId);
+      add("assistant", assistantMessage([
+        { type: "text", text: note },
+        ...agents.map((agent, index) => ({
+          type: "tool_use",
+          id: ids[index],
+          name: "Agent",
+          input: { description: agent.description, prompt: agent.prompt },
+        })),
+      ], model), 1);
+      return ids;
+    },
+    report(id: string, agent: AgentLaunch, text: string, toolUses: number, minutes = 1) {
+      result(id, [{ type: "text", text }, { type: "text", text: `agentId: ${agent.agentId}` }], minutes, false, {
+        toolUseResult: { status: "completed", agentId: agent.agentId, totalToolUseCount: toolUses },
+      });
+    },
+  };
+}
+
+function sessionFile(workspace: keyof typeof workspaces, sessionId: string): string {
+  return join("projects", encodeWorkspace(workspaces[workspace]), `${sessionId}.jsonl`);
+}
+
+function agentFile(workspace: keyof typeof workspaces, parentId: string, agentId: string): string {
+  return join("projects", encodeWorkspace(workspaces[workspace]), parentId, "subagents", `agent-${agentId}.jsonl`);
+}
+
+/**
+ * A two-day investigation with more than one replay page of records. The overnight pause and the lunch break both
+ * exceed the activity strip's idle threshold, and each working stretch hits one failing tool result.
+ */
+function ledgerExportRecording(): DemoRecording {
+  const workspace = "atlas-api";
+  const ledger = story({
+    sessionId: DEMO_SESSION_IDS.atlasLedgerExports,
+    workspace,
+    branch: "feat/streaming-ledger-exports",
+    model: "claude-opus-4-5",
+    series: STORY_SERIES_START,
+  });
+  const exporter = "src/ledger/export-ledger.ts";
+  const route = "src/routes/ledger-export.ts";
+  const pages = "src/db/ledger-entries.ts";
+
+  ledger.at(2, 14, 6);
+  ledger.title("Stream ledger exports without timeouts");
+  ledger.prompt("Large merchants hit the 30 second gateway timeout when they export a month of ledger entries. Find out why, and plan a fix that keeps the CSV byte-for-byte identical for every client that already parses it.");
+  ledger.say(
+    "I'll trace the export from the route to the CSV writer, reproduce the timeout with the large merchant fixture, and only then propose a change.",
+    "Measure before changing anything. The export format is a public contract, so the fix has to be invisible in the output.",
+  );
+  ledger.tool("Grep", { pattern: "exportLedger", path: "src" }, `${route}:14\n${exporter}:8\nsrc/ledger/export-ledger.test.ts:3`);
+  ledger.tool("Read", { file_path: route }, `export async function handleLedgerExport(request: Request) {\n  const { merchantId, month } = parseExportQuery(request)\n  const csv = await exportLedger(merchantId, month)\n  return new Response(csv, { headers: csvHeaders(merchantId, month) })\n}\n`);
+  ledger.tool("Read", { file_path: exporter }, `export async function exportLedger(merchantId: string, month: string) {\n  const where = { merchantId, month }\n  const rows = await db.ledgerEntries.findMany({ where, orderBy: { id: "asc" } })\n  return [CSV_HEADER, ...rows.map(toCsvRow)].join("\\n")\n}\n`, { minutes: 3 });
+  ledger.tool("Bash", { command: "bun test ledger --filter export", description: "Run the existing export tests" }, "5 pass\n0 fail\nsmall merchant exports match the golden CSV files");
+  ledger.tool("Bash", { command: "bun run fixtures:ledger --merchant m_large_demo --months 1", description: "Generate a synthetic large merchant month" }, "Generated 412,880 synthetic ledger entries for m_large_demo (2026-09)", { minutes: 4 });
+  ledger.tool("Bash", { command: "bun test ledger --filter large-export", description: "Reproduce the timeout with the large fixture" }, "0 pass\n1 fail\nexport-ledger.test.ts > large merchant export\n  Timed out after 30000ms\n  heap used before abort: 1.9 GB", { error: true, minutes: 3 });
+  ledger.say(`## Why large exports time out
+
+The export reads the whole month into memory, then builds one string before the first byte leaves the server.
+
+| Stage | Large merchant | Notes |
+| --- | --- | --- |
+| Query | 18.2 s | One unbounded \`findMany\` |
+| CSV join | 9.6 s | Builds a single 310 MB string |
+| First byte | after 27.8 s | The gateway gives up at 30 s |
+
+Nothing is slow per row. The problem is that every row has to exist before any row is sent.`, undefined, 3);
+  ledger.tool("Read", { file_path: pages }, `export async function* pageLedgerEntries(where: LedgerWhere, { limit }: { limit: number }) {\n  let after: string | undefined\n  while (true) {\n    const page = await db.ledgerEntries.findMany({ where: { ...where, id: { gt: after } }, orderBy: { id: "asc" }, take: limit })\n    if (!page.length) return\n    yield page\n    after = page.at(-1)!.id\n  }\n}\n`);
+  ledger.tool("Grep", { pattern: "pageLedgerEntries", path: "src" }, `${pages}:1\nsrc/jobs/reconcile-ledger.ts:22`);
+  ledger.tool("Read", { file_path: "src/csv/writer.ts" }, `export const CSV_HEADER = "id,posted_at,amount_minor,currency,description,balance_minor"\n\nexport function toCsvRow(entry: LedgerEntry): string {\n  return [entry.id, entry.postedAt.toISOString(), entry.amountMinor, entry.currency, quote(entry.description), entry.balanceMinor].join(",")\n}\n`, { minutes: 4 });
+  ledger.tool("TodoWrite", {
+    todos: [
+      { content: "Read ledger entries through the existing keyset pager", status: "pending", activeForm: "Reading through the keyset pager" },
+      { content: "Stream CSV rows from the export route", status: "pending", activeForm: "Streaming CSV rows" },
+      { content: "Prove the streamed CSV matches the buffered CSV", status: "pending", activeForm: "Comparing streamed and buffered CSV" },
+      { content: "Release the database cursor when a client disconnects", status: "pending", activeForm: "Releasing the cursor on disconnect" },
+    ],
+  }, "Todo list updated");
+  ledger.say(`## Plan
+
+1. Reuse \`pageLedgerEntries\`, which the reconciliation job already trusts, instead of one unbounded query.
+2. Yield the header and each page of rows as they arrive, so the first byte leaves in milliseconds.
+3. Compare the streamed file with today's buffered output for the large fixture before anything ships.
+
+The CSV writer stays exactly as it is, which keeps the format identical by construction. I'll pick this up in the morning.`);
+
+  ledger.at(1, 9, 12);
+  ledger.prompt("Morning. Go ahead with the streaming plan from yesterday.");
+  ledger.say("Picking up from the plan: paged reads first, then the streaming response, then the format check.");
+  ledger.tool("Read", { file_path: exporter }, `export async function exportLedger(merchantId: string, month: string) {\n  const where = { merchantId, month }\n  const rows = await db.ledgerEntries.findMany({ where, orderBy: { id: "asc" } })\n  return [CSV_HEADER, ...rows.map(toCsvRow)].join("\\n")\n}\n`);
+  ledger.tool("Edit", {
+    file_path: exporter,
+    old_string: "export async function exportLedger(merchantId: string, month: string) {\n  const where = { merchantId, month }\n  const rows = await db.ledgerEntries.findMany({ where, orderBy: { id: \"asc\" } })\n  return [CSV_HEADER, ...rows.map(toCsvRow)].join(\"\\n\")\n}",
+    new_string: "export async function* exportLedgerRows(merchantId: string, month: string) {\n  yield CSV_HEADER\n  for await (const page of pageLedgerEntries({ merchantId, month }, { limit: 5_000 })) {\n    yield \"\\n\" + page.map(toCsvRow).join(\"\\n\")\n  }\n}",
+  }, `Updated ${exporter}\n1 replacement applied`, { minutes: 4 });
+  ledger.tool("Edit", {
+    file_path: route,
+    old_string: "const csv = await exportLedger(merchantId, month)\n  return new Response(csv, { headers: csvHeaders(merchantId, month) })",
+    new_string: "return new Response(exportLedgerRows(merchantId, month), { headers: csvHeaders(merchantId, month) })",
+  }, `Updated ${route}\n1 replacement applied`);
+  ledger.tool("Bash", { command: "bun run typecheck", description: "Type check the streaming change" }, `${route}:16:23 - error TS2345: Argument of type 'AsyncGenerator<string, void, unknown>' is not assignable to parameter of type 'BodyInit | null'.\n\nFound 1 error in ${route}`, { error: true, minutes: 1 });
+  ledger.say(
+    "The response needs a `ReadableStream`, not the generator itself. Wrapping it with `ReadableStream.from` keeps backpressure: the next page is only read when the client has taken the previous one.",
+    "The runtime would accept an async iterable, but the declared body type does not. ReadableStream.from is the typed and still lazy way to hand it over.",
+  );
+  ledger.tool("Edit", {
+    file_path: route,
+    old_string: "return new Response(exportLedgerRows(merchantId, month), { headers: csvHeaders(merchantId, month) })",
+    new_string: "return new Response(ReadableStream.from(exportLedgerRows(merchantId, month)), { headers: csvHeaders(merchantId, month) })",
+  }, `Updated ${route}\n1 replacement applied`);
+  ledger.tool("Bash", { command: "bun run typecheck", description: "Type check again" }, "No type errors found");
+  ledger.tool("Bash", { command: "bun test ledger --filter export", description: "Run the existing export tests" }, "5 pass\n0 fail\nsmall merchant exports match the golden CSV files");
+  ledger.tool("Bash", { command: "bun test ledger --filter large-export", description: "Retry the large fixture" }, "1 pass\n0 fail\nlarge merchant export streamed 412,880 rows in 6.4s\nfirst byte after 38ms · peak heap 96 MB", { minutes: 5 });
+  ledger.tool("Grep", { pattern: "exportLedger\\(", path: "src" }, "No matches found");
+  ledger.tool("TodoWrite", {
+    todos: [
+      { content: "Read ledger entries through the existing keyset pager", status: "completed", activeForm: "Reading through the keyset pager" },
+      { content: "Stream CSV rows from the export route", status: "completed", activeForm: "Streaming CSV rows" },
+      { content: "Prove the streamed CSV matches the buffered CSV", status: "pending", activeForm: "Comparing streamed and buffered CSV" },
+      { content: "Release the database cursor when a client disconnects", status: "pending", activeForm: "Releasing the cursor on disconnect" },
+    ],
+  }, "Todo list updated");
+  ledger.say(`## Progress
+
+- The large merchant export now finishes in 6.4 s, with the first byte after 38 ms.
+- Peak memory dropped from 1.9 GB to 96 MB.
+- No callers of the buffered \`exportLedger\` remain.
+
+Still open: a byte-level comparison against the old output, and the contract tests for client disconnects.`);
+
+  ledger.at(1, 13, 31);
+  ledger.prompt("Back. Before this ships, prove the CSV is identical and run the contract tests.");
+  ledger.tool("Bash", { command: "bun run export:diff --merchant m_large_demo --month 2026-09", description: "Compare buffered and streamed exports" }, "Compared buffered and streamed exports for m_large_demo (2026-09)\n412,880 rows · header identical · sha256 match\n3f1c9a0e7b2d…c84e (both files)", { minutes: 4 });
+  ledger.tool("Bash", { command: "bun test contract --filter ledger", description: "Run the ledger export contract tests" }, "8 pass\n1 fail\nledger export contract > releases the database cursor when the client disconnects\n  Expected 0 open cursors, received 1", { error: true, minutes: 1 });
+  ledger.say(
+    "A disconnected client cancels the stream, but the pager never learns about it, so its cursor stays open until the pool reaps it. A `finally` block in the pager covers cancellation as well as normal completion.",
+    "Cancelling a ReadableStream.from stream calls return() on the generator, which runs finally blocks all the way down. Closing the cursor there handles every exit path.",
+  );
+  ledger.tool("Read", { file_path: pages }, `export async function* pageLedgerEntries(where: LedgerWhere, { limit }: { limit: number }) {\n  const cursor = await db.openCursor("ledger_entries", where)\n  let after: string | undefined\n  while (true) {\n    const page = await cursor.next({ after, limit })\n    if (!page.length) return\n    yield page\n    after = page.at(-1)!.id\n  }\n}\n`);
+  ledger.tool("Edit", {
+    file_path: pages,
+    old_string: "  let after: string | undefined\n  while (true) {\n    const page = await cursor.next({ after, limit })\n    if (!page.length) return\n    yield page\n    after = page.at(-1)!.id\n  }",
+    new_string: "  let after: string | undefined\n  try {\n    while (true) {\n      const page = await cursor.next({ after, limit })\n      if (!page.length) return\n      yield page\n      after = page.at(-1)!.id\n    }\n  } finally {\n    await cursor.close()\n  }",
+  }, `Updated ${pages}\n1 replacement applied`, { minutes: 3 });
+  ledger.tool("Bash", { command: "bun test contract --filter ledger", description: "Run the contract tests again" }, "9 pass\n0 fail\ndisconnects release the cursor within one page");
+  ledger.tool("Bash", { command: "bun test src/jobs --filter reconcile", description: "Check the reconciliation job that shares the pager" }, "7 pass\n0 fail");
+  ledger.tool("Bash", { command: "bun test", description: "Run the full suite" }, "214 pass\n0 fail\nRan 214 tests across 38 files. [41.7s]", { minutes: 3 });
+  ledger.tool("Edit", {
+    file_path: "docs/changelog/2026-10.md",
+    old_string: "## Changed",
+    new_string: "## Changed\n\n- Ledger exports now stream, so large months download without timeouts. The CSV format is identical.",
+  }, "Updated docs/changelog/2026-10.md\n1 replacement applied");
+  ledger.tool("Bash", { command: "git diff --stat", description: "Summarize the change" }, ` ${pages}        | 14 +++++++++-----\n ${exporter}     | 11 ++++++-----\n ${route}    |  3 +--\n docs/changelog/2026-10.md |  2 ++\n 4 files changed, 19 insertions(+), 11 deletions(-)`);
+  ledger.say(`## Result
+
+Ledger exports now stream page by page. The CSV is byte-for-byte identical, and nothing about the format changed for clients.
+
+| Large merchant month | Before | After |
+| --- | --- | --- |
+| First byte | 27.8 s | 38 ms |
+| Total time | Timed out at 30 s | 6.4 s |
+| Peak memory | 1.9 GB | 96 MB |
+
+- The pager closes its database cursor on completion, error, and client disconnect.
+- The reconciliation job shares the pager and still passes.
+- The changelog notes the faster exports without announcing a format change, because there is none.`);
+
+  return { file: sessionFile(workspace, DEMO_SESSION_IDS.atlasLedgerExports), agent: false, records: ledger.records };
+}
+
+/**
+ * A parent session that splits an audit across three agents running in parallel. Their recordings live in the
+ * parent's `subagents` folder and each report's `agentId` line links it back to the launch that started it.
+ */
+function keyboardAuditRecordings(): DemoRecording[] {
+  const workspace = "design-system";
+  const parentId = DEMO_SESSION_IDS.designKeyboardAudit;
+  const branch = "feat/keyboard-audit";
+  const agents: AgentLaunch[] = [
+    {
+      agentId: DEMO_AGENT_IDS.dialogFocus,
+      description: "Map dialog focus order",
+      prompt: "Review keyboard focus in the packages/ui dialogs: where focus lands when they open, whether Tab stays inside, and where focus returns when they close. Report file and line evidence for each problem, most severe first.",
+    },
+    {
+      agentId: DEMO_AGENT_IDS.menuFocus,
+      description: "Check menu roving focus",
+      prompt: "Check roving focus in menus, listboxes, and the command palette: arrow keys, Home and End, typeahead, and Escape. Report what works and what breaks, with file and line evidence.",
+    },
+    {
+      agentId: DEMO_AGENT_IDS.landmarks,
+      description: "Review skip links and landmarks",
+      prompt: "Review skip links and landmarks in the documentation site layout. Confirm one main landmark per page, a skip link that reaches it, and labelled navigation regions.",
+    },
+  ];
+  const model = "claude-sonnet-4-5";
+  const parent = story({ sessionId: parentId, workspace, branch, model, series: STORY_SERIES_START + 1 });
+  const worker = (agent: AgentLaunch, index: number) => {
+    const recording = story({ sessionId: parentId, workspace, branch, model, series: STORY_SERIES_START + 2 + index, agentId: agent.agentId });
+    recording.at(1, 15, 4 + index);
+    recording.prompt(agent.prompt);
+    return recording;
+  };
+
+  parent.at(1, 15, 0);
+  parent.title("Audit keyboard paths across the component library");
+  parent.prompt("Audit keyboard navigation across the component library. Check dialogs, menus, and page landmarks in parallel, then give me one prioritized list of fixes.");
+  parent.say(
+    "I'll run three focused reviews at once, one per area, and merge their findings into a single list ordered by how often people reach each path.",
+    "Dialogs, menus, and the docs layout share almost no files, so separate reviews will not step on each other, and each report stays short enough to compare.",
+  );
+  const launches = parent.launch("Starting the three reviews now.", agents);
+
+  const dialogs = worker(agents[0]!, 0);
+  dialogs.tool("Grep", { pattern: "showModal|role=\"dialog\"", path: "packages/ui/src" }, "packages/ui/src/dialog.tsx:41\npackages/ui/src/sheet.tsx:58\npackages/ui/src/confirm-dialog.tsx:22");
+  dialogs.tool("Read", { file_path: "packages/ui/src/dialog.tsx" }, `export function Dialog({ open, onOpenChange, children }: DialogProps) {\n  const dialog = useRef<HTMLDialogElement>(null)\n  useEffect(() => { if (open) dialog.current?.showModal() }, [open])\n  return <dialog ref={dialog} onClose={() => onOpenChange(false)}>{children}</dialog>\n}\n`);
+  dialogs.tool("Read", { file_path: "packages/ui/src/sheet.tsx" }, `export function Sheet({ side = "right", children }: SheetProps) {\n  return <div role="dialog" aria-modal="true" tabIndex={-1} className={sheet({ side })}>{children}</div>\n}\n`);
+  dialogs.tool("Read", { file_path: "packages/ui/src/confirm-dialog.tsx" }, `<Dialog open={open} onOpenChange={onOpenChange}>\n  <p>{message}</p>\n  <Button variant="danger" autoFocus onClick={onConfirm}>{confirmLabel}</Button>\n  <Button onClick={() => onOpenChange(false)}>Cancel</Button>\n</Dialog>\n`);
+  dialogs.tool("Grep", { pattern: "restoreFocus|returnFocus", path: "packages/ui/src" }, "packages/ui/src/popover.tsx:73:    restoreFocus(trigger)\npackages/ui/src/focus.ts:12:export function restoreFocus(target: HTMLElement | null) {");
+  const dialogReport = `## Dialog focus findings
+
+| Severity | Component | Problem | Evidence |
+| --- | --- | --- | --- |
+| High | Sheet | Tab leaves the sheet and reaches the page behind it | \`sheet.tsx:58\` is a plain \`div\` with no focus trap |
+| Medium | Dialog | Focus is not returned to the trigger on close | \`dialog.tsx:44\` closes without restoring focus |
+| Medium | Confirm dialog | Initial focus lands on the destructive action | \`confirm-dialog.tsx:31\` puts \`autoFocus\` on the danger button |
+
+The native \`dialog\` element already traps Tab, so only the sheet needs a trap. \`focus.ts\` has a \`restoreFocus\` helper that popovers use and dialogs can reuse.`;
+  dialogs.say(dialogReport);
+
+  const menus = worker(agents[1]!, 1);
+  menus.tool("Grep", { pattern: "useRovingFocus", path: "packages/ui/src" }, "packages/ui/src/menu.tsx:12\npackages/ui/src/listbox.tsx:9\npackages/ui/src/command-palette.tsx:27\npackages/ui/src/use-roving-focus.ts:4");
+  menus.tool("Read", { file_path: "packages/ui/src/use-roving-focus.ts" }, `export function useRovingFocus(items: HTMLElement[]) {\n  const onKeyDown = (event: KeyboardEvent) => {\n    if (event.key === "Home") return focus(items[0])\n    if (event.key === "End") return focus(items.at(-1))\n    if (event.key.length === 1) return focus(items.find(item => item.textContent?.toLowerCase().startsWith(event.key)))\n  }\n  return { onKeyDown }\n}\n`);
+  menus.tool("Bash", { command: "bun test ui --filter keyboard", description: "Run the keyboard interaction tests" }, "22 pass\n2 fail\nmenu > Home moves to the first enabled item\n  Expected \"Rename\", received \"Duplicate\" (aria-disabled)\nlistbox > typeahead skips disabled options\n  Expected \"Archive\", received \"Archived drafts\" (aria-disabled)", { error: true });
+  menus.tool("Read", { file_path: "packages/ui/src/command-palette.tsx" }, `const { onKeyDown } = useRovingFocus(visibleCommands)\n// Escape closes the palette and returns focus to the input\n`);
+  const menuReport = `## Roving focus findings
+
+Arrow keys and Escape behave correctly in the menu, the listbox, and the command palette.
+
+Home, End, and typeahead can land on disabled items. All three components share \`use-roving-focus.ts\`, which picks \`items[0]\`, \`items.at(-1)\`, and the first text match without checking \`aria-disabled\` (lines 3 to 5). The two failing keyboard tests reproduce it.
+
+One fix in the shared hook covers all three components.`;
+  menus.say(menuReport);
+
+  const landmarks = worker(agents[2]!, 2);
+  landmarks.tool("Grep", { pattern: "<main|role=\"main\"", path: "apps/docs/src" }, "apps/docs/src/layouts/docs-layout.tsx:34\napps/docs/src/components/example-frame.tsx:18");
+  landmarks.tool("Read", { file_path: "apps/docs/src/layouts/docs-layout.tsx" }, `<SkipLink />\n<header><nav>{primaryLinks}</nav></header>\n<aside><nav aria-label="Documentation">{sidebar}</nav></aside>\n<main id="content">{children}</main>\n`);
+  landmarks.tool("Read", { file_path: "packages/ui/src/skip-link.tsx" }, `export function SkipLink() {\n  return <a className="skip-link" href="#main">Skip to content</a>\n}\n`);
+  landmarks.tool("Read", { file_path: "apps/docs/src/components/example-frame.tsx" }, `export function ExampleFrame({ children }: { children: ReactNode }) {\n  return <main className="example-frame">{children}</main>\n}\n`);
+  const landmarkReport = `## Landmark findings
+
+- The skip link targets \`#main\`, but the layout's main region is \`id="content"\` (\`skip-link.tsx:2\`, \`docs-layout.tsx:34\`). Activating it does nothing.
+- Pages with live examples render a second \`main\` from \`example-frame.tsx:18\`.
+- The sidebar navigation is labelled; the header navigation is not.`;
+  landmarks.say(landmarkReport);
+
+  parent.wait(9);
+  parent.report(launches[1]!, agents[1]!, menuReport, 3, 3);
+  parent.report(launches[0]!, agents[0]!, dialogReport, 5, 2);
+  parent.report(launches[2]!, agents[2]!, landmarkReport, 4);
+  parent.say(`## Prioritized keyboard fixes
+
+| Priority | Fix | Reaches | Evidence |
+| --- | --- | --- | --- |
+| 1 | Skip disabled items in the shared roving focus hook | Menu, listbox, command palette | \`use-roving-focus.ts:3\` |
+| 2 | Trap focus inside sheets | Every sheet | \`sheet.tsx:58\` |
+| 3 | Point the skip link at the real main region | Every docs page | \`skip-link.tsx:2\` |
+| 4 | Return focus to the trigger when dialogs close | Dialog, confirm dialog | \`dialog.tsx:44\` |
+| 5 | Start confirm dialogs on Cancel | Confirm dialog | \`confirm-dialog.tsx:31\` |
+| 6 | Render example frames as \`div\` and label the header navigation | Docs pages | \`example-frame.tsx:18\` |
+
+The first fix is one change in one hook and already has failing tests that prove it, so I'll start there.`, undefined, 2);
+  parent.tool("Edit", {
+    file_path: "packages/ui/src/use-roving-focus.ts",
+    old_string: "if (event.key === \"Home\") return focus(items[0])\n    if (event.key === \"End\") return focus(items.at(-1))\n    if (event.key.length === 1) return focus(items.find(item => item.textContent?.toLowerCase().startsWith(event.key)))",
+    new_string: "const enabled = items.filter(item => item.getAttribute(\"aria-disabled\") !== \"true\")\n    if (event.key === \"Home\") return focus(enabled[0])\n    if (event.key === \"End\") return focus(enabled.at(-1))\n    if (event.key.length === 1) return focus(enabled.find(item => item.textContent?.toLowerCase().startsWith(event.key)))",
+  }, "Updated packages/ui/src/use-roving-focus.ts\n1 replacement applied", { minutes: 3 });
+  parent.tool("Bash", { command: "bun test ui --filter keyboard", description: "Run the keyboard interaction tests" }, "24 pass\n0 fail");
+  parent.tool("TodoWrite", {
+    todos: [
+      { content: "Skip disabled items in the shared roving focus hook", status: "completed", activeForm: "Skipping disabled items" },
+      { content: "Trap focus inside sheets", status: "pending", activeForm: "Trapping focus inside sheets" },
+      { content: "Point the skip link at the real main region", status: "pending", activeForm: "Fixing the skip link target" },
+      { content: "Return focus to the trigger when dialogs close", status: "pending", activeForm: "Restoring dialog focus" },
+      { content: "Start confirm dialogs on Cancel", status: "pending", activeForm: "Moving confirm dialog focus" },
+      { content: "Render example frames as div and label the header navigation", status: "pending", activeForm: "Fixing docs landmarks" },
+    ],
+  }, "Todo list updated");
+  parent.say("## Result\n\nThe roving focus fix is in and the keyboard tests pass. The other five fixes are on the task list, each with the evidence from its review, so they can land as small independent changes.");
+
+  return [
+    { file: sessionFile(workspace, parentId), agent: false, records: parent.records },
+    ...[dialogs, menus, landmarks].map((recording, index) => ({
+      file: agentFile(workspace, parentId, agents[index]!.agentId),
+      agent: true,
+      records: recording.records,
+    })),
+  ];
+}
+
+function demoRecordings(): DemoRecording[] {
+  return [
+    ...sessions.map((session, index) => ({ file: sessionFile(session.workspace, session.id), agent: false, records: buildRecords(session, index + 1) })),
+    ledgerExportRecording(),
+    ...keyboardAuditRecordings(),
+  ];
+}
+
 async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -758,10 +1156,8 @@ async function readMarker(markerPath: string): Promise<DemoMarker | null> {
 
 export async function createDemo(dir: string): Promise<void> {
   const demoDir = resolve(dir);
-  const files = sessions.map((session) => {
-    const cwd = workspaces[session.workspace];
-    return join("projects", encodeWorkspace(cwd), `${session.id}.jsonl`);
-  });
+  const recordings = demoRecordings();
+  const files = recordings.map((recording) => recording.file);
   const markerPath = join(demoDir, DEMO_MARKER_FILE);
 
   await mkdir(demoDir, { recursive: true });
@@ -783,12 +1179,10 @@ export async function createDemo(dir: string): Promise<void> {
 
   await writeFile(markerPath, `${JSON.stringify(nextMarker, null, 2)}\n`, "utf8");
 
-  for (const [sessionIndex, session] of sessions.entries()) {
-    const cwd = workspaces[session.workspace];
-    const relativeFile = join("projects", encodeWorkspace(cwd), `${session.id}.jsonl`);
-    const target = join(demoDir, relativeFile);
-    await mkdir(join(demoDir, "projects", encodeWorkspace(cwd)), { recursive: true });
-    const contents = buildRecords(session, sessionIndex + 1).map((entry) => JSON.stringify(entry)).join("\n");
+  for (const recording of recordings) {
+    const target = join(demoDir, recording.file);
+    await mkdir(dirname(target), { recursive: true });
+    const contents = recording.records.map((entry) => JSON.stringify(entry)).join("\n");
     await writeFile(target, `${contents}\n`, "utf8");
   }
 
@@ -802,7 +1196,9 @@ if (import.meta.main) {
   const outputDir = Bun.argv[2] ?? DEFAULT_DEMO_DIR;
   try {
     await createDemo(outputDir);
-    console.log(`Created ${sessions.length} synthetic demo sessions in ${resolve(outputDir)}.`);
+    const recordings = demoRecordings();
+    const agents = recordings.filter((recording) => recording.agent).length;
+    console.log(`Created ${recordings.length - agents} synthetic demo sessions and ${agents} agent recordings in ${resolve(outputDir)}.`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
