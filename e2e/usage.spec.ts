@@ -12,7 +12,8 @@ test("usage totals cover every matching page and expose a keyboard accessible br
   await expect(summary).toContainText(compact(listing.usage.totalTokens));
   await summary.focus();
   await page.keyboard.press("Enter");
-  const panel = page.locator(".usage-panel");
+  await expect(summary).toHaveAttribute("aria-expanded", "true");
+  const panel = page.getByRole("region", { name: "Usage breakdown" });
   await expect(panel.locator(".usage-scope").first()).toContainText(`All ${listing.total} matching recordings`);
   await expect(panel.locator(".token-breakdown")).toContainText(tokenCount(listing.usage.cacheReadTokens));
   await expect(panel).toContainText("not your Claude subscription bill");
@@ -35,7 +36,7 @@ test("usage totals keep hidden subagents, state their share and match the sideba
   await expect(summary).toContainText(usageCost(hidden.usage));
   await expect(summary.locator(".usage-total-cost")).toHaveAttribute("title", `Includes ${usageCost(hidden.hiddenAgentUsage)} est. from ${hidden.hiddenAgents} subagent recordings hidden from the list`);
   await summary.click();
-  const scope = page.locator(".usage-panel .usage-scope").first();
+  const scope = page.getByRole("region", { name: "Usage breakdown" }).locator(".usage-scope").first();
   await expect(scope).toContainText(`All ${hidden.total} matching recordings, across every page, plus ${hidden.hiddenAgents} subagent recordings hidden from the list. ${hidden.sessionsWithUsage} of ${hidden.total + hidden.hiddenAgents} report usage. This total includes ${usageCost(hidden.hiddenAgentUsage)} est. from ${hidden.hiddenAgents} subagent recordings hidden from the list. Each row shows only its own recording's cost, so the visible rows add up to less.`);
   await page.locator(".library").getByRole("button", { name: "Show subagents", exact: true }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("agents")).toBe("1");
@@ -123,7 +124,7 @@ test("model expense matrix stays accessible and fits narrow screens in both them
       expect(await page.locator(".usage-matrix").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
-    const audit = await new AxeBuilder({ page }).include(".usage-panel").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    const audit = await new AxeBuilder({ page }).include(".usage-panel").include(".usage-body").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
     expect(audit.violations.map(violation => ({ id: violation.id, nodes: violation.nodes.map(node => node.target) }))).toEqual([]);
   }
 });
@@ -180,5 +181,58 @@ test("usage breakdown works on narrow screens in both themes without page overfl
     await expect.poll(() => new URL(page.url()).searchParams.has("cwd")).toBe(true);
     await expect(page.locator(".session-row").first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
+
+test("the expanded breakdown scrolls with the recordings and leaves the list its full height", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const theme of ["Dark", "Light"]) {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/");
+    await page.getByRole("button", { name: theme, exact: true }).click();
+    await page.setViewportSize({ width: 1100, height: 700 });
+    for (const replay of [false, true]) {
+      if (replay) {
+        await page.locator(".session-row").first().click();
+        await expect(page.locator(".library-split")).toBeVisible();
+      }
+      const list = page.locator(".recordings-scroll");
+      const summary = page.getByLabel("Usage and estimated cost");
+      const breakdown = page.getByRole("region", { name: "Usage breakdown" });
+      await expect(summary).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator("#usage-breakdown")).toBeHidden();
+      await list.evaluate(element => { element.scrollTop = element.scrollHeight; });
+      const closed = await list.evaluate(element => ({ height: element.clientHeight, content: element.scrollHeight }));
+      await summary.click();
+      await expect(summary).toHaveAttribute("aria-expanded", "true");
+      await expect(summary).toHaveAttribute("aria-controls", "usage-breakdown");
+      await expect(page.locator(".recordings-scroll > #usage-breakdown")).toBeVisible();
+      // The breakdown is the list's first item, so opening it returns the list to the top.
+      expect(await list.evaluate(element => element.scrollTop)).toBe(0);
+      const opened = await list.evaluate(element => ({ height: element.clientHeight, content: element.scrollHeight }));
+      const size = (await breakdown.boundingBox())!;
+      expect(opened.height).toBe(closed.height);
+      expect(opened.content).toBeGreaterThanOrEqual(closed.content + size.height);
+      expect(await breakdown.evaluate(element => getComputedStyle(element).overflowY === "visible" && element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+      await breakdown.getByRole("button", { name: "Model & effort", exact: true }).click();
+      const header = breakdown.locator(".usage-matrix thead th").first();
+      // In the narrow split library the header starts below the fold; scrolling the list brings it fully into view.
+      await header.scrollIntoViewIfNeeded();
+      const listBox = (await list.boundingBox())!;
+      const listTop = listBox.y;
+      const headerBox = (await header.boundingBox())!;
+      expect(headerBox.y).toBeGreaterThanOrEqual(listTop);
+      expect(headerBox.y + headerBox.height).toBeLessThanOrEqual(listBox.y + listBox.height + 1);
+      expect(await header.evaluate(cell => { const box = cell.getBoundingClientRect(); return cell.contains(document.elementFromPoint(box.left + 4, box.top + box.height / 2)); })).toBe(true);
+      await list.evaluate(element => { element.scrollTop = element.scrollHeight; });
+      const scrolled = (await breakdown.boundingBox())!;
+      expect(scrolled.y + scrolled.height).toBeLessThanOrEqual(listTop);
+      await expect(page.locator(".session-row").last()).toBeInViewport();
+      await breakdown.getByRole("button", { name: "Folders", exact: true }).click();
+      await summary.click();
+      await expect(summary).toHaveAttribute("aria-expanded", "false");
+      await expect(page.locator("#usage-breakdown")).toBeHidden();
+      expect(await list.evaluate(element => element.scrollHeight)).toBe(closed.content);
+    }
   }
 });

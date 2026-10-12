@@ -41,7 +41,6 @@
   .library-heading { padding: 24px 0 16px; min-width: 0; }
   .library-heading h1 { font-size: clamp(24px, 2vw, 32px); line-height: 1.25; letter-spacing: -.8px; font-weight: 530; margin: 0; overflow-wrap: anywhere; }
   .library-heading h1 > span { color: var(--accent); }
-  .library-description { color: var(--muted); margin: 8px 0 0; font-size: var(--text-support); }
   .overview { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 0 0 20px; color: var(--muted); font-size: var(--text-meta); }
   .discovery-controls { z-index: 5; }
   .recordings-scroll { flex: 1; min-height: 100px; overflow-y: auto; margin: 0 -12px; padding: 0 12px; display: grid; grid-template-columns: 37px minmax(0, 1fr) minmax(0, 9rem) max-content max-content max-content 15px; column-gap: 14px; align-content: start; }
@@ -411,7 +410,6 @@
     .library { padding: 0 19px; }
     .library-heading { padding: 20px 0 12px; }
     .library-heading h1 { font-size: 25px; letter-spacing: -.6px; }
-    .library-description { display: none; }
     .overview { gap: 6px 16px; margin-bottom: 16px; }
     .search-box { height: 44px; }
     .search-box input { font-size: var(--text-control); }
@@ -509,10 +507,9 @@
     .topbar { height: 57px; min-height: 57px; }
     .library-heading { padding-top: 20px; padding-bottom: 12px; }
     .library-heading h1 { font-size: 28px; }
-    .library-description { display: none; }
     .library-split .library-heading h1 { font-size: 23px; }
     .library-split .library-heading { padding-block: 19px; }
-    .overview { margin-bottom: 16px; }
+    .overview { display: none; }
     .search-box { height: 41px; }
     .filter-row { padding-top: 10px; padding-bottom: 8px; }
     .list-caption { padding-block: 10px; }

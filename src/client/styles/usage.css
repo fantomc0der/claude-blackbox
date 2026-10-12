@@ -1,8 +1,7 @@
 @layer components {
   .usage-panel { flex-shrink: 0; margin: 0 0 14px; border-block: 1px solid var(--line); font-size: var(--text-support); }
-  .usage-panel > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; padding: 11px 0; list-style: none; min-height: 44px; }
-  .usage-panel > summary::-webkit-details-marker { display: none; }
-  .usage-panel > summary:hover .usage-expand { color: var(--text); }
+  .usage-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; width: 100%; padding: 11px 0; min-height: 44px; text-align: left; }
+  .usage-summary:hover .usage-expand { color: var(--text); }
   .usage-label { display: inline-flex; align-items: center; gap: 8px; font-weight: 550; }
   .usage-label .usage-refresh { margin: 0; visibility: hidden; animation: none; }
   .usage-label .usage-refresh.active { visibility: visible; animation: breathe .8s infinite; }
@@ -10,9 +9,11 @@
   .usage-total > span { color: var(--muted); font-weight: 400; }
   .usage-expand { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); }
   .usage-expand svg { transition: transform .15s; }
-  .usage-panel[open] .usage-expand svg { transform: rotate(180deg); }
+  .usage-summary[aria-expanded="true"] .usage-expand svg { transform: rotate(180deg); }
   .usage-empty, .usage-loading { color: var(--muted); }
-  .usage-body { max-height: min(360px, 42dvh); overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 16px 0; scrollbar-color: var(--line) var(--bg); }
+  /* The expanded breakdown is the recording list's first full-width item: it scrolls away with the rows, and the list
+     keeps its full height. */
+  .recordings-scroll > .usage-body { grid-column: 1 / -1; min-width: 0; margin: 12px 0 4px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
   .usage-scope { margin: 0 0 14px; color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
   .token-breakdown { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 20px; margin: 12px 0 18px; }
   .token-breakdown dt { color: var(--muted); font-size: var(--text-meta); }
@@ -55,7 +56,10 @@
   .session-details-menu .token-breakdown dd { margin-top: 3px; }
   .session-details-menu .usage-note p { color: var(--muted); }
   .session-details-menu .usage-note .usage-warning { color: var(--danger); }
-  .library-split .usage-panel > summary { gap: 5px 12px; }
+  .library-split .usage-summary { gap: 5px 12px; }
+  .library-split .recordings-scroll > .usage-body { padding: 14px 12px; }
+  .library-split .usage-breakdown-sort { justify-content: flex-start; }
+  .library-split .usage-breakdown-sort label { flex-wrap: wrap; }
   .library-split .usage-expand > span, .library-split .session-usage-tokens { display: none; }
   .library-split .token-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .library-split .usage-directories th:first-child, .library-split .usage-directories td:first-child { width: 48%; }
@@ -67,7 +71,7 @@
   @media (max-width: 1050px) { .session-usage-tokens { display: none; } }
   @media (max-height: 820px) and (min-width: 681px) {
     .usage-panel { margin-bottom: 6px; }
-    .usage-panel > summary { min-height: 36px; padding-block: 7px; }
+    .usage-summary { min-height: 36px; padding-block: 7px; }
   }
   @media (max-width: 680px) {
     .usage-breakdown-sort { justify-content: flex-start; }
@@ -77,7 +81,8 @@
     .usage-matrix th, .usage-matrix td { padding-left: 8px; }
     .library .overview { margin-bottom: 2px; }
     .usage-panel { margin-bottom: 0; }
-    .usage-panel > summary { gap: 6px 13px; }
+    .usage-summary { gap: 6px 13px; }
+    .recordings-scroll > .usage-body { padding: 14px; }
     .usage-expand > span { display: none; }
     .token-breakdown { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .usage-directories th:first-child, .usage-directories td:first-child { width: 50%; }

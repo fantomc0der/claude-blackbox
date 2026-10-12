@@ -1,4 +1,4 @@
-import { For, onSettled, Show } from "solid-js";
+import { createSignal, For, onSettled, Show } from "solid-js";
 import type { Catalog, Session, SessionPage } from "../../shared/types";
 import { anchoredMenu } from "../lib/anchor";
 import { dismissableDetails } from "../lib/dismissable";
@@ -9,7 +9,10 @@ import { withSelectedOption } from "../lib/filter-options";
 import { Icon } from "./icon";
 import { SubagentToggle } from "./subagent-toggle";
 import { Highlight } from "./highlight";
-import { UsagePanel } from "./usage-panel";
+import { UsageBreakdown, UsagePanel } from "./usage-panel";
+
+/** Matches the stylesheet's short-screen block, which also hides the archive totals. */
+const SHORT_SCREEN = "(max-height: 820px) and (min-width: 681px)";
 
 interface LibraryProps {
   catalog: Catalog | null; page: SessionPage | null; usageCurrent: boolean; pending: boolean; params: URLSearchParams;
@@ -18,8 +21,13 @@ interface LibraryProps {
 }
 
 export function Library(props: LibraryProps) {
-  let filters!: HTMLDetailsElement, filterMenu!: HTMLDivElement;
+  let filters!: HTMLDetailsElement, filterMenu!: HTMLDivElement, recordings!: HTMLDivElement;
   onSettled(() => { const releases = [dismissableDetails(filters), anchoredMenu(filters, filterMenu)]; return () => { for (const release of releases) release(); }; });
+  const [shortScreen, setShortScreen] = createSignal(matchMedia(SHORT_SCREEN).matches);
+  onSettled(() => { const media = matchMedia(SHORT_SCREEN); const changed = () => setShortScreen(media.matches); media.addEventListener("change", changed); return () => media.removeEventListener("change", changed); });
+  // The breakdown is the list's first item, so opening it scrolls the list back to the top where it appears.
+  const [usageOpen, setUsageOpen] = createSignal(false);
+  const toggleUsage = () => { const open = !usageOpen(); setUsageOpen(open); if (open) recordings.scrollTop = 0; };
   const closeFilters = () => { filters.open = false; filters.querySelector("summary")!.focus(); };
   const selected = () => props.params.get("session");
   const workspace = () => props.catalog?.workspaces.find(workspace => workspace.id === props.params.get("workspace"));
@@ -70,13 +78,13 @@ export function Library(props: LibraryProps) {
     filter({ [key]: value || null });
   };
   return <section id="session-library" class={['library', { 'library-split': Boolean(selected()) }]} aria-label="Session library">
-    <header class="library-heading"><div><h1>{selected() ? "Session library" : props.params.get("bookmarked") ? "Worth coming back to." : workspace() ? workspace()!.name : discovering() ? "Session library" : <>Good work leaves <span>a trail.</span></>}</h1><Show when={!selected() && !discovering()}><p class="library-description">Every prompt, every breakthrough, every detour. All right here.</p></Show></div></header>
+    <header class="library-heading"><div><h1>{selected() ? "Session library" : props.params.get("bookmarked") ? "Worth coming back to." : workspace() ? workspace()!.name : discovering() || shortScreen() ? "Session library" : <>Good work leaves <span>a trail.</span></>}</h1></div></header>
     <Show when={!selected() && !discovering()}><dl class="overview" aria-label="Archive totals">
       <div class="stat"><dt>Recordings</dt><dd>{compact(props.catalog?.sessions || 0)}</dd></div>
       <div class="stat"><dt>Workspaces</dt><dd>{props.catalog?.workspaces.length || 0}</dd></div>
       <div class="stat"><dt>Tool calls</dt><dd>{compact(props.catalog?.tools || 0)}</dd></div>
     </dl></Show>
-    <UsagePanel page={props.usageCurrent ? props.page : null} pending={props.pending} filterDirectory={cwd => filter({ cwd })} filterModel={(model, effort) => filter({ model, effort, effortMissing: effort === null ? "1" : null })} />
+    <UsagePanel page={props.usageCurrent ? props.page : null} pending={props.pending} open={usageOpen()} toggle={toggleUsage} />
     <div class="discovery-controls">
       <div class="search-box"><Icon name="search" size={19} /><input ref={props.searchRef} aria-label="Search all recordings" placeholder="Search prompts, code, tool output…" value={props.query} onInput={event => props.setQuery(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Escape") { props.setQuery(""); filter({ q: null }); }
@@ -111,13 +119,14 @@ export function Library(props: LibraryProps) {
       <Show when={chips().length}><div class="active-filters"><For each={chips()}>{([key, label]) => <button class="filter-chip" title={`Remove ${label}`} onClick={() => filter({ [key]: null, ...(key === "workspace" ? { cwd: null } : {}) })}>{label}<Icon name="close" size={12} /></button>}</For><button class="clear-filters" onClick={clear}>Clear all</button></div></Show>
     </div>
     <div class="list-caption"><span>{props.query ? "SEARCH RESULTS" : "RECORDINGS"}<span class="result-count" aria-live="polite">{props.page?.total ?? "—"}<span class="count-unit">{countUnit()}</span></span><Show when={props.pending}><span class="loading-dot" /></Show></span><select aria-label="Sort recordings" value={sort()} onChange={event => filter({ sort: event.currentTarget.value === "recent" ? null : event.currentTarget.value })}><option value="recent">Newest activity</option><option value="oldest">Oldest activity</option><option value="activity">Most records</option><option value="cost">Highest cost (est.)</option><option value="cost-asc">Lowest cost (est.)</option><option value="tokens">Most tokens</option><option value="tokens-asc">Fewest tokens</option><option value="errors">Most errors</option><option value="tools">Most tool calls</option><option value="duration">Longest recorded span</option><option value="title">Title (A–Z)</option></select></div>
-    <div class="recordings-scroll" aria-busy={props.pending ? "true" : "false"} onKeyDown={event => {
+    <div class="recordings-scroll" ref={recordings} aria-busy={props.pending ? "true" : "false"} onKeyDown={event => {
       if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
       const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".session-row")];
       const index = rows.indexOf(document.activeElement as HTMLButtonElement);
       const step = event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1;
       if (index !== -1) { event.preventDefault(); rows[Math.max(0, Math.min(rows.length - 1, index + step))]?.focus(); }
     }}>
+      <UsageBreakdown page={props.usageCurrent ? props.page : null} open={usageOpen()} filterDirectory={cwd => filter({ cwd })} filterModel={(model, effort) => filter({ model, effort, effortMissing: effort === null ? "1" : null })} />
       <Show when={props.page} fallback={<div class="skeleton-list"><For each={[1, 2, 3, 4, 5]}>{() => <div class="skeleton-row" />}</For></div>}>
         <For each={props.page?.items || []} fallback={<div class="empty-state"><span class="empty-icon"><Icon name={!props.catalog?.sessions ? "box" : bookmarksOnly() ? "bookmark" : "search"} size={32} /></span><h2>{!props.catalog?.sessions ? (props.catalog && !props.catalog.indexedAt ? "Indexing your recordings…" : "Your next session starts the story.") : bookmarksOnly() ? "No bookmarks yet." : "No trails match this search."}</h2><p>{!props.catalog?.sessions ? (props.catalog && !props.catalog.indexedAt ? "The first index of a large history can take a few minutes. Recordings appear here as they are read." : "Use Claude Code in a project, then come back. Your recordings will appear here automatically.") : bookmarksOnly() ? "Bookmark a session from its replay to keep it here." : "Try a different phrase or give your filters a little more room."}</p><Show when={props.catalog?.sessions} fallback={<code class="empty-source">{props.catalog?.dataDir}</code>}><Show when={bookmarksOnly()} fallback={<button class="secondary-button" onClick={clear}>Clear search & filters</button>}><button class="secondary-button" onClick={() => filter({ bookmarked: null })}>Browse all sessions</button></Show></Show></div>}>
           {session => <button class={['session-row', { selected: selected() === session.id }]} data-session-id={session.id} aria-current={selected() === session.id ? "true" : undefined} onClick={event => openSession(session, event)}>

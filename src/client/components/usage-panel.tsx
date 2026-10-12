@@ -45,22 +45,29 @@ function ModelExpenses(props: { rows: ModelUsage[]; usage: UsageSummary; filterM
   </>;
 }
 
-export function UsagePanel(props: { page: SessionPage | null; pending: boolean; filterDirectory: (cwd: string) => void; filterModel: (model: string, effort: string | null) => void }) {
-  const [view, setView] = createSignal<"folders" | "models">("folders");
-  const [sort, setSort] = createSignal<UsageSort>("cost");
-  const ready = () => props.page;
-  return <details class="usage-panel" aria-busy={props.pending ? "true" : "false"}>
-    <summary aria-label="Usage and estimated cost">
+/** The library's Usage bar: totals for every matching recording and the toggle for their breakdown, which the list hosts. */
+export function UsagePanel(props: { page: SessionPage | null; pending: boolean; open: boolean; toggle: () => void }) {
+  return <div class="usage-panel" aria-busy={props.pending ? "true" : "false"}>
+    <button type="button" class="usage-summary" aria-label="Usage and estimated cost" aria-expanded={props.open ? "true" : "false"} aria-controls="usage-breakdown" onClick={() => props.toggle()}>
       <span class="usage-label">Usage<span class={['loading-dot usage-refresh', { active: props.pending }]} aria-hidden="true" title={props.pending ? "Updating usage" : undefined} /></span>
-      <Show when={ready()} fallback={<span class="usage-loading" aria-label="Usage not yet available">—</span>}>{page => <>
+      <Show when={props.page} fallback={<span class="usage-loading" aria-label="Usage not yet available">—</span>}>{page => <>
         <Show when={page().usage.requests} fallback={<span class="usage-empty">{page().total ? "No usage recorded" : "No matching recordings"}</span>}>
           <span class="usage-total" title={`${tokenCount(page().usage.totalTokens)} tokens, including cache reads and writes`}>{compact(page().usage.totalTokens)} <span>tokens</span></span>
           <span class="usage-total usage-total-cost" title={page().hiddenAgentUsage.requests ? `Includes ${hiddenShare(page())}` : undefined}>{usageCost(page().usage)} <span>est.</span></span>
         </Show>
       </>}</Show>
       <span class="usage-expand"><span>Breakdown</span><Icon name="down" size={14} /></span>
-    </summary>
-    <div class="usage-body">
+    </button>
+  </div>;
+}
+
+/** The expanded breakdown. It stays mounted while collapsed, as a closed disclosure's content would, so its view, sort,
+ *  focus and scroll survive toggling and background refreshes. */
+export function UsageBreakdown(props: { page: SessionPage | null; open: boolean; filterDirectory: (cwd: string) => void; filterModel: (model: string, effort: string | null) => void }) {
+  const [view, setView] = createSignal<"folders" | "models">("folders");
+  const [sort, setSort] = createSignal<UsageSort>("cost");
+  const ready = () => props.page;
+  return <div class="usage-body" id="usage-breakdown" role="region" aria-label="Usage breakdown" hidden={!props.open}>
       <Show when={ready()} fallback={<p class="usage-scope">Usage for this selection will appear here when available.</p>}>{page => <>
         <p class="usage-scope">All {tokenCount(page().total)} matching recordings, across every page<Show when={page().hiddenAgents}>, plus {tokenCount(page().hiddenAgents)} subagent {page().hiddenAgents === 1 ? "recording" : "recordings"} hidden from the list</Show>. {tokenCount(page().sessionsWithUsage)}<Show when={page().hiddenAgents}> of {tokenCount(page().total + page().hiddenAgents)}</Show> report usage.<Show when={page().hiddenAgentUsage.requests}> This total includes {hiddenShare(page())}.<Show when={page().total}> Each row shows only its own recording's cost, so the visible rows add up to less.</Show></Show></p>
         <Show when={page().usage.requests} fallback={<p class="usage-note">These transcripts do not contain assistant token usage. Missing usage is not counted as zero spend.</p>}>
@@ -87,6 +94,5 @@ export function UsagePanel(props: { page: SessionPage | null; pending: boolean; 
           <UsageNote usage={page().usage} />
         </Show>
       </>}</Show>
-    </div>
-  </details>;
+  </div>;
 }

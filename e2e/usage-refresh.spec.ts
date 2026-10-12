@@ -12,17 +12,22 @@ test("usage keeps its layout focus scroll and values through background refreshe
     const panel = page.locator(".usage-panel");
     await expect(panel).toHaveAttribute("aria-busy", "false");
     await page.getByLabel("Usage and estimated cost").click();
+    const breakdown = page.getByRole("region", { name: "Usage breakdown" });
     for (const view of ["Folders", "Model & effort"]) {
-      await panel.getByRole("button", { name: view, exact: true }).click();
-      const table = panel.locator(view === "Folders" ? ".usage-directories" : ".usage-matrix");
+      await breakdown.getByRole("button", { name: view, exact: true }).click();
+      const table = breakdown.locator(view === "Folders" ? ".usage-directories" : ".usage-matrix");
       const button = table.locator("tbody button").first();
       await button.focus();
       const focused = await button.elementHandle();
-      const body = panel.locator(".usage-body");
+      // The breakdown scrolls with the recordings, so the list holds the scroll position to keep.
+      const body = page.locator(".recordings-scroll");
       await body.evaluate(element => { element.scrollTop = element.scrollHeight; });
       const beforeScroll = await body.evaluate(element => element.scrollTop);
       const beforeHeight = (await panel.boundingBox())!.height;
       const beforeControls = (await page.locator(".discovery-controls").boundingBox())!.y;
+      // The breakdown's own height and the list it sits in must not shift under the reader while totals refresh.
+      const beforeBreakdown = (await breakdown.boundingBox())!.height;
+      const beforeList = await body.evaluate(element => element.scrollHeight);
       const listing = recorder.list(new URLSearchParams());
       let updates = 0;
       await page.route("**/api/sessions?*", async route => {
@@ -39,11 +44,15 @@ test("usage keeps its layout focus scroll and values through background refreshe
         await expect(panel.locator(".usage-total-cost")).toContainText(usageCost(listing.usage));
         expect((await panel.boundingBox())!.height).toBe(beforeHeight);
         expect((await page.locator(".discovery-controls").boundingBox())!.y).toBe(beforeControls);
+        expect((await breakdown.boundingBox())!.height).toBe(beforeBreakdown);
+        expect(await body.evaluate(element => element.scrollHeight)).toBe(beforeList);
         await expect(panel).toHaveAttribute("aria-busy", "false");
         expect(await focused!.evaluate(element => document.activeElement === element)).toBe(true);
         expect(await body.evaluate(element => element.scrollTop)).toBe(beforeScroll);
         await expect(panel.locator(".usage-total").first()).toContainText(compact(listing.usage.totalTokens + updates * 1_000_000));
         expect((await panel.boundingBox())!.height).toBe(beforeHeight);
+        expect((await breakdown.boundingBox())!.height).toBe(beforeBreakdown);
+        expect(await body.evaluate(element => element.scrollHeight)).toBe(beforeList);
       }
       await page.unroute("**/api/sessions?*");
     }
@@ -116,7 +125,7 @@ test("pagination and sorting keep usage for the same selection mounted", async (
   const panel = page.locator(".usage-panel");
   await expect(panel).toHaveAttribute("aria-busy", "false");
   await page.getByLabel("Usage and estimated cost").click();
-  const table = await panel.locator("table").elementHandle();
+  const table = await page.getByRole("region", { name: "Usage breakdown" }).locator("table").elementHandle();
   const cost = await panel.locator(".usage-total-cost").textContent();
   await page.route("**/api/sessions?*", async route => {
     await Bun.sleep(300);
