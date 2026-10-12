@@ -1,10 +1,11 @@
 import { createSignal, For, onSettled, Show } from "solid-js";
+import type { JSX } from "@solidjs/web";
 import type { Catalog, WorkspaceGroup } from "../../shared/types";
 import { request } from "../lib/api";
 import { rememberFocus } from "../lib/dismissable";
 import { Icon } from "./icon";
 
-export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; onSaved: () => void }) {
+export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; onSaved: () => void; onUngrouped: (group: WorkspaceGroup) => void; children: JSX.Element }) {
   let dialog!: HTMLDialogElement;
   const restore = rememberFocus();
   const [name, setName] = createSignal("");
@@ -25,11 +26,15 @@ export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; 
     } catch (error) { setError(String(error instanceof Error ? error.message : error)); }
     finally { setSaving(false); }
   };
-  const remove = async (id: string) => {
+  const remove = async (group: WorkspaceGroup) => {
     setSaving(true); setError("");
     try {
-      await request(`/api/groups/${id}`, { method: "DELETE", body: "{}" });
-      props.onSaved(); reset();
+      await request(`/api/groups/${group.id}`, { method: "DELETE", body: "{}" });
+      props.onUngrouped(group); reset();
+      // The Ungroup button left with its row, so focus moves to the toast's Undo instead of falling out of the dialog.
+      requestAnimationFrame(() => {
+        if (dialog.open && (!dialog.contains(document.activeElement) || document.activeElement === dialog)) dialog.querySelector<HTMLElement>(".toast-action")?.focus();
+      });
     } catch (error) { setError(String(error instanceof Error ? error.message : error)); }
     finally { setSaving(false); }
   };
@@ -39,7 +44,7 @@ export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; 
     <h2 id="workspace-title">Bring your workspaces together.</h2>
     <p class="muted">Combine worktrees and clones in one history. Original folders stay visible, and your files never move.</p>
     <Show when={props.catalog.groups.length}>
-      <div class="existing-groups"><h3>Your workspace groups</h3><For each={props.catalog.groups}>{group => <div class="existing-group"><span><strong>{group.name}</strong><small>{group.paths.length} source folders</small></span><button class="text-button" disabled={saving()} onClick={() => edit(group)}>Edit</button><button class="text-button" disabled={saving()} onClick={() => void remove(group.id)}>Ungroup</button></div>}</For></div>
+      <div class="existing-groups"><h3>Your workspace groups</h3><For each={props.catalog.groups}>{group => <div class="existing-group" data-group-id={group.id}><span><strong>{group.name}</strong><small>{group.paths.length} source folders</small></span><button class="text-button" disabled={saving()} onClick={() => edit(group)}>Edit</button><button class="text-button ungroup-button" disabled={saving()} onClick={() => void remove(group)}>Ungroup</button></div>}</For></div>
     </Show>
     <form onSubmit={save}>
       <label class="field-label" for="group-name">{editing() ? "Edit group name" : "New group name"}</label>
@@ -52,5 +57,6 @@ export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; 
       <Show when={error()}><p role="alert" class="error-text">{error()}</p></Show>
       <div class="dialog-footer"><span><Icon name="shield" size={14} /> A reversible, local-only view</span><Show when={editing()}><button type="button" class="text-button" onClick={reset}>Cancel edit</button></Show><button type="submit" class="primary-button" disabled={saving() || paths().length < 2 || !name().trim()}>{saving() ? "Saving…" : editing() ? "Save group" : "Create group"}<Icon name="arrow" size={16} /></button></div>
     </form>
+    {props.children}
   </dialog>;
 }
