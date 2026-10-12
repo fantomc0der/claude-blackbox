@@ -193,6 +193,8 @@ The library prioritizes search and recordings over introductory content. Archive
 
 Recording rows share their column tracks across the loaded page rather than sizing metadata independently. Message and tool counts occupy separate aligned numeric tracks; timestamps align with the title line even when usage is absent. Long titles ellipsize on desktop and clamp to two lines on phones and in the replay list, without hiding bookmarks. Workspace, branch, and model labels truncate within their own bounds while full titles and provenance remain available on hover. Compact rows retain the model beneath the title/provenance and keep estimated cost beside the title; long cost and sort values wrap within the trailing column rather than squeezing the title away.
 
+The row symbol marks the recording's kind: a message for a conversation, a pencil for file changes, a branch for a subagent. A recording with errors tints the symbol and adds a 7px corner mark in the same tint, so the state never rests on hue alone. The symbol's tooltip names both ("File changes · 1 error"), and the row's accessible name carries the bookmark, file-change, and error-count facts after the title, since the icons themselves are decorative.
+
 Transient menus are placed against the viewport, not against their container. The filter menu is positioned from its trigger's rectangle with a 9px gap below it, a 16px minimum inset from every viewport edge, and a 120px minimum height; it aligns to the trigger's opposite edge rather than overflowing. At 680px and below it becomes a full-width bottom sheet with a safe-area-aware bottom pad and its own close button.
 
 **The Stable Frame Rule.** Theme changes recolor existing surfaces; they do not move navigation, library, replay, or top-bar structure.
@@ -219,13 +221,18 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 ### Inputs / Fields
 - **Style:** One-pixel divider stroke, field corner, and compact field padding.
 - **Placeholder:** Placeholder text sits above the 4.5:1 contrast threshold against its own field surface in both themes, not at the muted-metadata level.
-- **Focus:** Fields keep the global focus treatment with no separate visual language per theme.
+- **Focus:** Fields keep the global focus treatment with no separate visual language per theme. The two fields with borderless inputs draw the same 2px accent outline at a -1px offset, so their perimeter matches every other control without shifting layout. The library search box carries it on the box, over its border. The replay's Find in this recording input carries it on the input itself rather than the whole find row with its stepping controls; its 6px inline padding is cancelled by an equal negative margin, so the text and its neighbors keep their place.
 
 ### Navigation
 - **Style:** Narrow sidebar, muted section metadata, and selected-item emphasis through the active palette.
 - **Workspace list:** Scrolls inside a guaranteed minimum height, so a short list still occupies the rail and a long one never pushes the footer off-screen.
 - **Mobile:** Navigation becomes the same 250px drawer at the mobile breakpoint; the three reading controls remain in its footer.
 - **Subagent visibility:** Not a sidebar control. The library's Show subagents switch owns it, and the sidebar's counts and workspace list follow that switch.
+
+### Keyboard Wayfinding
+- **Opening a replay:** Enter or Space on a recording moves focus to the replay heading once it loads, showing the 2px focus outline, so the next Tab continues into the replay instead of through the remaining rows. A pointer open leaves focus on the row. Escape or Close replay returns focus to the row either way.
+- **Skip links:** Skip to recordings is always available. While a replay is open, Skip to transcript comes first and focuses the transcript, so Page Up and Page Down scroll it at once.
+- **Document title:** The browser tab names the view: "<recording title> · claude-blackbox" in a replay, "Search: <term> · claude-blackbox" for a search, the workspace name or "Bookmarked" for those views, and the landing title otherwise. Closing a replay restores the title of the view beneath it.
 
 ### Sidebar Footer
 - **Style:** Theme first as a segmented fieldset, then Text size and Reading width as 32px selects at the 13px support size. Labels sit on the left and never wrap; a control that does not fit beside its label stacks beneath it at full width, and the two selectors always share one layout.
