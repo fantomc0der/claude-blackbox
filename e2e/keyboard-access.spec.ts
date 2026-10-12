@@ -33,6 +33,28 @@ test("Enter on a recording moves focus to its heading while a click leaves it on
   await expect(heading).toBeFocused();
 });
 
+test("Enter still reaches the heading when a narrow layout hides the recording list behind the replay", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 700 });
+  await page.goto("/?q=effortless");
+  const row = heroRow(page);
+  const heading = page.getByRole("heading", { level: 2, name: DEMO_HERO_TITLE });
+  await row.focus();
+  await page.keyboard.press("Enter");
+  await expect(heading).toBeFocused();
+  await expect(page.locator(".library")).toBeHidden();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Close replay" })).toBeFocused();
+  // Focus already moved elsewhere before the recording loaded stays where the reader put it.
+  await page.keyboard.press("Escape");
+  await expect(row).toBeFocused();
+  await page.route("**/api/sessions/*", async route => { await new Promise(resolve => setTimeout(resolve, 600)); await route.continue(); });
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Close replay" }).focus();
+  await expect(heading).toBeVisible();
+  await page.waitForTimeout(300);
+  await expect(page.getByRole("button", { name: "Close replay" })).toBeFocused();
+});
+
 test("document title names the current view and restores on close", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveTitle("claude-blackbox — Your session flight recorder");
