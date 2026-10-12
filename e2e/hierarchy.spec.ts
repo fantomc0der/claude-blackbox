@@ -46,7 +46,7 @@ test("short laptop screens give the hero's height to recording rows and restore 
     await page.setViewportSize({ width: 1100, height: 700 });
     await expect(heading).toHaveText("Session library");
     await expect(page.getByLabel("Archive totals")).toBeHidden();
-    // With the hero and archive totals in place, only three full rows fit at this size.
+    // The compact heading frees the room for a fourth full row; the hero and totals left only three here.
     await expect.poll(fullyVisibleRows).toBeGreaterThanOrEqual(4);
     await page.setViewportSize({ width: 1100, height: 900 });
     await expect(heading).toHaveText("Good work leaves a trail.");

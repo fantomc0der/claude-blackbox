@@ -25,6 +25,9 @@ test("usage keeps its layout focus scroll and values through background refreshe
       const beforeScroll = await body.evaluate(element => element.scrollTop);
       const beforeHeight = (await panel.boundingBox())!.height;
       const beforeControls = (await page.locator(".discovery-controls").boundingBox())!.y;
+      // The breakdown's own height and the list it sits in must not shift under the reader while totals refresh.
+      const beforeBreakdown = (await breakdown.boundingBox())!.height;
+      const beforeList = await body.evaluate(element => element.scrollHeight);
       const listing = recorder.list(new URLSearchParams());
       let updates = 0;
       await page.route("**/api/sessions?*", async route => {
@@ -41,11 +44,15 @@ test("usage keeps its layout focus scroll and values through background refreshe
         await expect(panel.locator(".usage-total-cost")).toContainText(usageCost(listing.usage));
         expect((await panel.boundingBox())!.height).toBe(beforeHeight);
         expect((await page.locator(".discovery-controls").boundingBox())!.y).toBe(beforeControls);
+        expect((await breakdown.boundingBox())!.height).toBe(beforeBreakdown);
+        expect(await body.evaluate(element => element.scrollHeight)).toBe(beforeList);
         await expect(panel).toHaveAttribute("aria-busy", "false");
         expect(await focused!.evaluate(element => document.activeElement === element)).toBe(true);
         expect(await body.evaluate(element => element.scrollTop)).toBe(beforeScroll);
         await expect(panel.locator(".usage-total").first()).toContainText(compact(listing.usage.totalTokens + updates * 1_000_000));
         expect((await panel.boundingBox())!.height).toBe(beforeHeight);
+        expect((await breakdown.boundingBox())!.height).toBe(beforeBreakdown);
+        expect(await body.evaluate(element => element.scrollHeight)).toBe(beforeList);
       }
       await page.unroute("**/api/sessions?*");
     }
