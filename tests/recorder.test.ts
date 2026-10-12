@@ -441,6 +441,35 @@ describe("recording index", () => {
     expect(plan.some(row => row.detail.includes("tool_results_event"))).toBe(true);
   });
 
+  test("names the call behind a result with only its bounded text inputs", async () => {
+    const fixtureData = await fixture();
+    const written = "x".repeat(5000);
+    await writeFile(fixtureData.file, [
+      fixtureData.record([
+        { type: "text", text: "Running the probe" },
+        { type: "tool_use", name: "Bash", id: "probe", input: { command: "bun run probe --synthetic", timeout: 5000 } },
+        { type: "tool_use", name: "Write", id: "write", input: { file_path: "src/out.ts", content: written, options: { mode: "create" } } },
+      ], { type: "assistant" }),
+      fixtureData.record([
+        { type: "tool_result", tool_use_id: "probe", content: "Synthetic probe timed out", is_error: true },
+        { type: "tool_result", tool_use_id: "write", content: "Written" },
+      ]),
+      fixtureData.record([{ type: "tool_result", tool_use_id: "unrecorded", content: "Orphaned output" }]),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const session = recorder.list(new URLSearchParams()).items[0];
+    expect(recorder.events(session.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.sequence)).toEqual([1]);
+    const calls = recorder.calls(session.id, ["probe", "write", "unrecorded", "probe"]);
+    expect(Object.keys(calls).sort()).toEqual(["probe", "write"]);
+    expect(calls.probe).toEqual({ type: "tool_use", id: "probe", name: "Bash", input: { command: "bun run probe --synthetic" } });
+    expect(calls.write.name).toBe("Write");
+    expect(calls.write.input!.file_path).toBe("src/out.ts");
+    expect((calls.write.input!.content as string).length).toBe(2000);
+    expect((calls.write.input!.content as string).endsWith("…")).toBe(true);
+    expect(calls.write.input!.options).toBeUndefined();
+    expect(recorder.calls(session.id, [])).toEqual({});
+  });
+
   test("recovers an interrupted import from stored records without duplicates", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("Recorded once") + "\n");

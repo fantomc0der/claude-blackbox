@@ -121,7 +121,8 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
         if (request.method === "GET" && route[2] === "events") {
           const page = recorder.events(session.id, url.searchParams);
           const toolIds = page.items.flatMap(event => event.blocks.filter(block => block.type === "tool_use").map(block => block.id || ""));
-          return json({ ...page, results: recorder.results(session.id, toolIds) });
+          const resultIds = page.items.flatMap(event => event.blocks.filter(block => block.type === "tool_result").map(block => block.tool_use_id || ""));
+          return json({ ...page, results: recorder.results(session.id, toolIds), calls: recorder.calls(session.id, resultIds) });
         }
         if (request.method === "PUT" && route[2] === "bookmark") {
           const value = await body();

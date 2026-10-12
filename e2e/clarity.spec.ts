@@ -1,22 +1,25 @@
 import { expect, test } from "./harness";
 import { DEMO_HERO_TITLE } from "../tests/fixtures";
 
-test("replay counts describe the cards on screen and the records behind them", async ({ page }) => {
+test("the replay states one record count that agrees with the footer", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/");
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   const counts = page.locator(".replay-find > span");
   const cards = page.locator(".replay-event");
-  await expect(counts).toHaveText(/^\d+ shown · \d+\/\d+ records$/);
-  const [shown, records, total] = (await counts.textContent())!.match(/\d+/g)!.map(Number);
-  expect(shown).toBeLessThan(records);
-  await expect(cards).toHaveCount(shown);
-  await expect(page.locator(".replay-footer")).toContainText(`of ${records} records`);
+  await expect(counts).toHaveText(/^\d+ of \d+ records$/);
+  const [records, total] = (await counts.textContent())!.match(/\d+/g)!.map(Number);
+  expect(records).toBeLessThan(total);
+  // Conversation folds each tool result into its call's card, so there are fewer cards than records.
+  expect(await cards.count()).toBeLessThan(records);
+  await expect(counts).toHaveAttribute("aria-label", `${records} of ${total} records in this view. Tool results appear inside their calls.`);
+  await expect(page.locator(".replay-footer")).toContainText(`1–${records} of ${records} records`);
   await page.getByRole("button", { name: "All events", exact: true }).click();
   await expect(counts).toHaveText(/^\d+ records$/);
   const everything = Number((await counts.textContent())!.match(/\d+/)![0]);
   expect(everything).toBeGreaterThan(records);
   expect(everything).toBe(total);
+  await expect(counts).toHaveAttribute("aria-label", `${everything} records`);
   await expect(cards).toHaveCount(everything);
   await expect(page.locator(".replay-footer")).toContainText(`1–${everything} of ${everything} records`);
 });

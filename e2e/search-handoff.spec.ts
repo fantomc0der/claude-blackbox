@@ -41,8 +41,9 @@ test("a tool-result search hit opens on All events with the result marked and it
   await expect(selected.locator("mark")).toHaveText(["Quillmoss"]);
   await expect.poll(() => headerOffset(page)).toBeGreaterThanOrEqual(0);
   expect(await headerOffset(page)).toBeLessThan(40);
+  await expect(selected.locator(".tool-result-call")).toContainText("bun test billing");
   // The call that produced the matching output opens to show it too.
-  await expect(page.locator(".tool-summary").filter({ hasText: "Bash" })).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("button.tool-summary").filter({ hasText: "Bash" })).toHaveAttribute("aria-expanded", "true");
 });
 
 test("the replay's own find term replaces the library highlight", async ({ page }) => {

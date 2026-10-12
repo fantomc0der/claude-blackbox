@@ -9,11 +9,11 @@ import { removeTestDirectory } from "./helpers";
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
-async function setup() {
+async function setup(records: unknown[] = [{ type: "user", cwd: "/work/example", message: { content: "Hello" } }]) {
   const root = await mkdtemp(join(tmpdir(), "blackbox-http-"));
   const directory = join(root, "claude", "projects", "workspace");
   await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, "record.jsonl"), JSON.stringify({ type: "user", cwd: "/work/example", message: { content: "Hello" } }) + "\n");
+  await writeFile(join(directory, "record.jsonl"), records.map(record => JSON.stringify(record)).join("\n") + "\n");
   const recorder = await Recorder.open(join(root, "claude"), join(root, "state"));
   cleanup.push(async () => { await recorder.close(); await removeTestDirectory(root); });
   return { handler: createHandler({ recorder }), recorder, id: recorder.list(new URLSearchParams()).items[0].id };
@@ -46,6 +46,20 @@ test("serves paginated records, local bookmarks and faithful export", async () =
   const download = await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/export`));
   expect(download.headers.get("content-disposition")).toContain("attachment");
   expect(JSON.parse((await download.text()).trim()).message.content).toBe("Hello");
+});
+
+test("pairs a page's results with their calls in both directions", async () => {
+  const { handler, id } = await setup([
+    { type: "assistant", cwd: "/work/example", message: { content: [{ type: "tool_use", id: "probe", name: "Bash", input: { command: "bun run probe" } }] } },
+    { type: "user", cwd: "/work/example", message: { content: [{ type: "tool_result", tool_use_id: "probe", content: "Timed out", is_error: true }] } },
+  ]);
+  const errors = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/events?kind=all&errors=1`))).json();
+  expect(errors.items).toHaveLength(1);
+  expect(errors.results).toEqual({});
+  expect(errors.calls).toEqual({ probe: { type: "tool_use", id: "probe", name: "Bash", input: { command: "bun run probe" } } });
+  const all = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/events?kind=all`))).json();
+  expect(all.results.probe).toMatchObject({ tool_use_id: "probe", is_error: true });
+  expect(all.calls.probe.name).toBe("Bash");
 });
 
 test("SSE sends a fresh invalidation on reconnect and releases listeners", async () => {
