@@ -702,7 +702,7 @@ export class Recorder {
       conditions.push("s.updated>=?"); bindings.push(new Date(Date.now() - days * 86400000).toISOString());
     }
     for (const [key, comparison] of [["after", ">="], ["before", "<="]]) {
-      const date = dateBound(params.get(key), key === "before");
+      const date = dateBound(params.get(key), key === "before", params.get(`${key}Tz`));
       if (date) {
         conditions.push(`s.updated ${comparison} ?`);
         bindings.push(date);
@@ -809,7 +809,7 @@ export class Recorder {
       if (tool !== "mcp__") bindings.push(tool, tool);
     }
     for (const [field, comparison] of [["after", ">="], ["before", "<="]]) {
-      const date = dateBound(params.get(field), field === "before");
+      const date = dateBound(params.get(field), field === "before", params.get(`${field}Tz`));
       if (date) { filter += ` AND e.timestamp!='' AND e.timestamp${comparison}?`; bindings.push(date); }
     }
     return { filter, bindings };

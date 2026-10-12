@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { folderName, modelName, recordedRange, resumeCommand, searchHighlight } from "../src/client/lib/format";
+import { expect, spyOn, test } from "bun:test";
+import { folderName, localDayOffset, modelName, recordedRange, resumeCommand, searchHighlight, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
 
 test("search highlights use the term the server matched records with", () => {
@@ -60,4 +60,45 @@ test("resume commands quote POSIX and PowerShell paths as literal arguments", ()
     .toBe("cd -- '/work/it'\\''s safe; echo nope' && claude --resume 'id'\\''quoted'");
   expect(resumeCommand({ cwd: "C:\\work\\it's safe; echo nope", sessionId: "id'quoted" }))
     .toBe("Set-Location -LiteralPath 'C:\\work\\it''s safe; echo nope' -ErrorAction Stop; claude --resume 'id''quoted'");
+});
+
+test("relative times read skew as now and a stamp further ahead as its date", () => {
+  const now = spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-12T00:25:00Z"));
+  try {
+    const date = (value: string) => new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    expect(timeAgo("2026-10-12T00:24:30Z")).toBe("Just now");
+    expect(timeAgo("2026-10-12T00:25:30Z")).toBe("Just now");
+    expect(timeAgo("2026-10-12T00:26:00Z")).toBe("Just now");
+    expect(timeAgo("2026-10-12T00:26:01Z")).toBe(date("2026-10-12T00:26:01Z"));
+    expect(timeAgo("2026-10-12T17:42:00Z")).toBe(date("2026-10-12T17:42:00Z"));
+    expect(timeAgo("2026-10-12T00:20:00Z")).toBe("5m ago");
+    expect(timeAgo("2026-10-11T22:25:00Z")).toBe("2h ago");
+    expect(timeAgo("2026-10-09T00:25:00Z")).toBe("3d ago");
+    expect(timeAgo("2026-09-01T00:25:00Z")).toBe(date("2026-09-01T00:25:00Z"));
+    expect(timeAgo("not a time")).toBe("Unknown");
+  } finally { now.mockRestore(); }
+});
+
+test("date bounds carry the local offset of each chosen day", () => {
+  const zone = process.env.TZ;
+  try {
+    process.env.TZ = "Europe/Berlin";
+    expect(localDayOffset("2026-10-13")).toBe(120);
+    expect(localDayOffset("2026-10-13", true)).toBe(120);
+    // Daylight saving ends during this day, so its first and last moments sit in different offsets.
+    expect(localDayOffset("2026-10-25")).toBe(120);
+    expect(localDayOffset("2026-10-25", true)).toBe(60);
+    expect(withLocalDays("kind=all&after=2026-10-25&before=2026-10-25")).toBe("kind=all&after=2026-10-25&before=2026-10-25&afterTz=120&beforeTz=60");
+    expect(withLocalDays("q=retry&afterTz=99&before=yesterday")).toBe("q=retry&before=yesterday");
+    expect(localDayOffset("")).toBeNull();
+    process.env.TZ = "America/New_York";
+    expect(withLocalDays("after=2026-10-13")).toBe("after=2026-10-13&afterTz=-240");
+    // Havana skips from 00:00 to 01:00 on this day, so the day starts at the previous offset.
+    process.env.TZ = "America/Havana";
+    expect(localDayOffset("2026-03-08")).toBe(-300);
+    expect(localDayOffset("2026-03-08", true)).toBe(-240);
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
 });

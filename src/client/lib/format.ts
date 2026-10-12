@@ -26,13 +26,37 @@ export function compact(value: number): string {
 }
 
 export function timeAgo(value: string): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 1000));
+  const seconds = Math.floor((Date.now() - Date.parse(value)) / 1000);
   if (!Number.isFinite(seconds)) return "Unknown";
+  // A stamp up to a minute ahead is clock skew and reads as now. One further ahead reads as its date, since no
+  // relative phrase describes it truthfully.
+  if (seconds < -60 || seconds >= 604800) return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   if (seconds < 60) return "Just now";
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
-  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+// The minutes east of UTC that make a plain date bound cover the reader's local calendar day: the offset in effect at
+// the day's first moment, or with `end` its last, so a range across a daylight-saving change still runs from local
+// midnight to local midnight. Measured from the day's actual local start, which also covers zones that skip midnight.
+export function localDayOffset(date: string, end = false): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const local = new Date(`${date}T${end ? "23:59:59.999" : "00:00:00"}`).getTime();
+  const minutes = Math.round((Date.parse(date) + (end ? 86399999 : 0) - local) / 60000);
+  return Number.isFinite(minutes) ? minutes : null;
+}
+
+// Adds `afterTz` and `beforeTz` for the plain dates in `after` and `before`, so the server bounds them on local days
+// while URLs and filter chips keep the dates the reader picked.
+export function withLocalDays(query: string): string {
+  const params = new URLSearchParams(query);
+  for (const key of ["after", "before"]) {
+    const offset = localDayOffset(params.get(key) || "", key === "before");
+    if (offset === null) params.delete(`${key}Tz`);
+    else params.set(`${key}Tz`, String(offset));
+  }
+  return params.toString();
 }
 
 export function dateTime(value: string): string {

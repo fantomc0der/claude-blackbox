@@ -221,7 +221,7 @@ test("version 4 indexes backfill investigation fields without changing source or
   expect(after.db.query("SELECT * FROM tool_calls").all()).toEqual([]);
 });
 
-test("numeric and UTC date bounds reject malformed and impossible values", () => {
+test("numeric and date bounds reject malformed and impossible values and out-of-range offsets", () => {
   expect(numericBound("0")).toBe(0);
   expect(numericBound(".25")).toBe(0.25);
   for (const value of ["", "-1", "NaN", "Infinity", "1e9", "0x10", "9007199254740992"]) expect(numericBound(value)).toBeNull();
@@ -232,6 +232,17 @@ test("numeric and UTC date bounds reject malformed and impossible values", () =>
   expect(dateBound("2026-09-20T12:00:00")).toBeNull();
   expect(dateBound("2026-09-20T12:00:00+02:00")).toBe("2026-09-20T10:00:00.000Z");
   expect(dateBound("yesterday")).toBeNull();
+  expect(dateBound("2026-09-20", false, "120")).toBe("2026-09-19T22:00:00.000Z");
+  expect(dateBound("2026-09-20", true, "120")).toBe("2026-09-20T21:59:59.999Z");
+  expect(dateBound("2026-09-20", false, "-330")).toBe("2026-09-20T05:30:00.000Z");
+  expect(dateBound("2026-09-20", true, "-840")).toBe("2026-09-21T13:59:59.999Z");
+  expect(dateBound("2026-09-20", false, "840")).toBe("2026-09-19T10:00:00.000Z");
+  expect(dateBound("2026-02-30", false, "120")).toBeNull();
+  expect(dateBound("2026-09-20T12:00:00Z", false, "120")).toBe("2026-09-20T12:00:00.000Z");
+  for (const offset of ["", "841", "-900", "1.5", "60m", " 60", "1e2", "abc", "0x10"]) {
+    expect(dateBound("2026-09-20", false, offset)).toBe("2026-09-20T00:00:00.000Z");
+    expect(dateBound("2026-09-20", true, offset)).toBe("2026-09-20T23:59:59.999Z");
+  }
   expect(withSelectedOption(["Read", "Write"], "Custom")).toEqual(["Custom", "Read", "Write"]);
   expect(withSelectedOption(["Read", "Write"], "Read")).toEqual(["Read", "Write"]);
 });
@@ -322,4 +333,58 @@ test("literal missing-effort text never aliases the separate missing-data filter
   expect(recorder.list(new URLSearchParams("effortMissing=1")).items.map(session => session.title)).toEqual(["Missing"]);
   expect(recorder.list(new URLSearchParams("effortMissing=1&effort=__missing__")).total).toBe(0);
   expect((await recorder.catalog()).efforts).toEqual(["__missing__"]);
+});
+
+// 23:30 on Tuesday 13 October and 00:30 on Wednesday in a +02:00 zone, which are both Tuesday in UTC.
+const lateTuesday = "2026-10-13T21:30:00Z", earlyWednesday = "2026-10-13T22:30:00Z";
+const localDay = (date: string, offset = "120") => `after=${date}&before=${date}&afterTz=${offset}&beforeTz=${offset}`;
+const invalidOffsets = ["abc", "900", "-841", "1.5", ""];
+
+test("library date bounds fall on the reader's local calendar days", async () => {
+  const setup = await fixture();
+  await setup.write("tuesday", [record("Late Tuesday", { timestamp: lateTuesday })]);
+  await setup.write("wednesday", [record("Early Wednesday", { timestamp: earlyWednesday })]);
+  const recorder = await setup.open();
+  const titles = (query: string) => recorder.list(new URLSearchParams(query)).items.map(session => session.title).sort();
+  expect(titles(localDay("2026-10-13"))).toEqual(["Late Tuesday"]);
+  expect(titles(localDay("2026-10-14"))).toEqual(["Early Wednesday"]);
+  expect(titles("after=2026-10-14&afterTz=120")).toEqual(["Early Wednesday"]);
+  expect(titles("before=2026-10-13&beforeTz=120")).toEqual(["Late Tuesday"]);
+  expect(titles(localDay("2026-10-13", "-240"))).toEqual(["Early Wednesday", "Late Tuesday"]);
+  expect(titles("after=2026-10-13&before=2026-10-13")).toEqual(["Early Wednesday", "Late Tuesday"]);
+  for (const offset of invalidOffsets) {
+    expect(titles(localDay("2026-10-13", offset))).toEqual(["Early Wednesday", "Late Tuesday"]);
+    expect(titles(localDay("2026-10-14", offset))).toEqual([]);
+  }
+});
+
+test("replay date bounds fall on local days for records, the timeline, and find matches", async () => {
+  const setup = await fixture();
+  await setup.write("midnight", [
+    record("Monday day prompt", { timestamp: "2026-10-12T10:00:00Z" }),
+    record("Late Tuesday day prompt", { timestamp: lateTuesday }),
+    record("Early Wednesday day prompt", { timestamp: earlyWednesday }),
+  ]);
+  const recorder = await setup.open();
+  const id = recorder.list(new URLSearchParams()).items[0].id;
+  const sequences = (query: string) => recorder.events(id, new URLSearchParams(`kind=all&${query}`)).items.map(event => event.sequence);
+  const timeline = (query: string) => {
+    const result = recorder.timeline(id, new URLSearchParams(`kind=all&${query}`));
+    return result.buckets.reduce((sum, bucket) => sum + bucket.count, 0);
+  };
+  const matches = (query: string) => recorder.matches(id, new URLSearchParams(`kind=all&find=day&${query}`)).items.map(match => match.sequence);
+  expect(sequences(localDay("2026-10-13"))).toEqual([1]);
+  expect(sequences(localDay("2026-10-14"))).toEqual([2]);
+  expect(timeline(localDay("2026-10-13"))).toBe(1);
+  expect(timeline(localDay("2026-10-14"))).toBe(1);
+  expect(matches(localDay("2026-10-13"))).toEqual([1]);
+  expect(matches(localDay("2026-10-14"))).toEqual([2]);
+  expect(sequences("after=2026-10-13&afterTz=120")).toEqual([1, 2]);
+  expect(sequences("before=2026-10-13&beforeTz=120")).toEqual([0, 1]);
+  for (const offset of invalidOffsets) {
+    expect(sequences(localDay("2026-10-13", offset))).toEqual([1, 2]);
+    expect(timeline(localDay("2026-10-13", offset))).toBe(2);
+    expect(matches(localDay("2026-10-13", offset))).toEqual([1, 2]);
+    expect(sequences(localDay("2026-10-14", offset))).toEqual([]);
+  }
 });
