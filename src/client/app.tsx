@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
-import type { Catalog, IndexProgress, Session, SessionPage } from "../shared/types";
+import type { Catalog, IndexProgress, Session, SessionPage, WorkspaceGroup } from "../shared/types";
 import { isAbort, request } from "./lib/api";
 import { dismissable, rememberFocus } from "./lib/dismissable";
 import { createLocation } from "./lib/location";
@@ -11,6 +11,7 @@ import { LibraryDivider } from "./components/library-divider";
 import { ReplayPanel } from "./components/replay-panel";
 import { WorkspaceDialog } from "./components/workspace-dialog";
 import { Icon } from "./components/icon";
+import { noticeDuration, Toast, type Notice } from "./components/toast";
 
 function ShortcutPopover(props: { close: () => void; trigger: HTMLButtonElement }) {
   let panel!: HTMLDivElement;
@@ -47,7 +48,8 @@ export function App() {
   const [navOpen, setNavOpen] = createSignal(false);
   const [mobile, setMobile] = createSignal(matchMedia("(max-width: 680px)").matches);
   const [query, setQuery] = createSignal(new URLSearchParams(location.search).get("q") || "");
-  const [toast, setToast] = createSignal("");
+  const [toast, setToast] = createSignal<Notice | null>(null);
+  const [toastHeld, setToastHeld] = createSignal(false);
   const [help, setHelp] = createSignal(false);
   const [libraryCollapsed, setLibraryCollapsed] = createSignal(false);
   const [overviewVisible, setOverviewVisible] = createSignal(true);
@@ -87,9 +89,9 @@ export function App() {
     const timeout = setTimeout(() => navigate({ q: value || null, offset: null }, true), 220);
     return () => clearTimeout(timeout);
   });
-  createEffect(() => toast(), value => {
-    if (!value) return;
-    const timeout = setTimeout(() => setToast(""), 4200);
+  createEffect(() => ({ notice: toast(), held: toastHeld() }), ({ notice, held }) => {
+    if (!notice || held) return;
+    const timeout = setTimeout(() => setToast(null), noticeDuration(notice));
     return () => clearTimeout(timeout);
   });
   const catalogQueue = createRefreshQueue(async signal => {
@@ -164,10 +166,65 @@ export function App() {
   const refresh = async () => {
     if (refreshing()) return;
     setRefreshing(true);
-    try { await request("/api/refresh", { method: "POST", body: "{}" }); changed(); setToast("Recordings are up to date"); }
-    catch (error) { setToast(error instanceof Error ? error.message : "Refresh failed"); }
+    try { await request("/api/refresh", { method: "POST", body: "{}" }); changed(); setToast({ message: "Recordings are up to date" }); }
+    catch (error) { setToast({ message: error instanceof Error ? error.message : "Refresh failed" }); }
     finally { setRefreshing(false); }
   };
+  const notify = (message: string) => setToast({ message });
+  // Ungrouping acts at once and offers Undo in the toast. A group ungrouped while that toast still shows joins it, so a
+  // quick second click on the row that slid under the pointer is undone together with the first. Undo re-creates each
+  // group through the same POST the dialog uses, keeping its id, so a workspace URL selecting it works again.
+  type Ungrouped = { notice: Notice; groups: WorkspaceGroup[]; selection: { workspace: string; cwd: string | null } | null; restoring?: boolean };
+  let ungroupedBatch: Ungrouped | null = null;
+  const groupNames = (groups: WorkspaceGroup[]) => groups.length === 1 ? groups[0].name : groups.length === 2 ? `${groups[0].name} and ${groups[1].name}` : `${groups.length} groups`;
+  const ungrouped = (group: WorkspaceGroup) => {
+    // A batch whose Undo is already restoring cannot take more groups, so this one starts a toast of its own.
+    const previous = ungroupedBatch && !ungroupedBatch.restoring && untrack(toast) === ungroupedBatch.notice ? ungroupedBatch : null;
+    const groups = [...(previous?.groups || []), group];
+    const selection = previous?.selection || (params().get("workspace") === group.id ? { workspace: group.id, cwd: params().get("cwd") } : null);
+    const batch: Ungrouped = { notice: { message: `Ungrouped ${groupNames(groups)}`, action: { label: "Undo", run: () => void undoUngroup(batch) } }, groups, selection };
+    ungroupedBatch = batch;
+    setToast(batch.notice);
+    changed();
+  };
+  const undoUngroup = async (batch: Ungrouped) => {
+    if (batch.restoring || untrack(toast) !== batch.notice) return;
+    batch.restoring = true;
+    const returnFocus = Boolean(document.activeElement?.closest(".toast"));
+    const restored: WorkspaceGroup[] = [], failed: WorkspaceGroup[] = [];
+    let reason = "";
+    try {
+      for (const group of batch.groups) {
+        try {
+          await request("/api/groups", { method: "POST", body: JSON.stringify({ id: group.id, name: group.name, paths: group.paths }) });
+          restored.push(group);
+        } catch (error) { failed.push(group); reason ||= error instanceof Error ? error.message : String(error); }
+      }
+      if (ungroupedBatch === batch) ungroupedBatch = null;
+      changed();
+      await catalogQueue.refresh();
+    } finally { batch.restoring = false; }
+    // The workspace view falls back to all workspaces when its group disappears; put the selection back unless the
+    // reader has chosen another workspace since.
+    const selection = batch.selection && restored.some(group => group.id === batch.selection!.workspace) ? batch.selection : null;
+    if (selection && !params().get("workspace")) navigate({ workspace: selection.workspace, cwd: selection.cwd }, true);
+    // A group ungrouped while this restore was in flight now owns the toast and its Undo; leave both alone.
+    if (untrack(toast) !== batch.notice) return;
+    setToast(failed.length
+      ? { message: `${restored.length ? `Restored ${groupNames(restored)}. ` : ""}Could not restore ${groupNames(failed)}. ${reason}`, error: true }
+      : { message: `Restored ${groupNames(restored)}` });
+    if (!returnFocus) return;
+    // Undo is gone with its notice, so focus returns to the restored group's Ungroup button in the dialog, or to the
+    // Group action that opens it.
+    requestAnimationFrame(() => {
+      const dialog = document.querySelector<HTMLDialogElement>("dialog.workspace-dialog[open]");
+      const row = restored[0] ? `.existing-group[data-group-id="${CSS.escape(restored[0].id)}"] .ungroup-button` : "";
+      const trigger = document.querySelector<HTMLElement>(".workspace-group");
+      const target = dialog ? (row && dialog.querySelector<HTMLElement>(row)) || dialog.querySelector<HTMLElement>("#group-name") : trigger?.getClientRects().length && !trigger.closest("[inert]") ? trigger : searchInput;
+      target?.focus();
+    });
+  };
+  const dialogOpen = () => groupOpen() && Boolean(catalog());
   const currentWorkspace = () => catalog()?.workspaces.find(workspace => workspace.id === params().get("workspace"));
   // A recording opened from the keyboard moves focus to its heading once it has loaded, so the next Tab continues into the
   // replay instead of through every remaining row. Escape or Close replay still returns focus to the row. Focus moves only
@@ -203,12 +260,12 @@ export function App() {
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>
       <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} usageCurrent={usageScope(pageQuery()) === usageScope(listQuery())} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} focusReplay={id => setHeadingFocus(id ? { id, from: document.activeElement } : null)} />
         <Show when={params().get("session") && !libraryCollapsed()}><LibraryDivider resize={setLibraryWidth} /></Show>
-        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} params={params()} navigate={navigate} traversal={traversal} changed={changed} close={closeReplay} notify={setToast} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} overviewVisible={overviewVisible()} toggleOverview={() => setOverviewVisible(value => !value)} />}</Show>
+        <Show when={params().get("session")} keyed>{id => <ReplayPanel id={id} session={session()} revision={revision()} anchor={params().get("event") || ""} params={params()} navigate={navigate} traversal={traversal} changed={changed} close={closeReplay} notify={notify} libraryCollapsed={libraryCollapsed()} toggleLibrary={() => setLibraryCollapsed(value => !value)} overviewVisible={overviewVisible()} toggleOverview={() => setOverviewVisible(value => !value)} />}</Show>
       </div>
     </main>
-    <Show when={groupOpen() && catalog()}><WorkspaceDialog catalog={catalog()!} onClose={() => setGroupOpen(false)} onSaved={changed} /></Show>
+    <Show when={dialogOpen()}><WorkspaceDialog catalog={catalog()!} onClose={() => setGroupOpen(false)} onSaved={changed} onUngrouped={ungrouped}><Toast notice={toast()} hold={setToastHeld} /></WorkspaceDialog></Show>
     <Show when={help()}><ShortcutPopover close={() => setHelp(false)} trigger={helpButton} /></Show>
-    <Show when={toast()}><div class="toast" role="status"><Icon name="check" size={16} />{toast()}</div></Show>
+    <Show when={!dialogOpen()}><Toast notice={toast()} hold={setToastHeld} /></Show>
     <div class="visually-hidden index-announcement" role="status" aria-live="polite" aria-atomic="true">{indexing()?.phase === "error" ? "Recording scan failed. Indexed recordings remain available, but results may be incomplete or out of date. Rescan recordings to retry." : ""}</div>
   </div>;
 }

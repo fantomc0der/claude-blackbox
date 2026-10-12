@@ -356,6 +356,25 @@ describe("recording index", () => {
     expect(recorder.getSession(sessions[0].id)?.cwd).toBe(sessions[0].cwd);
   });
 
+  test("re-creates an ungrouped group under its original id, as Undo does", async () => {
+    const fixtureData = await fixture();
+    await writeFile(fixtureData.file, fixtureData.record("Main session") + "\n");
+    const second = join(fixtureData.data, "projects", "test-clone");
+    await mkdir(second);
+    await writeFile(join(second, "session-a.jsonl"), fixtureData.record("Worktree session", { cwd: "C:\\work\\orbit-feature" }) + "\n");
+    const recorder = await fixtureData.open();
+    const paths = recorder.list(new URLSearchParams()).items.map(session => session.cwd);
+    const group = recorder.saveGroup({ name: "Orbit together", paths });
+    recorder.deleteGroup(group.id);
+    expect(recorder.groups()).toEqual([]);
+    expect(recorder.saveGroup({ id: group.id, name: group.name, paths: group.paths })).toEqual(group);
+    expect(recorder.groups()).toEqual([{ ...group, paths: [...group.paths].sort() }]);
+    expect(recorder.list(new URLSearchParams({ workspace: group.id })).total).toBe(2);
+    recorder.deleteGroup(group.id);
+    recorder.saveGroup({ name: "Taken", paths });
+    expect(() => recorder.saveGroup({ id: group.id, name: group.name, paths: group.paths })).toThrow("already belongs to another group");
+  });
+
   test("refuses state inside the source directory", async () => {
     const fixtureData = await fixture();
     await expect(Recorder.open(fixtureData.data, join(fixtureData.data, "cache"))).rejects.toThrow("outside");

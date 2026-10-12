@@ -1,4 +1,5 @@
 import { expect, test } from "./harness";
+import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { appendFile } from "node:fs/promises";
 import { DEMO_HERO_TITLE } from "../tests/fixtures";
@@ -156,6 +157,125 @@ test("workspace groups persist and retain the original source filter", async ({ 
   await page.getByRole("button", { name: "Group workspaces", exact: true }).first().click();
   await page.getByRole("button", { name: "Ungroup", exact: true }).click();
   await expect(page.locator(".existing-group")).toHaveCount(0);
+});
+
+type Group = { id: string; name: string; paths: string[] };
+const createGroup = (page: Page, name: string, paths: string[]) => page.evaluate(async ([name, paths]) => {
+  const response = await fetch("/api/groups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, paths }) });
+  return await response.json() as Group;
+}, [name, paths] as const);
+const groupsNamed = async (page: Page, names: string[]) => ((await (await page.request.get("/api/catalog")).json()).groups as Group[]).filter(group => names.includes(group.name));
+const removeGroups = async (page: Page, names: string[]) => {
+  for (const group of await groupsNamed(page, names)) await page.evaluate(id => fetch(`/api/groups/${id}`, { method: "DELETE", headers: { "Content-Type": "application/json" } }), group.id);
+};
+
+test("ungrouping offers an Undo toast that restores the same group and its selection", async ({ page }) => {
+  await page.goto("/");
+  const group = await createGroup(page, "Undo coverage", ["/synthetic/workspaces/orbit", "/synthetic/workspaces/orbit-auth"]);
+  try {
+    await page.getByRole("button", { name: /Undo coverage 2 folders/ }).click();
+    await expect(page).toHaveURL(new RegExp(`workspace=${group.id}`));
+    await page.getByRole("button", { name: "Group workspaces", exact: true }).click();
+    const dialog = page.locator("dialog.workspace-dialog");
+    await dialog.getByRole("button", { name: "Ungroup", exact: true }).click();
+    const toast = dialog.locator(".toast");
+    const undo = toast.getByRole("button", { name: "Undo", exact: true });
+    await expect(toast).toContainText("Ungrouped Undo coverage");
+    await expect(dialog.getByRole("status").filter({ hasText: "Ungrouped" })).toHaveText("Ungrouped Undo coverage. Undo is available.");
+    await expect(undo).toBeFocused();
+    await expect(dialog.locator(".existing-group")).toHaveCount(0);
+    await expect(page).not.toHaveURL(/workspace=/);
+    expect(await groupsNamed(page, ["Undo coverage"])).toEqual([]);
+
+    await undo.click();
+    await expect(toast).toContainText("Restored Undo coverage");
+    await expect(undo).toHaveCount(0);
+    await expect(dialog.locator(".existing-group")).toContainText("Undo coverage");
+    await expect(dialog.getByRole("button", { name: "Ungroup", exact: true })).toBeFocused();
+    expect(await groupsNamed(page, ["Undo coverage"])).toEqual([group]);
+    await expect(page).toHaveURL(new RegExp(`workspace=${group.id}`));
+
+    await page.keyboard.press("Enter");
+    await expect(toast).toContainText("Ungrouped Undo coverage");
+    await expect(undo).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(toast).toContainText("Restored Undo coverage");
+    expect(await groupsNamed(page, ["Undo coverage"])).toEqual([group]);
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".toast")).toContainText("Restored Undo coverage");
+    await expect(page.getByRole("button", { name: /Undo coverage 2 folders/ })).toHaveAttribute("aria-current", "page");
+  } finally { await removeGroups(page, ["Undo coverage"]); }
+});
+
+test("one Undo toast collects quick ungroups, holds while hovered, and expiring leaves them removed", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/");
+  const names = ["Expiry one", "Expiry two"];
+  await createGroup(page, names[0], ["/synthetic/workspaces/orbit", "/synthetic/workspaces/orbit-auth"]);
+  await createGroup(page, names[1], ["/synthetic/workspaces/atlas-api", "/synthetic/workspaces/design-system"]);
+  try {
+    await page.getByRole("button", { name: "Group workspaces", exact: true }).click();
+    const dialog = page.locator("dialog.workspace-dialog");
+    const toast = dialog.locator(".toast");
+    for (const name of names) await expect(dialog.locator(".existing-group", { hasText: name })).toHaveCount(1);
+    await dialog.locator(".existing-group", { hasText: names[0] }).getByRole("button", { name: "Ungroup", exact: true }).click();
+    await expect(toast).toHaveText("Ungrouped Expiry oneUndo");
+    await dialog.locator(".existing-group", { hasText: names[1] }).getByRole("button", { name: "Ungroup", exact: true }).click();
+    await expect(toast).toHaveText("Ungrouped Expiry one and Expiry twoUndo");
+    expect(await groupsNamed(page, names)).toEqual([]);
+
+    await toast.hover();
+    await page.clock.fastForward(15_000);
+    await expect(toast).toBeVisible();
+    await page.mouse.move(5, 5);
+    await page.clock.fastForward(9_000);
+    await expect(toast).toBeVisible();
+    await page.clock.fastForward(1_500);
+    await expect(toast).toHaveCount(0);
+    expect(await groupsNamed(page, names)).toEqual([]);
+    await expect(dialog.locator(".existing-group")).toHaveCount(0);
+  } finally { await removeGroups(page, names); }
+});
+
+test("a group ungrouped while an Undo is restoring keeps its own Undo toast", async ({ page }) => {
+  await page.goto("/");
+  const names = ["Race first", "Race second"];
+  const first = await createGroup(page, names[0], ["/synthetic/workspaces/orbit", "/synthetic/workspaces/orbit-auth"]);
+  await createGroup(page, names[1], ["/synthetic/workspaces/atlas-api", "/synthetic/workspaces/design-system"]);
+  try {
+    await page.getByRole("button", { name: "Group workspaces", exact: true }).click();
+    const dialog = page.locator("dialog.workspace-dialog");
+    const toast = dialog.locator(".toast");
+    const undo = toast.getByRole("button", { name: "Undo", exact: true });
+    for (const name of names) await expect(dialog.locator(".existing-group", { hasText: name })).toHaveCount(1);
+    await dialog.locator(".existing-group", { hasText: names[0] }).getByRole("button", { name: "Ungroup", exact: true }).click();
+    await expect(toast).toHaveText("Ungrouped Race firstUndo");
+
+    let release!: () => void, posted!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const restoring = new Promise<void>(resolve => { posted = resolve; });
+    await page.route("**/api/groups", async route => {
+      if (route.request().method() === "POST") { posted(); await held; }
+      await route.continue();
+    });
+    await undo.click();
+    await restoring;
+    await dialog.locator(".existing-group", { hasText: names[1] }).getByRole("button", { name: "Ungroup", exact: true }).click();
+    await expect(toast).toHaveText("Ungrouped Race secondUndo");
+    release();
+    await expect(dialog.locator(".existing-group", { hasText: names[0] })).toHaveCount(1);
+    await page.waitForTimeout(400);
+    await expect(toast).toHaveText("Ungrouped Race secondUndo");
+    expect(await groupsNamed(page, [names[0]])).toEqual([first]);
+    expect(await groupsNamed(page, [names[1]])).toEqual([]);
+
+    await page.unroute("**/api/groups");
+    await undo.click();
+    await expect(toast).toHaveText("Restored Race second");
+    expect((await groupsNamed(page, names)).map(group => group.name).sort()).toEqual(names);
+  } finally { await removeGroups(page, names); }
 });
 
 test("session and event pagination remain bounded and navigable", async ({ page }) => {

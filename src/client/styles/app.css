@@ -313,7 +313,11 @@
   .error-banner button { margin-left: auto; }
   .warning-banner { color: #baa98a; background: #baa98a0a; font-size: var(--text-meta); }
   .error-text { color: var(--danger); font-size: var(--text-support); margin-top: 15px; }
-  .toast { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 9px; max-width: 90vw; padding: 13px 18px; background: #2c3626; color: #d9edc0; border: 1px solid #5a6c42; border-radius: 9px; box-shadow: 0 6px 35px #0008; font-size: var(--text-support); animation: toast-in .18s ease-out; }
+  .toast { position: fixed; bottom: 25px; left: 0; right: 0; width: fit-content; margin-inline: auto; z-index: 40; display: flex; align-items: center; gap: 9px; max-width: 90vw; padding: 13px 18px; background: #2c3626; color: #d9edc0; border: 1px solid #5a6c42; border-radius: 9px; box-shadow: 0 6px 35px #0008; font-size: var(--text-support); animation: toast-in .18s ease-out; }
+  .toast > svg { flex: none; }
+  .toast-action { flex: none; min-height: 28px; margin: -4px -8px -4px 7px; padding: 3px 11px; border: 1px solid #5a6c42; border-radius: 6px; color: var(--accent); font-weight: 600; }
+  .toast-action:hover { background: #c7ee7914; }
+  .toast-error { color: #f0c4b8; background: #34241f; border-color: #644334; }
   .shortcut-popover { position: fixed; z-index: 20; right: 26px; top: 62px; width: 340px; background: #1c2221; border: 1px solid #45503e; border-radius: 11px; padding: 21px; box-shadow: 0 10px 55px #0009; }
   .shortcut-popover > div { display: flex; align-items: center; justify-content: space-between; }
   .shortcut-popover h3 { font-size: var(--text-body); margin-bottom: 10px; font-weight: 500; }
@@ -425,6 +429,8 @@
     .dialog-footer > span { font-size: var(--text-meta); }
     .source-options { max-height: 210px; }
     .shortcut-popover { right: 15px; left: 15px; width: auto; }
+    .toast-action { min-height: 44px; margin-block: -12px; }
+    .workspace-dialog:has(> .toast) { padding-bottom: 92px; }
     .error-banner, .warning-banner { padding: 10px 17px; font-size: var(--text-meta); }
     .empty-state h2 { font-size: 17px; }
     .brand { margin-bottom: 35px; }
