@@ -62,7 +62,7 @@ spacing:
   compact: "8px"
   field: "10px 12px"
   sidebar: "27px 15px 0"
-  sidebar-footer: "12px 5px 11px"
+  sidebar-footer: "8px 0 7px"
   topbar: "0 32px"
   library: "0 38px"
 components:
@@ -71,7 +71,7 @@ components:
     textColor: "{colors.dark-muted}"
     typography: "{typography.support}"
     rounded: "{rounded.control}"
-    padding: "6px"
+    padding: "4px"
     height: "36px"
   theme-option-active-dark:
     backgroundColor: "#c7ee7910"
@@ -83,9 +83,10 @@ components:
     rounded: "{rounded.control}"
   sidebar-select:
     textColor: "{colors.dark-muted}"
-    typography: "{typography.body}"
+    typography: "{typography.support}"
     rounded: "{rounded.field}"
-    padding: "6px 9px"
+    padding: "4px 6px"
+    height: "32px"
   filter-menu:
     backgroundColor: "{colors.dark-menu}"
     textColor: "{colors.dark-text}"
@@ -184,7 +185,9 @@ Replay prose wraps across the full event width by default; a Reading width contr
 
 The desktop shell is a 226px sidebar beside a fluid main pane, with a 68px top bar and 38px horizontal library padding; above 1600px the sidebar relaxes to a viewport-proportional 226–252px column, and on viewports 820px and shorter the top bar compresses to 57px. The sidebar narrows to 205px at 1250px and to 190px at 1050px; at 680px and below it becomes a 250px off-canvas drawer over a blurred scrim while the main shell stays full width. The workspace list holds a real minimum height of roughly a quarter of the viewport (140–360px) so it reads as a list rather than a sliver. Its section heading has one persistent, labeled Group action; there is no duplicate library-header action or grouping promotion below the list.
 
-The sidebar footer stacks Theme, Text size, and Reading width so appearance and reading comfort stay together, above the privacy line and the version label. Both selectors consistently put an unwrapped label above a full-width control, with a 4px label gap and 8px gap after each setting.
+The sidebar footer keeps Theme, Text size, and Reading width together and visible so appearance and reading comfort stay together, above the index status, the privacy line, and the version label. Each setting is a row with its label on the left and its control on the right, 6px apart. When a control does not fit beside its unwrapped label, it drops below the label at full width with a 3px gap. Text size and Reading width share a label minimum, so both selectors switch together and always share one left edge and width; the Theme options switch on their own. At the standard text size the selectors sit beside their labels from the 226px sidebar up and stack in the 205px and 190px sidebars, while Theme stays inline at every desktop width. Footer controls align with the workspace list edges.
+
+On viewports 820px and shorter the sidebar tightens its vertical rhythm: 16px top padding, 8px below the brand, 36px primary navigation items, and 12px/4px around the Workspaces label. With these, a 1100×700 laptop shows the whole footer with no sidebar scroll while the workspace list keeps its minimum height.
 
 The library prioritizes search and recordings over introductory content. Archive totals are a compact, unboxed definition list rather than metric tiles. Search, filters, and workspace selection remove the global summary and introduction; short screens also omit the introductory sentence. Recording rows stay in one chronological column at every viewport width, with the unsplit library capped at 1600px on wide displays. Replay still uses the full available workspace and preserves the resizable library and optional overview rail.
 
@@ -225,11 +228,13 @@ Controls are compact rounded rectangles: 4px inner button corners, 7px fields an
 - **Subagent visibility:** Not a sidebar control. The library's Show subagents switch owns it, and the sidebar's counts and workspace list follow that switch.
 
 ### Sidebar Footer
-- **Style:** Theme first as a segmented fieldset, then Text size and Reading width with consistently stacked labels and full-width selectors.
+- **Style:** Theme first as a segmented fieldset, then Text size and Reading width as 32px selects at the 13px support size. Labels sit on the left and never wrap; a control that does not fit beside its label stacks beneath it at full width, and the two selectors always share one layout.
 - **Behavior:** Each preference persists independently and applies immediately; the version line closes the footer at the 11px label floor.
+- **Index status:** A 36px row with a 36px Rescan button on fine-pointer desktops; touch pointers and the mobile drawer keep the 44px row and button.
+- **Touch:** In the mobile drawer the selects keep 44px minimum targets.
 
 ### Theme Control
-- **Style:** A two-column Dark/Light segmented fieldset with a 3px inner gap and 36px minimum button height.
+- **Style:** A two-column Dark/Light segmented fieldset with a 3px inner gap, 4px button padding, and 36px minimum button height. Its legend sits inline to the left of the options, which take their natural width at the right edge.
 - **State:** `aria-pressed` marks the selected mode; dark selects lime-on-dim-lime and light selects off-white-on-graphite.
 - **Persistence:** The explicit saved choice is applied before the app renders; a browser without a saved preference starts dark.
 
