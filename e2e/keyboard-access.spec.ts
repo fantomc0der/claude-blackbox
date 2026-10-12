@@ -18,6 +18,8 @@ test("Enter on a recording moves focus to its heading while a click leaves it on
   expect(await heading.evaluate(element => element.matches(":focus-visible"))).toBe(true);
   expect((await outline(heading)).width).toBe("2px");
   await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Bookmark this recording" })).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Close replay" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(heading).toHaveCount(0);
@@ -42,6 +44,8 @@ test("Enter still reaches the heading when a narrow layout hides the recording l
   await page.keyboard.press("Enter");
   await expect(heading).toBeFocused();
   await expect(page.locator(".library")).toBeHidden();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Bookmark this recording" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Close replay" })).toBeFocused();
   // Focus already moved elsewhere before the recording loaded stays where the reader put it.

@@ -3,7 +3,7 @@ import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, Sessio
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
-import { compact, dateTime, modelName, resumeCommand, searchHighlight, tokenCount, usageCost } from "../lib/format";
+import { compact, dateTime, folderName, modelName, recordedRange, resumeCommand, searchHighlight, tokenCount, usageCost } from "../lib/format";
 import { TokenBreakdown, UsageNote } from "./usage-panel";
 import { anchoredMenu } from "../lib/anchor";
 import type { Navigate } from "../lib/location";
@@ -47,11 +47,23 @@ function outlineBody(event: ReplayEvent): string {
   return body && body !== outlineLabel(event) ? truncate(body, 100) : event.type;
 }
 
-function SessionActions(props: { session: Session; onBookmark: () => void }) {
+function SessionActions(props: { session: Session }) {
   return <div class="session-secondary-actions">
-    <button class={['secondary-button', { bookmarked: props.session.bookmarked }]} onClick={props.onBookmark}><Icon name="bookmark" size={16} />{props.session.bookmarked ? "Remove bookmark" : "Bookmark session"}</button>
     <a class="secondary-button" href={`/api/sessions/${props.session.id}/export`} download title="Export original JSONL records"><Icon name="download" size={16} />Export recording</a>
   </div>;
+}
+
+const ProvenanceSeparator = () => <span class="meta-dot" aria-hidden="true">·</span>;
+
+// Where and when the recording happened, on one line under the title at every pane width. Values truncate in place
+// (the folder first) and narrow panes drop the times and the model; the Session details menu keeps the full values.
+function Provenance(props: { session: Session }) {
+  return <p class="replay-provenance">
+    <span class="provenance-folder" title={props.session.cwd || "Working directory not recorded"}><Icon name="folder" size={12} /><span class="visually-hidden">Folder </span><span class="provenance-value">{props.session.cwd ? folderName(props.session.cwd) : "Folder not recorded"}</span></span><ProvenanceSeparator />
+    <span class="provenance-branch" title={props.session.branch || "No branch recorded"}><Icon name="branch" size={12} /><span class="visually-hidden">Branch </span><span class="provenance-value">{props.session.branch || "No branch"}</span></span><ProvenanceSeparator />
+    <span class="provenance-dates" title={`First recorded ${dateTime(props.session.startedAt)}. Last recorded ${dateTime(props.session.updatedAt)}.`}><span class="visually-hidden">Recorded </span><span class="provenance-value provenance-times">{recordedRange(props.session.startedAt, props.session.updatedAt)}</span><span class="provenance-value provenance-days">{recordedRange(props.session.startedAt, props.session.updatedAt, { days: true })}</span></span><ProvenanceSeparator />
+    <span class="provenance-model" title={props.session.model || "Model not recorded"}><span class="visually-hidden">Model </span><span class="provenance-value">{modelName(props.session.model)}</span></span>
+  </p>;
 }
 
 export function ReplayPanel(props: { id: string; session: Session | null; revision: number; anchor: string; params: URLSearchParams; navigate: Navigate; traversal: () => boolean; changed: () => void; close: () => void; notify: (message: string) => void; libraryCollapsed: boolean; toggleLibrary: () => void; overviewVisible: boolean; toggleOverview: () => void }) {
@@ -314,10 +326,23 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     try { await navigator.clipboard.writeText(value); props.notify(`${label} copied`); }
     catch { props.notify("Clipboard access failed. Use your browser’s clipboard permission setting."); }
   };
+  // The toggle shows the reader's choice at once and sends it as an explicit state, so quick repeated presses settle on
+  // the last one. The refreshed session confirms the choice; once nothing is saving, the session is the truth again.
+  // Saves run one after another, so the server always receives the presses in the order they were made.
+  const [bookmarkChoice, setBookmarkChoice] = createSignal<boolean | null>(null);
+  let bookmarkSaves = 0, bookmarkQueue: Promise<unknown> = Promise.resolve();
+  const bookmarked = () => bookmarkChoice() ?? Boolean(props.session?.bookmarked);
+  createEffect(() => props.session?.bookmarked, value => { if (value === untrack(bookmarkChoice) || !bookmarkSaves) setBookmarkChoice(null); });
   const bookmark = async () => {
     if (!props.session) return;
-    try { await request(`/api/sessions/${props.id}/bookmark`, { method: "PUT", body: JSON.stringify({ bookmarked: !props.session.bookmarked }) }); props.changed(); }
-    catch (error) { props.notify(error instanceof Error ? error.message : "Could not update bookmark"); }
+    const next = !bookmarked();
+    setBookmarkChoice(next);
+    bookmarkSaves++;
+    const save = bookmarkQueue.then(() => request(`/api/sessions/${props.id}/bookmark`, { method: "PUT", body: JSON.stringify({ bookmarked: next }) }));
+    bookmarkQueue = save.catch(() => undefined);
+    try { await save; props.changed(); }
+    catch (error) { setBookmarkChoice(null); props.notify(error instanceof Error ? error.message : "Could not update bookmark"); }
+    finally { bookmarkSaves--; }
   };
   const updateReplay = (values: Record<string, string | null>, replace = false) => {
     rememberReplayPosition(positionKey, scroll?.scrollTop || 0);
@@ -513,17 +538,17 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   return <section class={['replay-panel', { 'overview-hidden': !props.overviewVisible }]} aria-label="Session replay">
     <header class="replay-panel-heading">
       <div class="replay-title-row">
-        <div class="replay-heading-content"><Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <><div class="session-heading-title"><Show when={session().isAgent}><span class="session-identity"><Icon name="branch" size={14} />Subagent</span></Show><h2 title={session().title} tabindex="-1">{sessionTitle()}</h2></div><div class="replay-usage" aria-label="Session usage"><Show when={session().usage.requests} fallback="No token usage recorded"><span title={tokenCount(session().usage.totalTokens)}>{compact(session().usage.totalTokens)} tokens</span><span title="Covers this recording's own requests; subagent recordings are counted separately">{usageCost(session().usage)} estimated API cost</span><Show when={session().usage.unpricedRequests}><span class="usage-warning">Incomplete pricing</span></Show></Show></div></>}</Show></div>
+        <div class="replay-heading-content"><Show when={props.session} fallback={<div class="skeleton-row" />}>{session => <><div class="session-heading-title"><Show when={session().isAgent}><span class="session-identity"><Icon name="branch" size={14} />Subagent</span></Show><div class="replay-title-line"><h2 title={session().title} tabindex="-1">{sessionTitle()}</h2><button class="icon-button bookmark-toggle" aria-label="Bookmark this recording" aria-pressed={bookmarked() ? "true" : "false"} title={bookmarked() ? "Bookmarked. Press to remove the bookmark." : "Bookmark this recording"} onClick={() => void bookmark()}><Icon name="bookmark" size={18} /></button></div></div><div class="replay-meta"><Provenance session={session()} /><div class="replay-usage" aria-label="Session usage"><Show when={session().usage.requests} fallback="No token usage recorded"><span title={tokenCount(session().usage.totalTokens)}>{compact(session().usage.totalTokens)} tokens</span><span title="Covers this recording's own requests; subagent recordings are counted separately">{usageCost(session().usage)} estimated API cost</span><Show when={session().usage.unpricedRequests}><span class="usage-warning">Incomplete pricing</span></Show></Show></div></div></>}</Show></div>
         <button class="icon-button replay-close" aria-label="Close replay" title="Back to session library" onClick={props.close}><Icon name="close" size={18} /></button>
       </div>
       <div class="replay-actions">
         <Show when={props.session}>{session => <>
           <Show when={resumeTarget()}>{target => <button class="secondary-button resume-command" onClick={() => void copy(resumeCommand(target()), session().isAgent ? "Main session resume command" : "Resume command")}><Icon name="terminal" size={15} />{session().isAgent ? "Copy main session resume command" : "Copy resume command"}</button>}</Show>
-          <SessionActions session={session()} onBookmark={() => void bookmark()} />
+          <SessionActions session={session()} />
           <details class="session-details" ref={setDetails}>
             <summary class="text-button"><span class="session-actions-label">Session actions</span><span class="session-details-label">Session details</span><Icon name="down" size={14} /></summary>
             <div class="session-details-menu" ref={setDetailsMenu} role="region" aria-label="Session details">
-              <SessionActions session={session()} onBookmark={() => void bookmark()} />
+              <SessionActions session={session()} />
               <h3>Session details</h3>
               <dl>
                 <dt>Title</dt><dd>{session().title}</dd>
@@ -598,7 +623,6 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">
       <p class="eyebrow">AT A GLANCE</p>
       <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
-      <div class="inspector-source"><span class="eyebrow">ORIGINAL WORKSPACE</span><p>{props.session?.cwd || "Not recorded"}</p><span class="inspector-date">{dateTime(props.session?.startedAt || "")}</span></div>
       <nav class="replay-outline" aria-label="Events on this page"><p class="eyebrow">ON THIS PAGE</p><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>
       <p class="inspector-note"><Icon name="shield" size={13} />An original record. Nothing rewritten.</p>
     </aside></div>

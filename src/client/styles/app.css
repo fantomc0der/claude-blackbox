@@ -190,6 +190,12 @@
   .session-workspace, .session-branch-name, .session-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row-branch { min-width: 0; display: flex; align-items: center; gap: 4px; color: #838d8c; overflow: hidden; }
   .meta-dot { color: #5e6765; margin: 0 3px; }
+  /* In a workspace group the folder leaf tells worktrees apart, so the repeated group name gives up its width first,
+     then the branch, and the folder last. The weights are far apart because shrinking is proportional to weight times
+     width, and any share would put an ellipsis on a leaf that nearly fits. */
+  .session-path > .session-group-name { flex-shrink: 100000000; min-width: 3ch; }
+  .session-path > .session-folder ~ .row-branch { flex-shrink: 100000; }
+  .session-path > .session-group-separator { color: #5e6765; margin-inline: -2px; }
   .session-model { grid-column: 3; grid-row: 1; min-width: 0; font-size: var(--text-meta); display: flex; align-items: center; gap: 6px; color: #a7afa7; }
   .model-dot { background: #b6a184; width: 4px; height: 4px; flex-shrink: 0; }
   .session-model small { flex-shrink: 0; }
@@ -238,14 +244,29 @@
   .layout-button { min-height: 32px; padding: 6px 8px; border-radius: 5px; color: var(--muted); font-size: var(--text-control); }
   .layout-button:hover { background: var(--raised); color: var(--text); }
   .overview-toggle { display: none; }
-  .replay-panel-heading h2 { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-weight: 550; font-size: 22px; letter-spacing: -.5px; line-height: 1.4; margin: 6px 0 0; }
+  .replay-panel-heading h2 { flex: 0 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-weight: 550; font-size: 22px; letter-spacing: -.5px; line-height: 1.4; margin: 6px 0 0; }
   .source-path { display: flex; align-items: center; gap: 7px; color: #9ca994; font: var(--text-meta) var(--mono); max-width: 100%; min-height: 28px; text-align: left; padding: 0; line-height: 1.7; }
   .source-path > span { min-width: 0; overflow-wrap: anywhere; }
   .source-path:hover { color: var(--accent); }
   .replay-actions { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .replay-actions > .resume-command, .session-details > summary { min-height: 44px; }
   .resume-command { padding: 7px 10px; }
-  .bookmarked { color: var(--accent); background: #c7ee7910; }
+  .replay-title-line { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+  .bookmark-toggle { margin-top: 2px; }
+  .bookmark-toggle[aria-pressed="true"] { color: var(--accent); background: #c7ee7910; }
+  .bookmark-toggle[aria-pressed="true"] path { fill: currentColor; }
+  .replay-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 16px; min-width: 0; }
+  .replay-provenance { display: flex; align-items: center; min-width: 0; max-width: 100%; margin: 0; overflow: hidden; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; white-space: nowrap; }
+  .provenance-folder, .provenance-branch, .provenance-dates, .provenance-model { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 0 1 auto; }
+  .replay-provenance svg, .replay-provenance > .meta-dot { flex-shrink: 0; }
+  .provenance-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .replay-provenance > .meta-dot { margin: 0 7px; }
+  .provenance-days { display: none; }
+  /* The folder gives up its width first, then the branch, each keeping a few characters; dates and model shrink last.
+     Shrinking is proportional to weight times width, so the weights are far apart to make that order effectively strict
+     even for a very long folder name. */
+  .replay-provenance > .provenance-folder { flex-shrink: 1000000; min-width: calc(17px + 4ch); font-family: var(--mono); }
+  .replay-provenance > .provenance-branch { flex-shrink: 1000; min-width: calc(17px + 4ch); font-family: var(--mono); }
   .session-details { flex: 1; min-width: min-content; max-width: max-content; }
   .session-details > summary { list-style: none; padding: 3px 8px; line-height: 1.35; }
   .session-details[open] > summary { color: var(--accent); }
@@ -452,6 +473,11 @@
     .session-actions-label, .session-details-menu > .session-secondary-actions { display: none; }
     .session-details-menu h3 { margin: 0; padding: 0; border: 0; }
   }
+  @container replay (max-width: 560px) {
+    .provenance-times, .replay-provenance > .provenance-model, .provenance-dates + .meta-dot { display: none; }
+    .provenance-days { display: block; }
+    .replay-provenance > .meta-dot { margin-inline: 5px; }
+  }
   @media (min-width: 1600px) {
     .app-shell { grid-template-columns: clamp(226px, 13vw, 252px) minmax(0, 1fr); }
     .library-split { --library-default-width: clamp(340px, 19vw, 420px); padding-inline: 22px; }
@@ -468,10 +494,8 @@
     .inspector-stats { display: flex; justify-content: space-between; gap: 8px; margin-top: 20px; }
     .inspector-stats strong { display: block; font-size: 22px; font-weight: 450; }
     .inspector-stats span { display: block; color: var(--muted); font-size: var(--text-meta); margin-top: 5px; }
-    .inspector-source { border-block: 1px solid var(--line); margin: 25px 0; padding: 20px 0; }
-    .inspector-source .eyebrow, .replay-inspector > .eyebrow, .replay-outline .eyebrow { font-size: var(--text-meta); letter-spacing: 1px; }
-    .inspector-source p { font: var(--text-meta)/1.7 var(--mono); color: #bac5b1; overflow-wrap: anywhere; margin: 13px 0; }
-    .inspector-date { font-size: var(--text-meta); color: #919e93; }
+    .replay-outline { border-top: 1px solid var(--line); margin-top: 25px; }
+    .replay-inspector > .eyebrow, .replay-outline .eyebrow { font-size: var(--text-meta); letter-spacing: 1px; }
     .replay-outline button { display: flex; align-items: flex-start; gap: 9px; text-align: left; width: 100%; padding: 12px 0; border-bottom: 1px solid #252e28; color: #aab6a5; font-size: var(--text-support); line-height: 1.6; }
     .replay-outline button:hover { color: var(--accent); }
     .replay-outline button > span:last-child { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -503,7 +527,8 @@
     .index-status > button { min-width: 36px; min-height: 36px; }
   }
   @media (max-width: 680px) {
-    .replay-actions .icon-button, .mobile-menu, .sidebar-mobile-close, .workspace-group, .workspace-filter-toggle { min-width: 44px; min-height: 44px; }
+    .replay-actions .icon-button, .bookmark-toggle, .mobile-menu, .sidebar-mobile-close, .workspace-group, .workspace-filter-toggle { min-width: 44px; min-height: 44px; }
+    .bookmark-toggle { margin-top: -2px; }
     .workspace-controls select, .workspace-filter input, .sidebar-select select { min-height: 44px; }
     .source-option { min-height: 44px; }
     .session-details-menu dd button { position: relative; }

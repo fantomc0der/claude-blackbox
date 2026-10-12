@@ -11,10 +11,24 @@ test("full-record search finds tool output and survives URL reload", async ({ pa
   await page.getByRole("textbox", { name: "Search all recordings" }).fill("retryBudget");
   await expect(page.locator(".session-row")).toHaveCount(1);
   await expect(page.locator(".session-snippet")).toContainText("retryBudget");
+  // A search hit keeps its folder and branch line beneath the snippet at every width, including the replay split.
+  const searchRowContext = () => page.locator(".session-row").first().evaluate(row => {
+    const snippet = row.querySelector(".session-snippet")!.getBoundingClientRect();
+    const path = row.querySelector<HTMLElement>(".session-path")!;
+    const bounds = path.getBoundingClientRect();
+    return { below: bounds.top >= snippet.bottom - 1, visible: bounds.width > 0 && bounds.height > 0, inside: bounds.bottom <= row.getBoundingClientRect().bottom + 1, text: path.textContent };
+  });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await searchRowContext()).toEqual({ below: true, visible: true, inside: true, text: expect.stringMatching(/\S/) });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Search all recordings" })).toHaveValue("retryBudget");
   await page.locator(".session-row").click();
   await expect(page.getByRole("region", { name: "Session replay" })).toContainText("retryBudget");
+  await expect(page.locator(".library-split .session-snippet")).toBeVisible();
+  expect(await searchRowContext()).toEqual({ below: true, visible: true, inside: true, text: expect.stringMatching(/\S/) });
   await page.getByRole("button", { name: "Close replay" }).click();
   await page.keyboard.press("Control+k");
   await expect(page.getByRole("textbox", { name: "Search all recordings" })).toBeFocused();
@@ -36,8 +50,11 @@ test("structured tools, bookmarks, resume clipboard and JSONL export work", asyn
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("cd -- '/synthetic/workspaces/orbit-auth' && claude --resume");
   await expect(page.locator(".session-details > summary")).toHaveText("Session details", { useInnerText: true });
   await expect(page.locator(".session-details-menu")).toBeHidden();
-  await page.getByRole("button", { name: "Bookmark session", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Remove bookmark" })).toBeVisible();
+  const bookmark = page.getByRole("button", { name: "Bookmark this recording", exact: true });
+  await expect(bookmark).toHaveAttribute("aria-pressed", "false");
+  await bookmark.click();
+  await expect(bookmark).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".session-row.selected .session-title svg")).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("link", { name: "Export recording" }).click();
   expect((await downloadPromise).suggestedFilename()).toMatch(/^blackbox-.*\.jsonl$/);
@@ -51,42 +68,67 @@ test("structured tools, bookmarks, resume clipboard and JSONL export work", asyn
   await expect(page.locator(".session-row")).toHaveCount(1);
 });
 
-test("secondary session actions adapt to pane width with visible labels and keyboard access", async ({ page }) => {
+test("secondary session actions adapt to pane width while the bookmark toggle stays beside the title", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/?q=effortless");
   await page.locator(".session-row").click();
-  const bookmark = page.getByRole("button", { name: /^(Bookmark session|Remove bookmark)$/ });
+  const bookmark = page.getByRole("button", { name: "Bookmark this recording", exact: true });
+  const title = page.locator(".replay-panel-heading h2");
   const exportRecording = page.getByRole("link", { name: "Export recording" });
+  const pressed = async () => (await bookmark.getAttribute("aria-pressed")) === "true";
+  // Beside the title and outside its two-line clamp, never inside the actions row or menu.
+  const besideTitle = () => bookmark.evaluate(button => {
+    const heading = button.parentElement!.querySelector("h2")!;
+    return button.parentElement!.classList.contains("replay-title-line") && !heading.contains(button) && !button.closest(".replay-actions") && button.getBoundingClientRect().left >= heading.getBoundingClientRect().right - 1;
+  });
   await expect(bookmark).toBeVisible();
+  expect(await besideTitle()).toBe(true);
   await expect(exportRecording).toBeVisible();
   await page.locator(".session-details > summary").click();
   await expect(page.getByRole("heading", { name: "Session details", exact: true })).toBeVisible();
-  await expect(bookmark).toHaveCount(1);
+  await expect(page.locator(".session-details-menu").getByRole("button", { name: /bookmark/i })).toHaveCount(0);
   await expect(exportRecording).toHaveCount(1);
   await page.locator(".session-details > summary").press("Escape");
+
+  // The pressed state belongs to the recording, so collapsing and restoring the library leaves it alone.
+  const initial = await pressed();
+  await bookmark.click();
+  await expect(bookmark).toHaveAttribute("aria-pressed", String(!initial));
+  await page.getByRole("button", { name: "Hide library" }).click();
+  await expect(bookmark).toHaveAttribute("aria-pressed", String(!initial));
+  expect(await besideTitle()).toBe(true);
+  await page.getByRole("button", { name: "Show library" }).click();
+  await expect(bookmark).toHaveAttribute("aria-pressed", String(!initial));
+  await page.reload();
+  await expect(bookmark).toHaveAttribute("aria-pressed", String(!initial));
 
   await page.setViewportSize({ width: 1600, height: 900 });
   const divider = page.getByRole("separator", { name: "Resize session library" });
   await divider.press("End");
   await expect(page.locator(".session-details > summary")).toHaveText("Session actions", { useInnerText: true });
-  await expect(bookmark).toHaveCount(0);
+  await expect(bookmark).toBeVisible();
+  await expect(exportRecording).toHaveCount(0);
   await divider.press("Home");
   await expect(page.locator(".session-details > summary")).toHaveText("Session details", { useInnerText: true });
-  await expect(bookmark).toBeVisible();
+  await expect(exportRecording).toBeVisible();
 
   for (const [width, height] of [[1440, 900], [390, 844], [320, 640], [960, 540]]) {
     await page.setViewportSize({ width, height });
+    await expect(bookmark).toBeVisible();
+    expect(await besideTitle()).toBe(true);
+    expect(await title.evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) * 2 + 1)).toBe(true);
+    const target = await bookmark.boundingBox();
+    expect(Math.min(target!.width, target!.height)).toBeGreaterThanOrEqual(width <= 680 ? 44 : 36);
+    await bookmark.focus();
+    expect(await bookmark.evaluate(element => element.matches(":focus-visible") && getComputedStyle(element).outlineWidth === "2px")).toBe(true);
+    const before = await pressed();
+    await page.keyboard.press("Enter");
+    await expect(bookmark).toHaveAttribute("aria-pressed", String(!before));
     const actions = page.locator(".session-details > summary");
     await expect(actions).toHaveText("Session actions", { useInnerText: true });
-    await expect(bookmark).toHaveCount(0);
     await expect(exportRecording).toHaveCount(0);
     await actions.focus();
     await page.keyboard.press("Enter");
-    await page.keyboard.press("Tab");
-    await expect(bookmark).toBeFocused();
-    const previousLabel = await bookmark.innerText();
-    await page.keyboard.press("Enter");
-    await expect(bookmark).toHaveText(previousLabel === "Bookmark session" ? "Remove bookmark" : "Bookmark session");
     await page.keyboard.press("Tab");
     await expect(exportRecording).toBeFocused();
     const download = page.waitForEvent("download");
@@ -148,6 +190,16 @@ test("workspace groups persist and retain the original source filter", async ({ 
   await expect(page.locator(".session-row")).toHaveCount(4);
   await page.reload();
   await expect(page.locator(".session-row")).toHaveCount(4);
+  // Each grouped row names its group and then the folder it was recorded in, so worktrees stay distinguishable.
+  await expect(page.locator(".session-row .session-group-name")).toHaveText(Array(4).fill("Orbit unified"));
+  expect((await page.locator(".session-row .session-folder").allTextContents()).sort()).toEqual(["orbit", "orbit", "orbit-auth", "orbit-auth"]);
+  await expect(page.getByRole("button", { name: new RegExp(`${DEMO_HERO_TITLE}.*Orbit unified\\s*,\\s*folder\\s*orbit-auth`) })).toHaveCount(1);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const leaf = await page.locator(".session-row").first().locator(".session-folder").evaluate(element => ({ visible: element.getBoundingClientRect().width > 0, clipped: element.scrollWidth > element.clientWidth + 1 }));
+    expect(leaf).toEqual({ visible: true, clipped: false });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator(".filter-popover > summary").click();
   await page.getByRole("combobox", { name: "Original source" }).selectOption("/synthetic/workspaces/orbit-auth");
   await expect(page.locator(".session-row")).toHaveCount(2);
@@ -463,10 +515,14 @@ test("event permalinks and open tool disclosures survive metadata refresh", asyn
   const tool = page.locator('.tool-summary[aria-expanded="false"]').first();
   await tool.click();
   const expanded = await page.locator('.tool-summary[aria-expanded="true"]').count();
-  await page.locator(".session-details > summary").click();
-  await page.getByRole("button", { name: /^(Bookmark session|Remove bookmark)$/ }).click();
+  const bookmark = page.getByRole("button", { name: "Bookmark this recording", exact: true });
+  const pressed = await bookmark.getAttribute("aria-pressed");
+  // The toggle shows the new state at once, so wait for the session metadata the bookmark refreshes.
+  const refreshed = page.waitForResponse(response => response.request().method() === "GET" && /^\/api\/sessions\/[^/]+$/.test(new URL(response.url()).pathname));
+  await bookmark.click();
+  await refreshed;
+  await expect(bookmark).not.toHaveAttribute("aria-pressed", pressed!);
   await expect(page.locator('.tool-summary[aria-expanded="true"]')).toHaveCount(expanded);
-  await page.locator(".session-details > summary").click();
   const link = page.locator(".replay-event-link").nth(1);
   const href = await link.getAttribute("href");
   const eventId = new URL(href!, "http://127.0.0.1:12003").searchParams.get("event");
@@ -645,7 +701,7 @@ test("compact replay reserves vertical space for conversation across viewports",
   await page.goto("/");
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.locator(".replay-event").first()).toBeVisible();
-  for (const [width, height, minimumReadingHeight] of [[1440, 900, 610], [1366, 768, 490], [390, 844, 520], [320, 640, 310], [844, 390, 110]]) {
+  for (const [width, height, minimumReadingHeight] of [[1440, 900, 610], [1366, 768, 490], [390, 844, 500], [320, 640, 296], [844, 390, 110]]) {
     await page.setViewportSize({ width, height });
     const transcript = await page.locator(".replay-scroll").boundingBox();
     expect(transcript!.height).toBeGreaterThanOrEqual(minimumReadingHeight);
@@ -690,6 +746,55 @@ test("session details preserve context and keyboard access without shifting the 
   expect(audit.violations.map(violation => ({ id: violation.id, nodes: violation.nodes.map(node => node.target) }))).toEqual([]);
 });
 
+const shownProvenance = (page: Page) => page.locator(".replay-provenance .provenance-value").evaluateAll(elements => elements.filter(element => element.getClientRects().length).map(element => ({ text: element.textContent, clipped: element.scrollWidth > element.clientWidth + 1 })));
+const oneLine = (page: Page) => page.locator(".replay-provenance").evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) + 1 && element.scrollWidth <= element.clientWidth + 1);
+
+test("the provenance strip names folder, branch, recorded span and model in split and full layouts", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await expect(page.locator(".replay-provenance")).toBeVisible();
+  const facts = async (model: boolean) => {
+    const shown = await shownProvenance(page);
+    expect(shown.map(value => value.text)).toEqual(["orbit-auth", "feat/auth-delight", expect.stringMatching(/\d{4}/), ...(model ? ["Sonnet 4.5"] : [])]);
+    expect(await oneLine(page)).toBe(true);
+  };
+  await facts(true);
+  await expect(page.locator(".provenance-folder")).toHaveAttribute("title", "/synthetic/workspaces/orbit-auth");
+  await expect(page.locator(".provenance-dates")).toHaveAttribute("title", /^First recorded .+\. Last recorded .+\.$/);
+  await expect(page.locator(".replay-heading-content")).toContainText("Folder orbit-auth");
+
+  // Full mode keeps the same strip, and the overview rail no longer repeats the workspace and start date.
+  await page.getByRole("button", { name: "Hide library" }).click();
+  await facts(true);
+  const overview = page.getByRole("complementary", { name: "Recording overview" });
+  await expect(overview).toBeVisible();
+  await expect(overview).not.toContainText("ORIGINAL WORKSPACE");
+  await expect(overview).not.toContainText("/synthetic/workspaces/orbit-auth");
+  await page.getByRole("button", { name: "Show library" }).click();
+
+  // A phone-width pane keeps folder, branch and days on the line; times and the model stay in Session actions.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await facts(false);
+  await page.setViewportSize({ width: 320, height: 640 });
+  expect(await oneLine(page)).toBe(true);
+});
+
+test("the provenance strip gives up the folder before the branch, dates or model", async ({ page }) => {
+  const cwd = "/synthetic/" + "a-worktree-folder-with-a-very-long-leaf-name-".repeat(3) + "end";
+  await page.route(/\/api\/sessions\/[^/?]+$/, async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), cwd, branch: "feat/provenance" } });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await expect(page.locator(".library-split")).toBeVisible();
+  await expect(page.locator(".provenance-folder")).toHaveAttribute("title", cwd);
+  expect((await shownProvenance(page)).map(value => value.clipped)).toEqual([true, false, false, false]);
+  expect(await oneLine(page)).toBe(true);
+});
+
 test("long session context stays accessible at compact sizes and larger text", async ({ page }) => {
   const longTitle = "Review the authentication flow and verify every recovery path ".repeat(8).trim();
   const longPath = "/synthetic/" + "deeply-nested-workspace/".repeat(12);
@@ -703,9 +808,13 @@ test("long session context stays accessible at compact sizes and larger text", a
   const title = page.locator(".replay-panel-heading h2");
   await expect(title).toHaveText(longTitle);
   await expect(page.getByRole("combobox", { name: "Text size" })).toHaveValue("larger");
+  const strip = page.locator(".replay-provenance");
+  await expect(strip.locator(".provenance-folder")).toHaveAttribute("title", longPath);
   for (const [width, height] of [[1440, 900], [390, 844], [320, 640], [844, 390]]) {
     await page.setViewportSize({ width, height });
     expect(await title.evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) * 2 + 1)).toBe(true);
+    expect(await strip.evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) + 1 && element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await expect(page.getByRole("button", { name: "Bookmark this recording" })).toBeInViewport();
     await page.locator(".session-details > summary").click();
     const details = page.getByRole("region", { name: "Session details", exact: true });
     await expect(details).toContainText(longTitle);
@@ -730,7 +839,7 @@ test("utility typography stays readable across desktop and compact viewports", a
     for (const selector of [".nav-item", ".session-title", ".filter-tab", ".search-box input", ".replay-tab", ".replay-find input", ".resume-command"]) {
       await expect(page.locator(selector).first()).toHaveCSS("font-size", "14px");
     }
-    for (const selector of [".session-path", ".session-time", ".source-path", ".inspector-source .eyebrow"]) {
+    for (const selector of [".session-path", ".session-time", ".source-path", ".replay-provenance"]) {
       await expect(page.locator(selector).first()).toHaveCSS("font-size", "12px");
     }
     await expect(page.locator(".tool-preview").first()).toHaveCSS("font-size", "13px");

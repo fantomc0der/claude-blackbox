@@ -40,12 +40,12 @@
   .nav-section-label, .nav-count, .workspace-nav-item > svg, .workspace-nav-item small,
   .sidebar-footer .version-label, .breadcrumb-divider, .connection-state,
   .filter-tab,
-  .list-caption, .list-caption select, .session-path, .row-branch, .meta-dot,
+  .list-caption, .list-caption select, .session-path, .row-branch, .meta-dot, .session-path > .session-group-separator,
   .session-model, .session-activity, .session-time, .row-chevron, .session-snippet,
   .empty-source, .source-path, .session-details-menu dt, .session-details-menu p,
   .replay-tab, .replay-find, .timeline-marker, .timeline-end, .timeline-end small,
   .source-option > svg, .dialog-footer > span, .shortcut-popover p,
-  .inspector-source p, .inspector-date, .replay-outline button, .replay-outline small, .inspector-note { color: var(--muted); }
+  .replay-provenance, .replay-outline button, .replay-outline small, .inspector-note { color: var(--muted); }
   .nav-item, .breadcrumbs strong, .filter-popover > summary,
   .filter-menu label, .session-title, .field-label { color: var(--text); }
   .nav-item:hover, .icon-button:hover, .filter-tab:hover, .session-row:hover { background: var(--light-hover); color: var(--text); }
@@ -63,7 +63,7 @@
   .search-box:focus-within { border-color: var(--accent); }
   .search-box input, .replay-find input, .list-caption select { background: transparent; }
   .filter-tab.active { color: var(--text); background: var(--light-selected); border-color: var(--light-line-strong); }
-  .filter-count, .bookmarked { background: var(--light-selected); }
+  .filter-count, .bookmark-toggle[aria-pressed="true"] { background: var(--light-selected); }
   .filter-menu, .session-details-menu, .shortcut-popover, .timeline-tip { background: var(--surface); border-color: var(--line); box-shadow: 0 15px 55px var(--light-shadow); }
   .filter-chip { color: var(--text); border-color: var(--light-line-strong); background: var(--light-inset); }
   .result-count { background: var(--raised); color: var(--muted); }

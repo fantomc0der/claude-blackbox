@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { modelName, resumeCommand, searchHighlight } from "../src/client/lib/format";
+import { folderName, modelName, recordedRange, resumeCommand, searchHighlight } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
 
 test("search highlights use the term the server matched records with", () => {
@@ -35,6 +35,24 @@ test("model names report missing records and pass unknown identifiers through", 
   expect(modelName("claude-opus-4-5-thinking-20250101")).toBe("opus-4-5-thinking");
   expect(modelName("claude-sonnet-4-5-v2-20250929")).toBe("sonnet-4-5-v2");
   expect(modelName("gpt-4o-mini")).toBe("gpt-4o-mini");
+});
+
+test("recorded ranges show times within a day and dates across days", () => {
+  const range = (start: string, end: string, days = false) => recordedRange(start, end, { days, locale: "en-US", timeZone: "UTC" }).replace(/\s/g, " ");
+  expect(range("2026-10-10T09:02:00Z", "2026-10-10T09:40:00Z")).toBe("Oct 10, 2026, 9:02 – 9:40 AM");
+  expect(range("2026-10-10T09:02:00Z", "2026-10-12T15:00:00Z")).toBe("Oct 10 – 12, 2026");
+  expect(range("2026-10-10T09:02:00Z", "2026-10-10T09:02:00Z")).toBe("Oct 10, 2026, 9:02 AM");
+  expect(range("2026-10-10T09:02:00Z", "")).toBe("Oct 10, 2026, 9:02 AM");
+  expect(range("", "")).toBe("Dates not recorded");
+  expect(range("2026-10-10T09:02:00Z", "2026-10-10T09:40:00Z", true)).toBe("Oct 10, 2026");
+  expect(range("2026-10-10T09:02:00Z", "2026-11-02T15:00:00Z", true)).toBe("Oct 10 – Nov 2, 2026");
+  expect(recordedRange("2026-10-10T23:30:00Z", "2026-10-11T00:30:00Z", { locale: "en-US", timeZone: "America/New_York" }).replace(/\s/g, " ")).toBe("Oct 10, 2026, 7:30 – 8:30 PM");
+});
+
+test("folder names take the last path segment on either separator", () => {
+  expect(folderName("/synthetic/workspaces/orbit-auth")).toBe("orbit-auth");
+  expect(folderName("C:\\work\\orbit-auth\\")).toBe("orbit-auth");
+  expect(folderName("")).toBe("Unknown folder");
 });
 
 test("resume commands quote POSIX and PowerShell paths as literal arguments", () => {
