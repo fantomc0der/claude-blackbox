@@ -26,21 +26,21 @@
     "check": "bun run typecheck && bun test tests && bun run build"
   },
   "dependencies": {
-    "@solidjs/web": "2.0.0-rc.13",
-    "solid-js": "2.0.0-rc.13",
-    "dompurify": "3.4.16",
-    "marked": "18.0.14",
+    "@solidjs/web": "2.0.0-rc.14",
+    "solid-js": "2.0.0-rc.14",
+    "dompurify": "3.4.17",
+    "marked": "18.1.1",
     "diff": "9.0.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
-    "@playwright/test": "1.63.0",
-    "@solidjs/vite-plugin": "3.0.0-next.47",
-    "@tauri-apps/cli": "2.12.0",
-    "@types/bun": "1.4.2",
+    "@playwright/test": "1.64.1",
+    "@solidjs/vite-plugin": "3.0.0-next.50",
+    "@tauri-apps/cli": "2.12.2",
+    "@types/bun": "1.4.3",
     "@types/semver": "7.8.0",
     "semver": "7.8.5",
     "typescript": "7.0.2",
-    "vite": "8.3.1"
+    "vite": "8.3.4"
   }
 }
