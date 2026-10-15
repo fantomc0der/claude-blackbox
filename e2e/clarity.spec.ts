@@ -39,6 +39,21 @@ test("recorded tool results are labelled as results rather than user turns", asy
   await expect(page.locator(".replay-event-user.replay-event-tool-result")).toHaveCount(0);
 });
 
+test("user and assistant turns carry distinct role icons beside their labels", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  await page.getByRole("button", { name: "All events", exact: true }).click();
+  const user = page.locator(".replay-event-user").first();
+  const assistant = page.locator(".replay-event-assistant").first();
+  await expect(user.locator(".replay-role")).toHaveText("user");
+  await expect(user.locator(".replay-role > svg")).toHaveCount(1);
+  await expect(assistant.locator(".replay-role")).toHaveText("assistant");
+  await expect(assistant.locator(".replay-role > svg")).toHaveCount(1);
+  expect(await user.locator(".replay-role > svg path").getAttribute("d")).not.toBe(await assistant.locator(".replay-role > svg path").getAttribute("d"));
+  await expect(page.locator(".replay-event-tool-result .replay-role svg")).toHaveCount(0);
+});
+
 test("the event outline names each tool once and previews its argument", async ({ page }) => {
   await page.setViewportSize({ width: 2560, height: 1440 });
   await page.goto("/");
