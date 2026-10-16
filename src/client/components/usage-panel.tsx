@@ -1,6 +1,6 @@
 import { createSignal, For, Show } from "solid-js";
 import type { ModelUsage, SessionPage, UsageSummary } from "../../shared/types";
-import { compact, effortName, modelName, tokenCount, usageCost } from "../lib/format";
+import { compact, effortName, modelName, pricingGap, tokenCount, usageCost } from "../lib/format";
 import { sortUsage, type UsageSort } from "../lib/usage-sort";
 import { Icon } from "./icon";
 
@@ -19,20 +19,6 @@ export function TokenBreakdown(props: { usage: UsageSummary }) {
     <div><dt>Cache write</dt><dd>{tokenCount(props.usage.cacheCreationTokens)}</dd></div>
     <div><dt>Cache read</dt><dd>{tokenCount(props.usage.cacheReadTokens)}</dd></div>
   </dl>;
-}
-
-const modelList = new Intl.ListFormat("en", { type: "conjunction" });
-
-/** Explains which requests have no estimate and why: a model this build has no rates for, which a later release can
- *  price, or else fast mode without a known rate or no recorded model. `unratedModels` names the former when known. */
-function pricingGap(usage: UsageSummary, unratedModels: string[]): string {
-  const unrated = usage.unratedRequests, other = usage.unpricedRequests - unrated, several = unratedModels.length > 1;
-  const unratedText = (subject: string) => `${subject} ${unrated === 1 ? "uses" : "use"} ${several ? "models" : "a model"} this version of Claude Blackbox has no rates for yet${unratedModels.length ? `: ${modelList.format(unratedModels)}` : ""}.`;
-  const otherText = (subject: string) => `${subject} used fast mode without a known rate for ${other === 1 ? "its" : "their"} model, or recorded no model.`;
-  const share = `${tokenCount(usage.unpricedRequests)} of ${tokenCount(usage.requests)} requests`;
-  const reasons = unrated && other ? `${share} have no estimate. ${unratedText(tokenCount(unrated))} ${otherText(tokenCount(other))}` : unrated ? unratedText(share) : otherText(share);
-  const update = unrated ? `, and a release that adds ${several ? "their" : "its"} rates will price ${unrated === 1 ? "it" : "them"}` : "";
-  return `Cost is incomplete: ${reasons} Their tokens are still included${update}.`;
 }
 
 /** Requests without bundled rates make a total incomplete in a way an update can fix, so the summary flags them. */

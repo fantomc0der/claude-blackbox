@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
 import { emptyUsage, rateStamp, readUsage } from "../src/server/usage";
-import { dollars, effortName, usageCost } from "../src/client/lib/format";
+import { dollars, effortName, pricingGap, usageCost } from "../src/client/lib/format";
 import { removeTestDirectory } from "./helpers";
 
 function record(id: string, extra: Record<string, unknown> = {}) {
@@ -124,6 +124,17 @@ describe("usage extraction and pricing", () => {
     expect(usageCost({ ...emptyUsage(), requests: 1 })).toBe("$0.00");
     expect(dollars(0.00004)).toBe("<$0.01");
     expect(usageCost({ ...emptyUsage(), requests: 2, unpricedRequests: 1, costUSD: 1.23 })).toBe("$1.23+");
+  });
+
+  test("explains unpriced requests by cause and names unrecognized models", () => {
+    const usage = (unpricedRequests: number, unratedRequests: number) => ({ ...emptyUsage(), requests: 240, unpricedRequests, unratedRequests });
+    const unknown = "this version of Claude Blackbox has no rates for yet";
+    expect(pricingGap(usage(14, 14), ["claude-sonnet-6"])).toBe(`Cost is incomplete: 14 of 240 requests use a model ${unknown}: claude-sonnet-6. Their tokens are still included, and a release that adds its rates will price them.`);
+    expect(pricingGap(usage(1, 1), [])).toBe(`Cost is incomplete: 1 of 240 requests uses a model ${unknown}. Its tokens are still included, and a release that adds its rates will price it.`);
+    expect(pricingGap(usage(15, 12), ["claude-sonnet-6", "claude-haiku-6"])).toBe(`Cost is incomplete: 15 of 240 requests have no estimate. 12 use models ${unknown}: claude-sonnet-6 and claude-haiku-6. 3 used fast mode without a known rate for their model, or recorded no model. Their tokens are still included, and a release that adds their rates will price them.`);
+    expect(pricingGap(usage(2, 1), ["claude-sonnet-6"])).toBe(`Cost is incomplete: 2 of 240 requests have no estimate. 1 uses a model ${unknown}: claude-sonnet-6. 1 used fast mode without a known rate for its model, or recorded no model. Their tokens are still included, and a release that adds its rates will price it.`);
+    expect(pricingGap(usage(3, 0), [])).toBe("Cost is incomplete: 3 of 240 requests used fast mode without a known rate for their model, or recorded no model. Their tokens are still included.");
+    expect(pricingGap(usage(1, 0), [])).toBe("Cost is incomplete: 1 of 240 requests used fast mode without a known rate for its model, or recorded no model. Its tokens are still included.");
   });
 });
 
