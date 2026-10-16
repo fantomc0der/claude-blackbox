@@ -58,33 +58,24 @@ jobs:
         with:
           tagName: ${{ inputs.tag }}
           releaseDraft: true
-          updaterJsonPreferNsis: true
+          # Parallel matrix jobs each read, merge, and re-upload latest.json, so they overwrite one
+          # another's platforms. The updater-manifest job writes it once after every build finishes.
+          uploadUpdaterJson: false
           args: ${{ matrix.args }}
 
-  verify-updater-manifest:
-    name: verify updater manifest
+  updater-manifest:
+    name: updater manifest
     needs: build
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ inputs.tag }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - name: Download and verify latest.json
-        shell: bash
-        run: |
-          release_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$RELEASE_TAG\") | .id" | head -n 1)
-          test -n "$release_id"
-          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --jq '.[] | select(.name == "latest.json") | .id')
-          test -n "$asset_id"
-          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" -H 'Accept: application/octet-stream' > latest.json
-          jq -e --arg version "${RELEASE_TAG#v}" '
-            .version == $version and
-            ([
-              "darwin-aarch64",
-              "darwin-x86_64",
-              "linux-aarch64",
-              "linux-x86_64",
-              "windows-x86_64"
-            ] - (.platforms | keys) | length == 0) and
-            ([.platforms[] | select((.signature | length) == 0 or (.url | length) == 0)] | length == 0)
-          ' latest.json
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Generate and upload latest.json
+        run: bun scripts/updater-manifest.ts "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
