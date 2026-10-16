@@ -21,8 +21,8 @@ import {
   toolTitle,
   truncate,
 } from "../lib/content";
-import { jsonSegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
-import { stripAnsi, terminalRuns } from "../../shared/ansi";
+import { jsonSegments, overlaySegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
+import { terminalRuns } from "../../shared/ansi";
 import { Markdown } from "./markdown";
 import { Highlight } from "./highlight";
 import { Icon, type IconName } from "./icon";
@@ -75,11 +75,17 @@ function CopyButton(props: { value: string; label?: string }) {
 }
 
 // Recorded output keeps the terminal's escape sequences; the panel shows their SGR styling and drops the rest, so the
-// text it measures, previews, and copies is the clean text the segments concatenate to.
+// text it measures, previews, and copies is the clean text the segments concatenate to. JSON panels highlight the
+// tokens of that clean text on top of the styling.
 function CodePanel(props: { title: string; value: string; terminal?: boolean; highlight?: string; json?: boolean }) {
   const [open, setOpen] = createSignal(false);
-  const segments = createMemo((): TextSegment[] => props.json ? jsonSegments(stripAnsi(props.value)) : terminalRuns(props.value));
-  const text = createMemo(() => segments().map(segment => segment.text).join(""));
+  const parsed = createMemo((): { text: string; segments: TextSegment[] } => {
+    const runs = terminalRuns(props.value);
+    const text = runs.map(run => run.text).join("");
+    return { text, segments: props.json ? overlaySegments(runs, jsonSegments(text)) : runs };
+  });
+  const segments = () => parsed().segments;
+  const text = () => parsed().text;
   const preview = () => {
     if (open() || text().length <= 1800) return segments();
     const match = props.highlight ? text().toLowerCase().indexOf(props.highlight.toLowerCase()) : 0;

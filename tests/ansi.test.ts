@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { stripAnsi, terminalRuns, type TerminalRun } from "../src/shared/ansi";
-import { markSegments, sliceSegments } from "../src/client/lib/json-highlight";
+import { jsonSegments, markSegments, overlaySegments, sliceSegments } from "../src/client/lib/json-highlight";
 import { displaySnippet, promptTitle, normalize } from "../src/server/normalize";
 
 const esc = (code: string) => `\u001b[${code}m`;
@@ -83,6 +83,24 @@ describe("ANSI escape sequences", () => {
       { match: true, segments: [{ text: "sed", terminal: { fg: 2 } }, { text: " 3" }] },
       { match: false, segments: [{ text: " tests" }] },
     ]);
+  });
+
+  test("overlays JSON token kinds on terminal styling for styled records", () => {
+    const runs = terminalRuns(`${esc("32")}stdout: {"ok": true}${esc("0")} done`);
+    const segments = overlaySegments(runs, jsonSegments(joined(runs)));
+    expect(joined(segments)).toBe(joined(runs));
+    expect(segments).toEqual([
+      { text: "stdout: ", terminal: { fg: 2 } },
+      { text: "{", terminal: { fg: 2 }, kind: "punctuation" },
+      { text: '"ok"', terminal: { fg: 2 }, kind: "key" },
+      { text: ":", terminal: { fg: 2 }, kind: "punctuation" },
+      { text: " ", terminal: { fg: 2 } },
+      { text: "true", terminal: { fg: 2 }, kind: "boolean" },
+      { text: "}", terminal: { fg: 2 }, kind: "punctuation" },
+      { text: " done" },
+    ]);
+    expect(overlaySegments([{ text: "ab" }], [{ text: "a", kind: "key" }, { text: "bc" }])).toEqual([{ text: "a", kind: "key" }, { text: "b" }, { text: "c" }]);
+    expect(overlaySegments([], jsonSegments("{}"))).toEqual([{ text: "{}" }]);
   });
 
   test("keeps escape sequences out of session titles and search snippets", () => {

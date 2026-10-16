@@ -172,6 +172,31 @@ export function jsonSegments(text: string): TextSegment[] {
   return segments;
 }
 
+/**
+ * Combines two segmentations of the same text, splitting at every boundary so each piece carries the fields of both,
+ * such as terminal styling from one and JSON token kinds from the other. Text that only one side covers is kept as is.
+ */
+export function overlaySegments(first: TextSegment[], second: TextSegment[]): TextSegment[] {
+  const result: TextSegment[] = [];
+  let index = 0, other = 0, offset = 0, otherOffset = 0;
+  while (index < first.length && other < second.length) {
+    const a = first[index]!, b = second[other]!;
+    const length = Math.min(a.text.length - offset, b.text.length - otherOffset);
+    if (length > 0) result.push({ ...a, ...b, text: a.text.slice(offset, offset + length) });
+    offset += length;
+    otherOffset += length;
+    if (offset >= a.text.length) { index++; offset = 0; }
+    if (otherOffset >= b.text.length) { other++; otherOffset = 0; }
+  }
+  for (const [segments, at, from] of [[first, index, offset], [second, other, otherOffset]] as const) {
+    for (let rest = at; rest < segments.length; rest++) {
+      const text = segments[rest]!.text.slice(rest === at ? from : 0);
+      if (text) result.push({ ...segments[rest]!, text });
+    }
+  }
+  return result;
+}
+
 /** Returns the segments covering the character window `[start, end)`, splitting segments at its edges. */
 export function sliceSegments(segments: TextSegment[], start: number, end: number): TextSegment[] {
   const result: TextSegment[] = [];
