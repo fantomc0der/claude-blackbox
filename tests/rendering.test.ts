@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boundedDiff, contentToText, imageMeta, mentions, mentionsBudget, resultImages, resultText, safeDataImage, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
+import { boundedDiff, contentToText, imageMeta, mentions, mentionsBudget, resultImages, resultText, safeDataImage, toolArgument, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
 
 describe("replay content helpers", () => {
   test("keeps mixed nested content in source order", () => {
@@ -74,11 +74,37 @@ describe("replay content helpers", () => {
     expect(toolPreviewParts({ type: "tool_use", name: "Glob", input: { pattern: "**/*.ts", path: "/repo/src/" } })).toEqual({ head: "/repo/src/", tail: "" });
     expect(toolPreviewParts({ type: "tool_use", name: "Edit", input: { file_path: "README.md" } })).toEqual({ head: "", tail: "README.md" });
     expect(toolPreviewParts({ type: "tool_use", name: "Read", input: { file_path: "C:\\code/app\\src/index.ts" } })).toEqual({ head: "C:\\code/app\\src/", tail: "index.ts" });
+    expect(toolPreviewParts({ type: "tool_use", name: "NotebookEdit", input: { notebook_path: "/repo/analysis.ipynb", new_source: "print(1)" } })).toEqual({ head: "/repo/", tail: "analysis.ipynb" });
     const deep = toolPreviewParts({ type: "tool_use", name: "Read", input: { file_path: `/${"nested/".repeat(200)}index.ts` } });
     expect(deep.tail).toBe("index.ts");
     expect(deep.head.length + deep.tail.length).toBe(1000);
     expect(deep.head).toStartWith("…");
     expect(deep.head).toEndWith("nested/");
+  });
+
+  test("offers the previewed command, path, query, or pattern for copying, whole and clean", () => {
+    expect(toolArgument({ type: "tool_use", name: "Bash", input: { command: "  bun run build &&\n  bun test \u001b[2m# quiet\u001b[22m\n" } })).toEqual({ kind: "command", value: "bun run build &&\n  bun test # quiet" });
+    expect(toolArgument({ type: "tool_use", name: "Bash", input: { command: "x".repeat(5000) } })?.value).toHaveLength(5000);
+    expect(toolArgument({ type: "tool_use", name: "Read", input: { file_path: "C:\\code\\app\\src\\index.ts" } })).toEqual({ kind: "path", value: "C:\\code\\app\\src\\index.ts" });
+    expect(toolArgument({ type: "tool_use", name: "Write", input: { file_path: "notes.md", content: "# Notes" } })).toEqual({ kind: "path", value: "notes.md" });
+    expect(toolArgument({ type: "tool_use", name: "NotebookEdit", input: { notebook_path: "/repo/analysis.ipynb", new_source: "print(1)" } })).toEqual({ kind: "path", value: "/repo/analysis.ipynb" });
+    expect(toolArgument({ type: "tool_use", name: "Grep", input: { pattern: "retry", path: "/repo/src" } })).toEqual({ kind: "path", value: "/repo/src" });
+    expect(toolArgument({ type: "tool_use", name: "Grep", input: { pattern: "retry" } })).toEqual({ kind: "pattern", value: "retry" });
+    expect(toolArgument({ type: "tool_use", name: "WebSearch", input: { query: "bun test timeout" } })).toEqual({ kind: "query", value: "bun test timeout" });
+    expect(toolArgument({ type: "tool_use", name: "Agent", input: { description: "Review worker", prompt: "Review the change." } })).toBeUndefined();
+    expect(toolArgument({ type: "tool_use", name: "Bash", input: { command: "\u001b[2m\u001b[22m" } })).toBeUndefined();
+    expect(toolArgument({ type: "tool_use", name: "Read", input: {} })).toBeUndefined();
+    expect(toolArgument({ type: "tool_use", name: "Read" })).toBeUndefined();
+  });
+
+  test("previews the argument it offers for copying", () => {
+    const blocks = [
+      { type: "tool_use", name: "Bash", input: { command: "  bun test\n  --bail\n" } },
+      { type: "tool_use", name: "Read", input: { file_path: "/repo/src/index.ts" } },
+      { type: "tool_use", name: "Grep", input: { pattern: "retry", path: "/repo/src" } },
+      { type: "tool_use", name: "WebSearch", input: { query: "bun test timeout" } },
+    ];
+    for (const block of blocks) expect(toolPreview(block)).toBe(toolArgument(block)!.value.replace(/\s+/g, " "));
   });
 
   test("finds a highlight term in nested recorded values without regard to case", () => {
