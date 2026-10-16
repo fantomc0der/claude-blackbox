@@ -2,7 +2,7 @@ import { expect, test } from "./harness";
 import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { appendFile } from "node:fs/promises";
-import { DEMO_HERO_TITLE } from "../tests/fixtures";
+import { DEMO_HERO_TITLE, DEMO_TOOL_RESULT_KEYWORD } from "../tests/fixtures";
 
 test("full-record search finds tool output and survives URL reload", async ({ page }) => {
   const errors: string[] = [];
@@ -259,6 +259,34 @@ test("ungrouping offers an Undo toast that restores the same group and its selec
     await expect(page.locator(".toast")).toContainText("Restored Undo coverage");
     await expect(page.getByRole("button", { name: /Undo coverage 2 folders/ })).toHaveAttribute("aria-current", "page");
   } finally { await removeGroups(page, ["Undo coverage"]); }
+});
+
+test("grouped rows below the fold never make the page itself scrollable", async ({ page }) => {
+  // A grouped row's hidden folder label is absolutely positioned. With no positioned ancestor inside the shell, each label
+  // stretched the document down to its row, so wheeling past the end of the list, or the scrollIntoView that reveals a
+  // search hit, dragged the whole app upward and left a blank band beneath it.
+  await page.setViewportSize({ width: 1440, height: 560 });
+  await page.goto("/");
+  const group = await createGroup(page, "Overflow coverage", ["/synthetic/workspaces/orbit", "/synthetic/workspaces/orbit-auth"]);
+  const pageOverflow = () => page.evaluate(() => document.scrollingElement!.scrollHeight - document.scrollingElement!.clientHeight);
+  const topbarTop = () => page.locator(".topbar").evaluate(element => element.getBoundingClientRect().top);
+  try {
+    await page.goto(`/?workspace=${group.id}`);
+    await expect(page.locator(".session-row .session-group-name")).toHaveText(Array(4).fill("Overflow coverage"));
+    expect(await pageOverflow()).toBe(0);
+    await page.locator(".session-row").first().hover();
+    await page.mouse.wheel(0, 3000);
+    await page.waitForTimeout(400);
+    expect(await topbarTop()).toBe(0);
+
+    await page.goto(`/?workspace=${group.id}&q=${DEMO_TOOL_RESULT_KEYWORD}`);
+    await page.locator(".session-row").first().click();
+    await expect(page.locator(".replay-event-selected")).toHaveCount(1);
+    await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(await pageOverflow()).toBe(0);
+    expect(await topbarTop()).toBe(0);
+  } finally { await removeGroups(page, ["Overflow coverage"]); }
 });
 
 test("one Undo toast collects quick ungroups, holds while hovered, and expiring leaves them removed", async ({ page }) => {
