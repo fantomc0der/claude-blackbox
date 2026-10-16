@@ -16,14 +16,19 @@ const wide = { viewport: { width: 2000, height: 1000 } };
 test("the overview lists changed files by folder and opens each change in the transcript", async ({ page }) => {
   const { rail, view, files } = await openRecording(page, "Overview files verification");
   await expect(rail.getByRole("navigation", { name: "Events on this page" })).toBeVisible();
-  await expect(view.locator('option[value="files"]')).toHaveText("Files changed · 4");
+  await expect(view.locator('option[value="files"]')).toHaveText("Files changed · 5");
   await view.selectOption("files");
 
   await expect(files.getByText("Whole recording · 3 folders")).toBeVisible();
-  await expect(files.getByRole("heading", { level: 3 })).toHaveText(["overview-app", "overview-shared", "overview-archive", "Other locations"]);
+  await expect(files.getByRole("heading", { level: 3 })).toHaveText(["overview-app", "overview-shared", "overview-archive", "Scratchpads", "Other locations"]);
   await expect(files.getByRole("region", { name: "Folder /synthetic/overview-app" }).getByRole("button", { name: "Working directory" })).toBeVisible();
   await expect(files.getByRole("region", { name: "Folder /synthetic/overview-archive" })).toContainText("No changes here");
   await expect(files.getByRole("region", { name: "Other locations" })).toContainText("/synthetic/elsewhere");
+  // Claude Code's per-session scratchpad is its own group, with paths relative to it; the full path stays in the tooltip.
+  const scratchpads = files.getByRole("region", { name: "Scratchpads" });
+  await expect(scratchpads).toContainText("Claude Code’s per-session temporary files");
+  await expect(scratchpads.getByRole("button", { name: "check.py, 1 change. Show the change." })).toHaveAttribute("title", "/tmp/claude-1000/-synthetic-overview-app/5d2c7f1e-8a4b-4c3d-9e6f-0a1b2c3d4e5f/scratchpad/check.py");
+  await expect(scratchpads).not.toContainText("/tmp/claude-1000");
   await expect(files.getByRole("button", { name: /^defaults\.json in src\/config, 1 change, 1 error\. Show the change\.$/ })).toContainText("1 error");
   // The /add-dir that only named a folder inside the working one is not presented as an added folder.
   await expect(files.getByRole("heading", { name: "docs" })).toHaveCount(0);
@@ -38,7 +43,7 @@ test("the overview lists changed files by folder and opens each change in the tr
 
   // A change on the second page turns to it and selects its card, keeping the rail's place.
   await files.getByRole("button", { name: /^format\.ts in lib, 1 change\./ }).click();
-  await expect(page.locator(".replay-range")).toContainText("23–82 of 82");
+  await expect(page.locator(".replay-range")).toContainText("25–84 of 84");
   const selected = page.locator(".replay-event-selected");
   await expect(selected).toContainText("/synthetic/overview-shared/lib/format.ts");
   await expect(selected).toBeInViewport();
@@ -48,7 +53,7 @@ test("the overview lists changed files by folder and opens each change in the tr
   await expect(files.getByRole("list", { name: "Changes to app.ts" }).getByRole("button", { name: /^MultiEdit/ })).toHaveAttribute("aria-current", "true");
   // Like a find step, opening a record on another page starts that page at the record.
   await files.getByRole("region", { name: "Folder /synthetic/overview-shared" }).getByRole("button", { name: /^Added with \/add-dir/ }).click();
-  await expect(page.locator(".replay-range")).toContainText("8–67 of 82");
+  await expect(page.locator(".replay-range")).toContainText("8–67 of 84");
   await expect(selected).toContainText("overview-shared");
 
   for (const theme of ["Dark", "Light"]) {
