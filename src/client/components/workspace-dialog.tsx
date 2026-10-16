@@ -3,20 +3,25 @@ import type { JSX } from "@solidjs/web";
 import type { Catalog, WorkspaceGroup } from "../../shared/types";
 import { request } from "../lib/api";
 import { rememberFocus } from "../lib/dismissable";
+import { sourceFolders } from "../lib/workspaces";
 import { Icon } from "./icon";
 
 export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; onSaved: () => void; onUngrouped: (group: WorkspaceGroup) => void; children: JSX.Element }) {
   let dialog!: HTMLDialogElement;
+  let filterInput!: HTMLInputElement;
   const restore = rememberFocus();
   const [name, setName] = createSignal("");
   const [paths, setPaths] = createSignal<string[]>([]);
   const [editing, setEditing] = createSignal("");
   const [error, setError] = createSignal("");
   const [saving, setSaving] = createSignal(false);
-  const sources = () => props.catalog.workspaces.flatMap(workspace => workspace.paths.map(path => ({ path, group: workspace.grouped ? workspace.id : "" }))).sort((left, right) => left.path.localeCompare(right.path));
+  const [filter, setFilter] = createSignal("");
+  const sources = () => sourceFolders(props.catalog.workspaces, filter());
+  const total = () => props.catalog.workspaces.reduce((count, workspace) => count + workspace.paths.length, 0);
   onSettled(() => { dialog.showModal(); return () => restore(dialog); });
-  const reset = () => { setName(""); setPaths([]); setEditing(""); setError(""); };
-  const edit = (group: WorkspaceGroup) => { setName(group.name); setPaths([...group.paths]); setEditing(group.id); setError(""); };
+  const clearFilter = () => { setFilter(""); filterInput.focus(); };
+  const reset = () => { setName(""); setPaths([]); setEditing(""); setError(""); setFilter(""); };
+  const edit = (group: WorkspaceGroup) => { setName(group.name); setPaths([...group.paths]); setEditing(group.id); setError(""); setFilter(""); };
   const save = async (event: SubmitEvent) => {
     event.preventDefault();
     setSaving(true); setError("");
@@ -49,11 +54,19 @@ export function WorkspaceDialog(props: { catalog: Catalog; onClose: () => void; 
     <form onSubmit={save}>
       <label class="field-label" for="group-name">{editing() ? "Edit group name" : "New group name"}</label>
       <input id="group-name" placeholder="e.g. Orbit, across all worktrees" value={name()} onInput={event => setName(event.currentTarget.value)} maxlength={80} required />
-      <div class="field-label source-label"><span>Source folders</span><span>{paths().length} selected</span></div>
+      <div class="field-label source-label"><span>Source folders</span><span>{filter().trim() ? `${sources().length} of ${total()} match · ` : ""}{paths().length} selected</span></div>
+      <div class="search-box source-filter"><Icon name="search" size={16} />
+        <input ref={filterInput} type="search" aria-label="Filter source folders" placeholder="Filter by folder path…" autocomplete="off" value={filter()} onInput={event => setFilter(event.currentTarget.value)} onKeyDown={event => {
+          // Escape clears the filter before it can close the dialog, and Enter must not create the group from a filter keystroke.
+          if (event.key === "Escape" && filter()) { event.preventDefault(); event.stopPropagation(); setFilter(""); }
+          if (event.key === "Enter") event.preventDefault();
+        }} />
+        <Show when={filter()}><button type="button" class="icon-button tiny" aria-label="Clear folder filter" onClick={clearFilter}><Icon name="close" size={14} /></button></Show>
+      </div>
       <div class="source-options"><For each={sources()}>{source => <label class={['source-option', { disabled: Boolean(source.group && source.group !== editing()) }]}>
         <input type="checkbox" disabled={Boolean(source.group && source.group !== editing())} checked={paths().includes(source.path)} onChange={event => setPaths(current => event.currentTarget.checked ? [...current, source.path] : current.filter(path => path !== source.path))} />
         <Icon name="folder" /><span>{source.path || "Unknown source"}<Show when={source.group && source.group !== editing()}><small>Already grouped</small></Show></span>
-      </label>}</For></div>
+      </label>}</For><Show when={!sources().length}><div class="source-empty" role="status"><span>{filter().trim() ? `No folders match “${filter().trim()}”.` : "No recorded folders yet."}</span><Show when={filter().trim()}><button type="button" class="text-button" onClick={clearFilter}>Clear filter</button></Show></div></Show></div>
       <Show when={error()}><p role="alert" class="error-text">{error()}</p></Show>
       <div class="dialog-footer"><span><Icon name="shield" size={14} /> A reversible, local-only view</span><Show when={editing()}><button type="button" class="text-button" onClick={reset}>Cancel edit</button></Show><button type="submit" class="primary-button" disabled={saving() || paths().length < 2 || !name().trim()}>{saving() ? "Saving…" : editing() ? "Save group" : "Create group"}<Icon name="arrow" size={16} /></button></div>
     </form>

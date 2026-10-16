@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Workspace } from "../src/shared/types";
 import { emptyUsage } from "../src/server/usage";
-import { visibleWorkspaces, workspaceSort } from "../src/client/lib/workspaces";
+import { sourceFolders, visibleWorkspaces, workspaceSort } from "../src/client/lib/workspaces";
 
 function workspace(name: string, count: number, costUSD: number): Workspace {
   return { id: `/work/${name}`, name, paths: [`/work/${name}`], count, grouped: false, usage: { ...emptyUsage(), requests: 1, costUSD } };
@@ -33,6 +33,16 @@ describe("workspace navigation", () => {
     }
     expect(visibleWorkspaces([group], "cost", "absent")).toEqual([]);
     expect(visibleWorkspaces([], "name", "")).toEqual([]);
+  });
+
+  test("offers every recorded folder for grouping, narrowed by a path filter that ignores case and separators", () => {
+    const group = { ...workspace("Shared project", 4, 50), id: "group:shared", grouped: true, paths: ["C:\\work\\orbit-main", "/work/orbit-clone"] };
+    const catalog = [group, entries[0]!];
+    expect(sourceFolders(catalog)).toEqual([{ path: "/work/orbit-10", group: "" }, { path: "/work/orbit-clone", group: "group:shared" }, { path: "C:\\work\\orbit-main", group: "group:shared" }]);
+    expect(sourceFolders(catalog, " c:/WORK ")).toEqual([{ path: "C:\\work\\orbit-main", group: "group:shared" }]);
+    expect(sourceFolders(catalog, "\\orbit-")).toHaveLength(3);
+    expect(sourceFolders(catalog, "absent")).toEqual([]);
+    expect(sourceFolders([], "orbit")).toEqual([]);
   });
 
   test("sorts real zero cost before unknown costs and uses deterministic tie breakers", () => {

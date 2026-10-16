@@ -315,7 +315,11 @@
   .field-label { display: block; font-size: var(--text-support); color: #c0c8bc; margin: 20px 0 9px; }
   .source-label { display: flex; align-items: center; justify-content: space-between; }
   .source-label > span:last-child { font-size: var(--text-meta); color: var(--muted); }
+  .source-filter { height: 38px; gap: 8px; padding: 0 10px; margin-bottom: 9px; }
+  .source-filter input { padding: 8px 0; }
+  .source-filter input::-webkit-search-cancel-button { display: none; }
   .source-options { max-height: 235px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
+  .source-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 14px 12px; color: var(--muted); font-size: var(--text-support); overflow-wrap: anywhere; }
   .source-option { display: flex; align-items: center; gap: 10px; padding: 12px; border-bottom: 1px solid #2b312e; font: var(--text-meta) var(--mono); line-height: 1.6; }
   .source-option:last-child { border-bottom: 0; }
   .source-option > span { min-width: 0; overflow-wrap: anywhere; }
@@ -528,6 +532,7 @@
     .replay-actions .icon-button, .bookmark-toggle, .mobile-menu, .sidebar-mobile-close, .workspace-group, .workspace-filter-toggle { min-width: 44px; min-height: 44px; }
     .bookmark-toggle { margin-top: -2px; }
     .workspace-controls select, .workspace-filter input, .sidebar-select select { min-height: 44px; }
+    .source-filter { min-height: 44px; }
     .source-option { min-height: 44px; }
     .session-details-menu dd button { position: relative; }
     .session-details-menu dd button::after { content: ""; position: absolute; inset: -13px 0; }
