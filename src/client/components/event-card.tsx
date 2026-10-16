@@ -24,7 +24,7 @@ import {
 import { jsonSegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
 import { Markdown } from "./markdown";
 import { Highlight } from "./highlight";
-import { Icon } from "./icon";
+import { Icon, type IconName } from "./icon";
 import { modelName } from "../lib/format";
 
 export interface SubagentNavigation {
@@ -240,6 +240,8 @@ export function EventCard(props: EventCardProps) {
   const role = createMemo(() => props.event.role || "system");
   const presentation = createMemo(() => isToolResultEvent(props.event) ? "tool-result" : role());
   const roleLabel = createMemo(() => presentation() === "tool-result" ? "Tool result" : role());
+  // A glyph ahead of the label tells user and assistant turns apart at a glance; results and system records keep the plain label.
+  const roleIcon = createMemo((): IconName | undefined => presentation() === "user" ? "user" : presentation() === "assistant" ? "sparkle" : undefined);
   const hasBlocks = createMemo(() => props.event.blocks.length > 0);
   const recordedModel = () => isRecord(props.event.raw.message) ? getString(props.event.raw.message.model) : undefined;
   const permalink = () => {
@@ -251,7 +253,7 @@ export function EventCard(props: EventCardProps) {
     return url.pathname + url.search;
   };
   return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
-    <header class="replay-event-header"><span class="replay-role">{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
+    <header class="replay-event-header"><span class="replay-role"><Show when={roleIcon()}>{name => <Icon name={name()} size={14} class="replay-role-icon" />}</Show>{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
     <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
     <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} json /></Show></details>
