@@ -33,7 +33,7 @@ async function fixture() {
       await writeFile(path, records.map(entry => JSON.stringify(entry)).join("\n") + "\n");
       return path;
     },
-    open: async () => recorder = await Recorder.open(data, join(root, "state")),
+    open: async (options: { scan?: boolean } = {}) => recorder = await Recorder.open(data, join(root, "state"), options),
   };
 }
 
@@ -191,8 +191,7 @@ test("version 6 indexes clean terminal styling out of stored titles without resc
   before.db.query("UPDATE sessions SET title=? WHERE id=?").run(styled, session.id);
   before.db.exec("PRAGMA user_version=6");
   await before.close();
-  const after = await Recorder.open(setup.data, join(setup.root, "state"), { scan: false });
-  cleanup.push(() => after.close());
+  const after = await setup.open({ scan: false });
   expect(after.getSession(session.id)?.title).toBe("Added C:\\code\\app as a working directory · /permissions");
   expect(after.getSession(named.id)?.title).toBe("Custom  title");
   expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(7);
