@@ -29,6 +29,13 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
   });
   const labels = createMemo(() => folderLabels(props.summary?.folders.map(folder => folder.path) || []));
   const label = (path: string) => labels().get(path) ?? folderName(path);
+  // One scratchpad lists its files as they are; several tell their files apart by the directories that differ.
+  const scratchFiles = createMemo(() => {
+    const scratchpads = props.summary?.scratchpads || [];
+    if (scratchpads.length < 2) return scratchpads[0]?.files || [];
+    const names = folderLabels(scratchpads.map(scratchpad => scratchpad.path));
+    return scratchpads.flatMap(scratchpad => scratchpad.files.map(file => ({ ...file, display: `${names.get(scratchpad.path)}${scratchpad.path.includes("\\") ? "\\" : "/"}${file.display}` })));
+  });
 
   const FileRow = (file: () => SummaryFile) => {
     const listId = `overview-changes-${++changeLists}`;
@@ -92,6 +99,13 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
           <ul class="overview-file-list"><For each={folder().files} keyed={file => file.path}>{FileRow}</For></ul>
         </Show>
       </section>}</For>
+      <Show when={summary().scratchpads.length}>
+        <section class="overview-folder" aria-label="Scratchpads">
+          <h3 title={summary().scratchpads.map(scratchpad => scratchpad.path).join("\n")}><Icon name="folder" size={14} /><span>Scratchpads</span></h3>
+          <p class="overview-provenance"><span>Claude Code’s per-session temporary files</span></p>
+          <ul class="overview-file-list"><For each={scratchFiles()} keyed={file => file.path}>{FileRow}</For></ul>
+        </section>
+      </Show>
       <Show when={summary().other.length}>
         <section class="overview-folder" aria-label="Other locations">
           <h3><Icon name="folder" size={14} /><span>Other locations</span></h3>

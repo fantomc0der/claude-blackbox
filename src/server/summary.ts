@@ -1,7 +1,7 @@
 import { posix, win32 } from "node:path";
 import { stripAnsi } from "../shared/ansi";
 import { object, string } from "./normalize";
-import type { SessionSummary, SummaryChange, SummaryFile, SummaryFolder, SummaryRead, SummaryRecord } from "../shared/types";
+import type { SessionSummary, SummaryChange, SummaryFile, SummaryFolder, SummaryRead, SummaryRecord, SummaryScratchpad } from "../shared/types";
 
 /** Tools whose calls change the file their input names. Read is collected separately. */
 export const changeTools = ["edit", "write", "multiedit", "notebookedit"] as const;
@@ -56,6 +56,19 @@ export function within(path: string, root: string): string | null {
   return /[\\/]/.test(path[base.length]) ? path.slice(base.length + 1) : null;
 }
 
+/**
+ * The scratchpad directory containing `path`, or null. Claude Code gives each session a scratchpad for temporary files
+ * under its temp directory, `claude-<uid>` on macOS and Linux or `claude` on Windows, below the system temp location or
+ * a `CLAUDE_CODE_TMPDIR` override: then the project path with every character but letters and digits replaced by `-`,
+ * the session id, and `scratchpad`, as in `%TEMP%\claude\C--code-app\<session id>\scratchpad\check.py` or
+ * `/tmp/claude-1000/-home-me-app/<session id>/scratchpad/check.py`. Only that whole shape counts, so a project folder
+ * that happens to be named `scratchpad` does not.
+ */
+export function scratchpadRoot(path: string): string | null {
+  const match = /^(.*[\\/]claude(?:-[^\\/]+)?[\\/][^\\/]+[\\/][0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}[\\/]scratchpad)[\\/]+[^\\/]/i.exec(path);
+  return match?.[1] ?? null;
+}
+
 function fileKey(path: string): string {
   return isWindows(path) ? path.replace(/\\/g, "/").toLowerCase() : path;
 }
@@ -107,7 +120,8 @@ function byPath(left: string, right: string): number {
 
 /**
  * Groups a recording's changed and read files under the folders it worked in. Each file joins the deepest folder that
- * contains it; files outside every folder are listed on their own. A file that was ever changed is not listed as read.
+ * contains it; files outside every folder are listed under their scratchpad directory when they have one, otherwise on
+ * their own. A file that was ever changed is not listed as read.
  */
 export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): SessionSummary {
   let limited = false;
@@ -157,26 +171,36 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): Sessio
     return best;
   };
 
+  const scratchpads = new Map<string, SummaryScratchpad>();
   const other: SummaryFile[] = [];
   const changedFiles = [...changed.values()];
   if (changedFiles.length > fileLimit) limited = true;
   for (const file of changedFiles.slice(0, fileLimit)) {
     const home = place(file.path);
-    if (home) home.folder.files.push({ ...file, display: home.display });
-    else other.push({ ...file, display: file.path });
+    if (home) { home.folder.files.push({ ...file, display: home.display }); continue; }
+    const root = scratchpadRoot(file.path);
+    if (!root) { other.push({ ...file, display: file.path }); continue; }
+    let scratchpad = scratchpads.get(fileKey(root));
+    if (!scratchpad) scratchpads.set(fileKey(root), scratchpad = { path: root, files: [] });
+    scratchpad.files.push({ ...file, display: within(file.path, root) || file.path });
   }
   for (const folder of list) folder.files.sort((left, right) => byPath(left.display, right.display));
+  for (const scratchpad of scratchpads.values()) scratchpad.files.sort((left, right) => byPath(left.display, right.display));
   other.sort((left, right) => byPath(left.path, right.path));
 
   const readFiles = [...read.values()];
   if (readFiles.length > fileLimit) limited = true;
   const order = new Map(list.map((folder, index) => [folder.path, index]));
+  // Reads sort by their folder's order, then the ones in scratchpads, then the ones outside every folder.
+  const rank = (read: SummaryRead) => order.get(read.folder) ?? (read.folder ? list.length : list.length + 1);
   const reads: SummaryRead[] = readFiles.slice(0, fileLimit).map(file => {
     const home = place(file.path);
-    return { ...file.record, path: file.path, display: home?.display ?? file.path, folder: home?.folder.path ?? "", reads: file.reads };
-  }).sort((left, right) => (order.get(left.folder) ?? list.length) - (order.get(right.folder) ?? list.length) || byPath(left.display, right.display));
+    const root = home ? null : scratchpadRoot(file.path);
+    const display = home ? home.display : root ? within(file.path, root) || file.path : file.path;
+    return { ...file.record, path: file.path, display, folder: home?.folder.path ?? root ?? "", reads: file.reads };
+  }).sort((left, right) => rank(left) - rank(right) || byPath(left.display, right.display));
 
-  return { folders: list, other, read: reads, changedFiles: changed.size, readFiles: read.size, limited };
+  return { folders: list, scratchpads: [...scratchpads.values()], other, read: reads, changedFiles: changed.size, readFiles: read.size, limited };
 }
 
 /** Every record a summary points at, for looking up their positions under the replay filters. */
@@ -186,7 +210,8 @@ export function summaryRecordIds(summary: SessionSummary): string[] {
     if (folder.working) ids.add(folder.working.id);
     if (folder.added) ids.add(folder.added.id);
   }
-  for (const file of [...summary.folders.flatMap(folder => folder.files), ...summary.other]) for (const change of file.changes) ids.add(change.id);
+  const files = [...summary.folders.flatMap(folder => folder.files), ...summary.scratchpads.flatMap(scratchpad => scratchpad.files), ...summary.other];
+  for (const file of files) for (const change of file.changes) ids.add(change.id);
   for (const file of summary.read) ids.add(file.id);
   return [...ids];
 }
@@ -198,6 +223,7 @@ export function placeSummary(summary: SessionSummary, positions: Map<string, num
   return {
     ...summary,
     folders: summary.folders.map(folder => ({ ...folder, working: folder.working && at(folder.working), added: folder.added && at(folder.added), files: folder.files.map(file) })),
+    scratchpads: summary.scratchpads.map(scratchpad => ({ ...scratchpad, files: scratchpad.files.map(file) })),
     other: summary.other.map(file),
     read: summary.read.map(at),
   };

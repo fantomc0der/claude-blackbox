@@ -34,7 +34,7 @@ function summaryRecord(summary: SessionSummary, id: string): SummaryRecord | und
     if (folder.working?.id === id) return folder.working;
     if (folder.added?.id === id) return folder.added;
   }
-  for (const file of [...summary.folders.flatMap(folder => folder.files), ...summary.other]) {
+  for (const file of [...summary.folders.flatMap(folder => folder.files), ...summary.scratchpads.flatMap(scratchpad => scratchpad.files), ...summary.other]) {
     const change = file.changes.find(entry => entry.id === id);
     if (change) return change;
   }

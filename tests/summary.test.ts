@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addedDirectory, buildSummary, isAddDirCommand, resolveRecorded, within, type SummaryCall, type SummaryRoot } from "../src/server/summary";
+import { addedDirectory, buildSummary, isAddDirCommand, resolveRecorded, scratchpadRoot, within, type SummaryCall, type SummaryRoot } from "../src/server/summary";
 
 const sgr = (code: string) => `\u001b[${code}m`;
 const record = (id: string) => ({ id, position: null, timestamp: "2026-10-11T01:26:42.000Z" });
@@ -28,6 +28,24 @@ describe("recording summary paths", () => {
     expect(within("/work/App/a.ts", "/work/app")).toBeNull();
     expect(within("/work/app/a.ts", "/work/app/")).toBe("a.ts");
     expect(within("/etc/hosts", "/")).toBe("etc/hosts");
+  });
+
+  test("recognizes Claude Code's per-session scratchpad directory by its whole shape", () => {
+    const windows = "C:\\Users\\micha\\AppData\\Local\\Temp\\claude\\C--code-fantomc0der-roundup\\47dceab4-2ec6-45c3-a63f-ea059f0215f0\\scratchpad";
+    expect(scratchpadRoot(`${windows}\\apply_tests_docs.py`)).toBe(windows);
+    expect(scratchpadRoot(`${windows}\\out\\report.md`)).toBe(windows);
+    expect(scratchpadRoot(`${windows.toUpperCase()}\\x.py`)).toBe(windows.toUpperCase());
+    const linux = "/tmp/claude-1000/-home-user-claude-blackbox/a50a03a5-cc21-5aa2-b2e3-8940383015ad/scratchpad";
+    expect(scratchpadRoot(`${linux}/check.py`)).toBe(linux);
+    expect(scratchpadRoot("/var/folders/x1/abc/T/claude/-Users-me-app/a50a03a5-cc21-5aa2-b2e3-8940383015ad/scratchpad/notes.md")).toBe("/var/folders/x1/abc/T/claude/-Users-me-app/a50a03a5-cc21-5aa2-b2e3-8940383015ad/scratchpad");
+    // The scratchpad directory itself names no file, and a project's own `scratchpad` folder is not Claude Code's.
+    expect(scratchpadRoot(linux)).toBeNull();
+    expect(scratchpadRoot(`${linux}/`)).toBeNull();
+    expect(scratchpadRoot("/work/app/scratchpad/check.py")).toBeNull();
+    expect(scratchpadRoot("/tmp/claude-1000/-home-user-app/latest/scratchpad/check.py")).toBeNull();
+    expect(scratchpadRoot("/tmp/claude-1000/a50a03a5-cc21-5aa2-b2e3-8940383015ad/scratchpad/check.py")).toBeNull();
+    expect(scratchpadRoot("/tmp/myclaude/-home-user-app/a50a03a5-cc21-5aa2-b2e3-8940383015ad/scratchpad/check.py")).toBeNull();
+    expect(scratchpadRoot("/tmp/claude-1000/-home-user-app/a50a03a5-cc21-5aa2-b2e3-8940383015ad/tasks/agent.output")).toBeNull();
   });
 });
 
@@ -67,6 +85,7 @@ describe("recording summary grouping", () => {
       call("e3", "MultiEdit", "C:\\code\\orbit\\packages\\ui\\button.tsx"),
       call("e4", "NotebookEdit", "C:\\code\\shared\\analysis.ipynb"),
       call("e5", "Edit", "C:\\Users\\me\\.claude\\settings.json"),
+      call("e6", "Write", "C:\\Users\\me\\AppData\\Local\\Temp\\claude\\C--code-orbit\\47dceab4-2ec6-45c3-a63f-ea059f0215f0\\scratchpad\\check.py"),
       call("r1", "Read", "src/app.ts"),
       call("r2", "Read", "README.md"),
       call("r3", "Read", "C:\\code\\orbit\\README.md"),
@@ -79,9 +98,35 @@ describe("recording summary grouping", () => {
       ["C:\\code\\orbit\\packages\\ui", null, "add-ui", [["button.tsx", [["e3", "MultiEdit", false]]]]],
       ["D:\\empty", null, "add-empty", []],
     ]);
+    expect(summary.scratchpads.map(scratchpad => [scratchpad.path, scratchpad.files.map(file => [file.display, file.changes.map(change => change.id)])])).toEqual([
+      ["C:\\Users\\me\\AppData\\Local\\Temp\\claude\\C--code-orbit\\47dceab4-2ec6-45c3-a63f-ea059f0215f0\\scratchpad", [["check.py", ["e6"]]]],
+    ]);
     expect(summary.other.map(file => file.display)).toEqual(["C:\\Users\\me\\.claude\\settings.json"]);
     expect(summary.read.map(file => [file.display, file.folder, file.reads, file.id])).toEqual([["README.md", "C:\\code\\orbit", 2, "r2"]]);
-    expect(summary).toMatchObject({ changedFiles: 4, readFiles: 1, limited: false });
+    expect(summary).toMatchObject({ changedFiles: 5, readFiles: 1, limited: false });
+  });
+
+  test("keeps each scratchpad apart and leaves one inside a recorded folder under that folder", () => {
+    const first = "/tmp/claude-1000/-work-app/11111111-2222-4333-8444-555555555555/scratchpad";
+    const second = "/tmp/claude-1000/-work-app/66666666-7777-4888-9999-aaaaaaaaaaaa/scratchpad";
+    const summary = buildSummary([{ path: "/work/app", added: false, record: record("cwd") }, { path: "/work/empty", added: true, record: record("added") }], [
+      call("e1", "Write", `${second}/later.py`, false, "/work/app"),
+      call("e2", "Write", `${first}/out/report.md`, false, "/work/app"),
+      call("e3", "Edit", `${first}/check.py`, false, "/work/app"),
+      call("e4", "Edit", "/work/app/scratchpad/notes.md", false, "/work/app"),
+      call("e5", "Edit", "/etc/hosts", false, "/work/app"),
+      call("r1", "Read", `${second}/input.txt`, false, "/work/app"),
+      call("r2", "Read", "/var/log/syslog", false, "/work/app"),
+    ]);
+    expect(summary.scratchpads.map(scratchpad => [scratchpad.path, scratchpad.files.map(file => file.display)])).toEqual([[second, ["later.py"]], [first, ["check.py", "out/report.md"]]]);
+    expect(summary.folders.map(folder => [folder.path, folder.files.map(file => file.display)])).toEqual([["/work/app", ["scratchpad/notes.md"]], ["/work/empty", []]]);
+    expect(summary.other.map(file => file.display)).toEqual(["/etc/hosts"]);
+    expect(summary.read.map(file => [file.display, file.folder])).toEqual([["input.txt", second], ["/var/log/syslog", ""]]);
+
+    // A scratchpad inside a recorded folder belongs to that folder, as any other file does.
+    const contained = buildSummary([{ path: "/tmp", added: false, record: record("cwd") }], [call("e1", "Write", `${first}/check.py`, false, "/tmp")]);
+    expect(contained.folders[0].files.map(file => file.display)).toEqual(["claude-1000/-work-app/11111111-2222-4333-8444-555555555555/scratchpad/check.py"]);
+    expect(contained.scratchpads).toEqual([]);
   });
 
   test("merges folders recorded with different spellings of one path", () => {

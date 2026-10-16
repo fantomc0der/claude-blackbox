@@ -248,8 +248,9 @@ const orphanFolder = join(folder, "missing-root", "subagents");
 await mkdir(orphanFolder, { recursive: true });
 await writeFile(join(orphanFolder, "agent-family-orphan.jsonl"), familyChild("Orphan worker", "missing-root", "family-orphan-tool", "missing-parent-event").map(record => JSON.stringify(record)).join("\n") + "\n");
 // The overview's Files changed view: a working folder, two folders added with /add-dir (one left unchanged), an
-// /add-dir that only names a folder inside the working one, a file outside every folder, a Write whose result is an
-// error, reads, and enough prose between them that the later changes sit on the second page.
+// /add-dir that only names a folder inside the working one, a file outside every folder, a file in Claude Code's
+// scratchpad, a Write whose result is an error, reads, and enough prose between them that the later changes sit on the
+// second page.
 const overviewStart = Date.parse("2026-01-04T15:00:00Z");
 let overviewSequence = 0;
 const overviewRecord = (record: Record<string, unknown>) => {
@@ -281,6 +282,8 @@ await writeFile(join(folder, "overview-files.jsonl"), [
   overviewResult("overview-edit-3", "Applied 1 edit."),
   overviewCall("overview-edit-4", "Edit", { file_path: "/synthetic/elsewhere/notes.md", old_string: "a", new_string: "b" }),
   overviewResult("overview-edit-4", "The file has been updated."),
+  overviewCall("overview-write-2", "Write", { file_path: "/tmp/claude-1000/-synthetic-overview-app/5d2c7f1e-8a4b-4c3d-9e6f-0a1b2c3d4e5f/scratchpad/check.py", content: "print('ok')" }),
+  overviewResult("overview-write-2", "File created successfully."),
   overviewText("The overview files are ready.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
