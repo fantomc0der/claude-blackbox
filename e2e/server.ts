@@ -170,6 +170,30 @@ await writeFile(join(folder, "long-tool-preview.jsonl"), [
     { type: "tool_use", id: "long-preview-mcp", name: "mcp__playwright__browser_run_code", input: { description: longPreviewCommand } },
   ] } },
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// A call for each kind of argument the summary row offers to copy, a delegated task that offers none, and a failing
+// command whose result card carries the same control on the Errors tab.
+export const copyCommand = "bun run build &&\n  bun test tests \\\n    --timeout 30000 # quiet";
+export const copyReadPath = "C:\\code\\fantomc0der\\roundup\\hooks\\register.test.ts";
+const copyCall = (id: string, name: string, input: Record<string, unknown>) => ({ type: "tool_use", id, name, input });
+const copyResult = (id: string, content: string, is_error = false) => ({ type: "tool_result", tool_use_id: id, content, is_error });
+await writeFile(join(folder, "tool-copy.jsonl"), [
+  event("Hazelbrook copy verification", 0),
+  { ...event("", 1, "assistant"), message: { role: "assistant", content: [
+    copyCall("copy-bash", "Bash", { command: `  ${copyCommand.replace("# quiet", `${sgr("2")}# quiet${sgr("22")}`)}\n` }),
+    copyCall("copy-read", "Read", { file_path: copyReadPath }),
+    copyCall("copy-write", "Write", { file_path: "/synthetic/copy/notes.md", content: "# Notes\n" }),
+    copyCall("copy-notebook", "NotebookEdit", { notebook_path: "/synthetic/copy/analysis.ipynb", new_source: "print(1)" }),
+    copyCall("copy-grep", "Grep", { pattern: "quillfeather", path: "/synthetic/copy/src" }),
+    copyCall("copy-search", "WebSearch", { query: "bun test timeout flag" }),
+    copyCall("copy-agent", "Agent", { description: "Review worker", prompt: "Review the change." }),
+    copyCall("copy-fail", "Bash", { command: "bun test tests/flaky.test.ts" }),
+  ], model: "claude-sonnet-4-5" } },
+  { ...event("", 2), message: { role: "user", content: [
+    copyResult("copy-bash", "built"), copyResult("copy-read", "import { test } from \"bun:test\""), copyResult("copy-write", "Wrote 8 bytes"),
+    copyResult("copy-notebook", "Updated cell"), copyResult("copy-grep", "src/retry.ts:3: quillfeather"), copyResult("copy-search", "No results"),
+    copyResult("copy-agent", "Done"), copyResult("copy-fail", "1 fail", true),
+  ] } },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "subagent-parent.jsonl"),Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
 const agentsFolder = join(folder, "subagent-parent", "subagents");
 await mkdir(agentsFolder, { recursive: true });

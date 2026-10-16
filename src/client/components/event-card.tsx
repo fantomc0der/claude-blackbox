@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onSettled, untrack } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from "solid-js";
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
 import {
   boundedDiff,
@@ -17,9 +17,11 @@ import {
   resultImages,
   resultText,
   safeDataImage,
+  toolArgument,
   toolPreviewParts,
   toolTitle,
   truncate,
+  type ToolArgumentKind,
 } from "../lib/content";
 import { jsonSegments, overlaySegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
 import { terminalRuns } from "../../shared/ansi";
@@ -51,27 +53,52 @@ export interface EventCardProps {
   subagents?: SubagentNavigation;
 }
 
-function CopyButton(props: { value: string; label?: string }) {
-  const [state, setState] = createSignal<"idle" | "copied" | "failed">("idle");
+// Copy controls share one short-lived state: idle, then copied or failed for 2.4 seconds after each press, and a press
+// while a notice still shows starts that time again.
+function createCopyState(value: () => string) {
+  const [state, setState] = createSignal<{ status: "idle" | "copied" | "failed" }>({ status: "idle" });
   createEffect(
     () => state(),
     (current) => {
-      if (current === "idle") return;
-      const timeout = window.setTimeout(() => setState("idle"), 2400);
+      if (current.status === "idle") return;
+      const timeout = window.setTimeout(() => setState({ status: "idle" }), 2400);
       return () => window.clearTimeout(timeout);
     },
   );
   const copy = async () => {
     try {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
-      await navigator.clipboard.writeText(props.value);
-      setState("copied");
+      await navigator.clipboard.writeText(value());
+      setState({ status: "copied" });
     } catch {
-      setState("failed");
+      setState({ status: "failed" });
     }
   };
-  const label = () => state() === "copied" ? "Copied" : state() === "failed" ? "Copy failed" : props.label ?? "Copy";
+  return { status: () => state().status, copy };
+}
+
+function CopyButton(props: { value: string; label?: string }) {
+  const { status, copy } = createCopyState(() => props.value);
+  const label = () => status() === "copied" ? "Copied" : status() === "failed" ? "Copy failed" : props.label ?? "Copy";
   return <button class="replay-copy" type="button" onClick={copy} aria-live="polite" aria-label={label()}>{label()}</button>;
+}
+
+const argumentLabels: Record<ToolArgumentKind, string> = { command: "Command", path: "Path", query: "Query", pattern: "Pattern" };
+
+// Copies the command, path, query, or pattern a summary row previews, from the collapsed row, so a reader need not open
+// the call. The button keeps one name, described by the full preview; the status beside it announces the outcome and
+// the icon shows it for a moment.
+function ToolCopy(props: { block: ContentBlock; describedBy: string }) {
+  const argument = createMemo(() => toolArgument(props.block));
+  return <Show when={argument()}>{argument => {
+    const { status, copy } = createCopyState(() => argument().value);
+    const label = () => `Copy ${argument().kind}`;
+    const notice = () => status() === "copied" ? `${argumentLabels[argument().kind]} copied` : status() === "failed" ? "Copy failed" : "";
+    return <>
+      <button class="icon-button tiny tool-copy" type="button" data-state={status()} aria-label={label()} title={label()} aria-describedby={props.describedBy} onClick={copy}><Icon name={status() === "copied" ? "check" : status() === "failed" ? "alert" : "copy"} size={14} /></button>
+      <span class="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{notice()}</span>
+    </>;
+  }}</Show>;
 }
 
 // Recorded output keeps the terminal's escape sequences; the panel shows their SGR styling and drops the rest, so the
@@ -184,10 +211,10 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
 }
 
 // A call's status, name, and command, path, or query, shared by the call's own card and by a result card that names it.
-function ToolLabel(props: { block: ContentBlock; status: "error" | "success" | "pending" }) {
+function ToolLabel(props: { block: ContentBlock; status: "error" | "success" | "pending"; previewId?: string }) {
   const preview = createMemo(() => toolPreviewParts(props.block));
   const previewText = () => preview().head + preview().tail;
-  return <><span class="tool-status" aria-label={`Tool ${props.status}`}>{props.status === "error" ? "!" : props.status === "success" ? "✓" : "→"}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden">{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show></>;
+  return <><span class="tool-status" aria-label={`Tool ${props.status}`}>{props.status === "error" ? "!" : props.status === "success" ? "✓" : "→"}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden" id={props.previewId}>{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show></>;
 }
 
 function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string; subagents?: SubagentNavigation }) {
@@ -196,9 +223,17 @@ function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?
   const [open, setOpen] = createSignal(untrack(() => Boolean(props.result?.is_error || highlighted() || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || ""))));
   const status = () => props.result?.is_error === true ? "error" : props.result ? "success" : "pending";
   const recording = () => props.subagents?.targets[props.block.id || ""];
+  const previewId = createUniqueId();
   createEffect(() => Boolean(highlighted() || props.result?.is_error), value => { if (value) setOpen(true); });
+  // The row opens the call wherever it is pressed, the disclosure glyph beside the copy button included; presses on the
+  // buttons themselves are theirs alone.
+  const toggleRow = (event: MouseEvent) => { if (!(event.target instanceof Element && event.target.closest("button"))) setOpen(!open()); };
   return <section class={`tool-card ${props.result?.is_error ? "tool-card-error" : ""}`}>
-    <button class="tool-summary" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => { setOpen(!open()); }}><ToolLabel block={props.block} status={status()} /><span class="tool-disclosure" aria-hidden="true">{open() ? "−" : "+"}</span></button>
+    <div class="tool-head" onClick={toggleRow}>
+      <button class="tool-summary" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => { setOpen(!open()); }}><ToolLabel block={props.block} status={status()} previewId={previewId} /></button>
+      <ToolCopy block={props.block} describedBy={previewId} />
+      <span class="tool-disclosure" aria-hidden="true">{open() ? "−" : "+"}</span>
+    </div>
     <Show when={props.subagents && /^(agent|task)$/i.test(props.block.name || "")}>
       <div class="tool-subagent-link"><Show when={recording()} fallback={<span class="family-note">{props.subagents?.pending ? "Finding linked recording…" : props.subagents?.failed ? "Linked recordings unavailable. Retry from Session family." : "No linked recording available."}</span>}>{target => <>
         <span class="tool-subagent-title" title={target().label}><Icon name="branch" size={14} />{target().label}</span>
@@ -213,10 +248,11 @@ function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?
 // A result shown apart from its call, as in the Errors view or when the call is on another page, names that call above
 // its output so the reader sees what failed and not only how.
 function ToolResult(props: { block: ContentBlock; call?: ContentBlock; highlight?: string }) {
+  const previewId = createUniqueId();
   const images = () => contentImages(props.block.content);
   const value = () => contentToText(props.block.content) || (images().length ? "" : prettyValue(props.block.content ?? props.block));
   const output = () => <><Show when={value()}><CodePanel title={props.block.is_error ? "Recorded tool error" : "Recorded tool result"} value={value()} highlight={props.highlight} /></Show><For each={images()}>{(block) => <Attachment block={block} label="Recorded image result" />}</For></>;
-  return <section class={`tool-card tool-result ${props.block.is_error ? "tool-card-error" : ""}`}><Show when={props.call} fallback={output()}>{call => <><div class="tool-summary tool-result-call"><ToolLabel block={call()} status={props.block.is_error ? "error" : "success"} /></div><div class="tool-content">{output()}</div></>}</Show></section>;
+  return <section class={`tool-card tool-result ${props.block.is_error ? "tool-card-error" : ""}`}><Show when={props.call} fallback={output()}>{call => <><div class="tool-head"><div class="tool-summary tool-result-call"><ToolLabel block={call()} status={props.block.is_error ? "error" : "success"} previewId={previewId} /></div><ToolCopy block={call()} describedBy={previewId} /></div><div class="tool-content">{output()}</div></>}</Show></section>;
 }
 
 function HiddenReasoning(props: { label: string; detail: string }) {

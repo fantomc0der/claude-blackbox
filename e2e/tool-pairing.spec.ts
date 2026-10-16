@@ -20,7 +20,7 @@ test("the Tools tab shows each call once, with its result inside the call's card
   await expect(page.locator(".replay-event-tool-result")).toHaveCount(0);
   // The recording runs this command twice: once failing, then again after the fix.
   await expect(page.locator("button.tool-summary", { hasText: "bun test ledger --filter large-export" })).toHaveCount(2);
-  const failing = page.locator(".tool-card-error > button.tool-summary", { hasText: "bun test ledger --filter large-export" });
+  const failing = page.locator(".tool-card-error > .tool-head > button.tool-summary", { hasText: "bun test ledger --filter large-export" });
   await expect(failing).toHaveCount(1);
   await expect(failing).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator(".tool-code", { hasText: "Timed out after 30000ms" })).toHaveCount(1);

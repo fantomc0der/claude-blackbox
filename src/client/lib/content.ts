@@ -44,8 +44,32 @@ export function isToolResultEvent(event: Pick<ReplayEvent, "blocks">): boolean {
   return event.blocks.length > 0 && event.blocks.every(block => block.type === "tool_result");
 }
 
-const previewKeys = ["command", "file_path", "path", "query", "pattern", "description", "prompt"];
-const pathPreviewKeys = new Set(["file_path", "path"]);
+// The command, path, query, or pattern a call was made with, in the order the summary row prefers them. The row also
+// previews a delegated task's description or prompt, which are not arguments to copy.
+const argumentKeys = ["command", "file_path", "notebook_path", "path", "query", "pattern"] as const;
+const argumentKinds: Record<(typeof argumentKeys)[number], ToolArgumentKind> = { command: "command", file_path: "path", notebook_path: "path", path: "path", query: "query", pattern: "pattern" };
+const previewKeys: readonly string[] = [...argumentKeys, "description", "prompt"];
+const pathPreviewKeys = new Set(["file_path", "notebook_path", "path"]);
+
+function firstInputKey<Key extends string>(input: Record<string, unknown>, keys: readonly Key[]): Key | undefined {
+  return keys.find(candidate => {
+    const value = input[candidate];
+    return typeof value === "string" && value.trim() !== "";
+  });
+}
+
+export type ToolArgumentKind = "command" | "path" | "query" | "pattern";
+
+// The recorded argument the summary row previews, whole: escape sequences and control characters are dropped and the
+// ends trimmed, as the code panels' Copy cleans their text, but inner whitespace stays so a multi-line command copies
+// intact. Absent when the call has no such argument, or only escape codes.
+export function toolArgument(block: ContentBlock): { kind: ToolArgumentKind; value: string } | undefined {
+  const input = getToolInput(block);
+  const key = firstInputKey(input, argumentKeys);
+  if (!key) return undefined;
+  const value = stripAnsi(input[key] as string).trim();
+  return value ? { kind: argumentKinds[key], value } : undefined;
+}
 
 // The cap only bounds pathological inputs such as long heredocs; the summary
 // row's CSS ellipsis decides how much of this the current viewport shows.
@@ -53,10 +77,7 @@ const pathPreviewKeys = new Set(["file_path", "path"]);
 // while the directory gives up space first.
 export function toolPreviewParts(block: ContentBlock): { head: string; tail: string } {
   const input = getToolInput(block);
-  const key = previewKeys.find(candidate => {
-    const value = input[candidate];
-    return typeof value === "string" && value.trim() !== "";
-  });
+  const key = firstInputKey(input, previewKeys);
   if (!key) return { head: "", tail: "" };
   const value = stripAnsi(input[key] as string).replace(/\s+/g, " ").trim();
   if (!pathPreviewKeys.has(key)) return { head: truncate(value, 1000), tail: "" };
