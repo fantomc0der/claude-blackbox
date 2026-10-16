@@ -34,5 +34,6 @@ test("recorded escape sequences style terminal output and leave prose without bo
 
   await page.getByRole("button", { name: "Copy", exact: true }).nth(1).click();
   await expect(page.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("✓ renders styled output\nwarning and truecolor inverse\nplain tail");
+  // Windows hands clipboard text back with CRLF line endings.
+  expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n")).toBe("✓ renders styled output\nwarning and truecolor inverse\nplain tail");
 });
