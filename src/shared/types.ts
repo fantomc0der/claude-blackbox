@@ -208,7 +208,10 @@ export interface SummaryChange extends SummaryRecord { tool: string; error: bool
  */
 export interface SummaryFile { path: string; display: string; count: number; errors: number; changes: SummaryChange[] }
 
-/** A file the recording read but never changed, pointing at its first read. `folder` is its containing folder or "". */
+/**
+ * A file the recording read but never changed, pointing at its first read. `folder` is its containing folder or
+ * scratchpad directory, or "".
+ */
 export interface SummaryRead extends SummaryRecord { path: string; display: string; folder: string; reads: number }
 
 /**
@@ -218,11 +221,19 @@ export interface SummaryRead extends SummaryRecord { path: string; display: stri
 export interface SummaryFolder { path: string; working: SummaryRecord | null; added: SummaryRecord | null; files: SummaryFile[] }
 
 /**
- * The files a recording changed and read, grouped under the folders it worked in. `other` holds changed files outside
- * every folder. The totals count every file even when a list stops at its limit, which `limited` reports.
+ * A scratchpad directory Claude Code keeps for a session's temporary files, with the files the recording changed in it.
+ * `path` is the scratchpad directory itself, and each file's `display` is relative to it.
+ */
+export interface SummaryScratchpad { path: string; files: SummaryFile[] }
+
+/**
+ * The files a recording changed and read, grouped under the folders it worked in. `scratchpads` holds the changed files
+ * inside Claude Code's per-session scratchpad directories, and `other` the changed files outside every folder and
+ * scratchpad. The totals count every file even when a list stops at its limit, which `limited` reports.
  */
 export interface SessionSummary {
   folders: SummaryFolder[];
+  scratchpads: SummaryScratchpad[];
   other: SummaryFile[];
   read: SummaryRead[];
   changedFiles: number;
