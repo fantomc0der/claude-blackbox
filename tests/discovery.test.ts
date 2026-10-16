@@ -254,18 +254,19 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   // Indexes written before version 8 read each copy's blocks, so the copied call took over the original's tool link.
   before.db.query("UPDATE tool_calls SET event_row=(SELECT rowid FROM events WHERE session_id=? AND type='api-request-blob' ORDER BY sequence LIMIT 1)").run(copied.id);
   before.db.query("UPDATE sessions SET tools=2 WHERE id=?").run(copied.id);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
   before.db.exec("PRAGMA user_version=7");
   await before.close();
   // Finding those recordings reads every event, so opening leaves it to the first scan, after the server binds its port.
   const after = await setup.open({ scan: false });
   const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const rows = (id: string) => after.db.query<{ rowid: number }, [string]>("SELECT rowid FROM events WHERE session_id=? ORDER BY sequence").all(id).map(row => row.rowid);
-  const [copiedRows, plainRows] = [rows(copied.id), rows(plain.id)];
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
   expect(version()).toBe(8);
-  expect(rows(copied.id)).not.toEqual(copiedRows);
-  expect(rows(plain.id)).toEqual(plainRows);
+  expect(cwds(copied.id)).not.toContain("/synthetic/stale");
+  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
   expect(after.getSession(copied.id)?.toolCount).toBe(1);
 });
