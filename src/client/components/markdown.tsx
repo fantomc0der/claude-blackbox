@@ -1,6 +1,7 @@
 import { createMemo, createSignal, onSettled } from "solid-js";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
+import { stripAnsi } from "../../shared/ansi";
 
 interface MarkdownProps {
   content: string;
@@ -64,7 +65,9 @@ export function Markdown(props: MarkdownProps) {
   const html = createMemo(() => {
     const renderer = new marked.Renderer();
     renderer.image = ({ text }) => `<span data-blocked-image="true">Image blocked${text ? `: ${escapeHtml(text)}` : ""}</span>`;
-    const parsed = marked.parse(props.content, { async: false, gfm: true, breaks: false, renderer }) as string;
+    // Local command output reaches prose with its terminal styling codes; stripping them first keeps marked from reading
+    // their brackets as link syntax and keeps the control characters, which browsers draw as boxes, out of the DOM.
+    const parsed = marked.parse(stripAnsi(props.content), { async: false, gfm: true, breaks: false, renderer }) as string;
     const sanitized = DOMPurify.sanitize(parsed, {
       ALLOWED_TAGS: ["a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "span", "strong", "table", "tbody", "td", "th", "thead", "tr", "ul"],
       ALLOWED_ATTR: ["data-blocked-image", "href", "rel", "target", "title"],

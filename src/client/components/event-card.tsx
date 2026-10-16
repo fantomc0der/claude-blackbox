@@ -21,7 +21,8 @@ import {
   toolTitle,
   truncate,
 } from "../lib/content";
-import { jsonSegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
+import { jsonSegments, overlaySegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
+import { terminalRuns } from "../../shared/ansi";
 import { Markdown } from "./markdown";
 import { Highlight } from "./highlight";
 import { Icon, type IconName } from "./icon";
@@ -73,20 +74,29 @@ function CopyButton(props: { value: string; label?: string }) {
   return <button class="replay-copy" type="button" onClick={copy} aria-live="polite" aria-label={label()}>{label()}</button>;
 }
 
+// Recorded output keeps the terminal's escape sequences; the panel shows their SGR styling and drops the rest, so the
+// text it measures, previews, and copies is the clean text the segments concatenate to. JSON panels highlight the
+// tokens of that clean text on top of the styling.
 function CodePanel(props: { title: string; value: string; terminal?: boolean; highlight?: string; json?: boolean }) {
   const [open, setOpen] = createSignal(false);
-  const segments = createMemo((): TextSegment[] => props.json ? jsonSegments(props.value) : [{ text: props.value }]);
+  const parsed = createMemo((): { text: string; segments: TextSegment[] } => {
+    const runs = terminalRuns(props.value);
+    const text = runs.map(run => run.text).join("");
+    return { text, segments: props.json ? overlaySegments(runs, jsonSegments(text)) : runs };
+  });
+  const segments = () => parsed().segments;
+  const text = () => parsed().text;
   const preview = () => {
-    if (open() || props.value.length <= 1800) return segments();
-    const match = props.highlight ? props.value.toLowerCase().indexOf(props.highlight.toLowerCase()) : 0;
+    if (open() || text().length <= 1800) return segments();
+    const match = props.highlight ? text().toLowerCase().indexOf(props.highlight.toLowerCase()) : 0;
     const start = Math.max(0, match - 450);
     return [...(start ? [{ text: "…\n" }] : []), ...sliceSegments(segments(), start, start + 1800), { text: "\n… expand for full output …" }];
   };
   return (
     <section class={`tool-code ${props.terminal ? "tool-terminal" : ""}`}>
-      <header><span>{props.title}</span><CopyButton value={props.value} /></header>
+      <header><span>{props.title}</span><CopyButton value={text()} /></header>
       <pre><code><Highlight segments={preview()} term={props.highlight || ""} /></code></pre>
-      <Show when={props.value.length > 1800}>
+      <Show when={text().length > 1800}>
         <button class="replay-text-button tool-output-toggle" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => setOpen(!open())}>{open() ? "Show less" : "Show full output"}</button>
       </Show>
     </section>

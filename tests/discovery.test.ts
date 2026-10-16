@@ -175,7 +175,28 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(6);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(7);
+});
+
+test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
+  const setup = await fixture();
+  const styled = "Added \u001b[1mC:\\code\\app\u001b[22m as a working directory \u001b[2m· /permissions\u001b[22m";
+  await setup.write("styled-title", [record(`<local-command-stdout>${styled}</local-command-stdout>`)]);
+  await setup.write("named", [record("Prompt", { customTitle: "Custom  title" })]);
+  const before = await setup.open();
+  const sessions = before.list(new URLSearchParams()).items;
+  const session = sessions.find(item => item.title.startsWith("Added"))!, named = sessions.find(item => item.title === "Custom  title")!;
+  expect(session.title).toBe("Added C:\\code\\app as a working directory · /permissions");
+  // Indexes written before version 7 stored the escape bytes the terminal recorded.
+  before.db.query("UPDATE sessions SET title=? WHERE id=?").run(styled, session.id);
+  before.db.exec("PRAGMA user_version=6");
+  await before.close();
+  const after = await Recorder.open(setup.data, join(setup.root, "state"), { scan: false });
+  cleanup.push(() => after.close());
+  expect(after.getSession(session.id)?.title).toBe("Added C:\\code\\app as a working directory · /permissions");
+  expect(after.getSession(named.id)?.title).toBe("Custom  title");
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(7);
+  expect(after.db.query<{ identity: string }, [string]>("SELECT identity FROM sessions WHERE id=?").get(session.id)!.identity).not.toBe("");
 });
 
 test("full-session replay filters precede pagination and context keeps original sequence", async () => {

@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, flush, For, Show, untrack } from "solid-js";
 import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, SessionFamily } from "../../shared/types";
+import { stripAnsi } from "../../shared/ansi";
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
@@ -42,8 +43,8 @@ function outlineBody(event: ReplayEvent): string {
   const prose = (event.blocks.find(block => block.type === "text")?.text || "").replace(/<[^>]+>/g, " ").replace(/^\s*#{1,6}\s+/gm, "").replace(/\s+/g, " ").trim();
   const call = event.blocks.find(block => block.type === "tool_use");
   const result = event.blocks.find(block => block.type === "tool_result");
-  const body = prose || (call ? toolPreview(call) || firstValue(getToolInput(call)) : "")
-    || (result ? contentToText(result.content).replace(/\s+/g, " ").trim() : "");
+  const body = stripAnsi(prose || (call ? toolPreview(call) || firstValue(getToolInput(call)) : "")
+    || (result ? contentToText(result.content).replace(/\s+/g, " ").trim() : "")).trim();
   return body && body !== outlineLabel(event) ? truncate(body, 100) : event.type;
 }
 

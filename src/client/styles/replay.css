@@ -17,6 +17,19 @@
 .tool-code .json-boolean { color: #c4a8ee; }
 .tool-code .json-null { color: #a89bbd; }
 .tool-code .json-punctuation { color: #8b9494; }
+/* The 16 named terminal colors, each at or above 4.5:1 against the code panel; 256-color and 24-bit colors are shown as recorded. */
+:root { --ansi-0: #8b9494; --ansi-1: #f08b80; --ansi-2: #a9d57a; --ansi-3: #e0c56e; --ansi-4: #8fc1e3; --ansi-5: #d2a6ea; --ansi-6: #7fd0cc; --ansi-7: #d6d9d3; --ansi-8: #a0a8a8; --ansi-9: #ff9f94; --ansi-10: #c7ee79; --ansi-11: #f1dc8a; --ansi-12: #a9d4f2; --ansi-13: #e2bdf6; --ansi-14: #9ae4e0; --ansi-15: #ffffff; }
+.tool-code pre, .tool-thinking pre { --terminal-fg: #d6d9d3; --terminal-bg: #101214; }
+.tool-terminal pre { --terminal-fg: #d7ecbd; }
+.ansi-bold { font-weight: 700; }
+.ansi-dim { opacity: .65; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+.ansi-strike { text-decoration: line-through; }
+.ansi-underline.ansi-strike { text-decoration: underline line-through; }
+.ansi-fg { color: var(--ansi-fg); }
+.ansi-bg { background: var(--ansi-bg); }
+.ansi-inverse { color: var(--ansi-bg, var(--terminal-bg)); background: var(--ansi-fg, var(--terminal-fg)); }
 .replay-event-body > *, .tool-content, .tool-code, .tool-diff { min-width: 0; }
 .tool-code > .tool-output-toggle {
   display: flex;

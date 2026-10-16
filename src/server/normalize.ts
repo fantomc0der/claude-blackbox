@@ -1,3 +1,4 @@
+import { stripAnsi } from "../shared/ansi";
 import type { ContentBlock, ReplayEvent } from "../shared/types";
 
 export function object(value: unknown): Record<string, unknown> {
@@ -80,13 +81,13 @@ function plainValues(value: unknown): string {
 }
 
 export function displayText(blocks: ContentBlock[]): string {
-  return blocks.map(block => {
+  return stripAnsi(blocks.map(block => {
     if (block.type === "text") return string(block.text);
     if (block.type === "thinking") return string(block.thinking);
     if (block.type === "tool_use") return plainValues(block.input);
     if (block.type === "tool_result") return Array.isArray(block.content) ? displayText(block.content) : plainValues(block.content);
     return "";
-  }).filter(Boolean).join(" ").replaceAll("|", " ").replace(/\s+/g, " ").trim();
+  }).filter(Boolean).join(" ")).replaceAll("|", " ").replace(/\s+/g, " ").trim();
 }
 
 export function termPattern(term: string): RegExp | null {
@@ -110,7 +111,7 @@ export function displaySnippet(raw: string, term: string, words = 28): string {
 
 export function promptTitle(event: ReplayEvent): string {
   if (event.role !== "user") return "";
-  return event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" ")
+  return stripAnsi(event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" "))
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, " ")
     .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
 }

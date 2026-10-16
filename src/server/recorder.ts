@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
+import { stripAnsi } from "../shared/ansi";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -212,7 +213,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 6) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 7) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -235,6 +236,15 @@ export class Recorder {
       CREATE INDEX IF NOT EXISTS events_tools ON events(session_id,tools);
       CREATE INDEX IF NOT EXISTS usage_efforts ON usage_records(effort);`);
     if (!hasResults || !hasFacets || version < 6) db.exec("UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=6;");
+    // Version 7 keeps terminal escape sequences out of titles. Unchanged recordings are never rescanned, so titles
+    // derived earlier are cleaned where they are instead of re-indexing every recording for a few bytes of styling.
+    if (version < 7) db.transaction(() => {
+      const update = db.query("UPDATE sessions SET title=? WHERE id=?");
+      for (const row of db.query<{ id: string; title: string }, []>("SELECT id, title FROM sessions").all()) {
+        if (stripAnsi(row.title) !== row.title) update.run(stripAnsi(row.title).replace(/\s+/g, " ").trim(), row.id);
+      }
+      db.exec("PRAGMA user_version=7");
+    })();
     const interrupted = db.query<{ id: string }, []>("SELECT id FROM sessions WHERE events != (SELECT count(*) FROM events WHERE session_id=sessions.id)").all();
     for (const row of interrupted) db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(row.id);
   }
@@ -742,7 +752,7 @@ export class Recorder {
           FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ? AND e.session_id=? ORDER BY rank LIMIT 1`)
           .get(ftsPhrase(positive.value), row.id);
         if (match) {
-          session.snippet = (match.raw.length > snippetLimit ? "" : displaySnippet(match.raw, positive.value)) || match.snippet;
+          session.snippet = (match.raw.length > snippetLimit ? "" : displaySnippet(match.raw, positive.value)) || stripAnsi(match.snippet);
           session.matchEventId = match.event_id;
           // The replay chooses its opening view from these, since the view decides which records the anchor offset counts.
           session.matchCategory = match.category;

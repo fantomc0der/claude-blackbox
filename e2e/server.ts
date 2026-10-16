@@ -64,6 +64,16 @@ await writeFile(join(folder, "folded-only-find.jsonl"), [
   handoffResult(2, "folded-call-2", "Quarrystone ok"),
   event("Finished reading the log.", 3, "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Local command output and a Bash result that carry the terminal's escape sequences, which browsers would draw as boxes.
+const sgr = (code: string) => `\u001b[${code}m`;
+export const terminalProse = "Added C:\\code\\csii\\ingest-dealer-config as a working directory for this session · /permissions to manage";
+await writeFile(join(folder, "terminal-styling.jsonl"), [
+  event("Terminal styling verification", 0),
+  event("<command-name>/add-dir</command-name><command-message>add-dir</command-message><command-args>C:\\code\\csii\\ingest-dealer-config</command-args>", 1),
+  event(`<local-command-stdout>Added ${sgr("1")}C:\\code\\csii\\ingest-dealer-config${sgr("22")} as a working directory for this session ${sgr("2")}· /permissions to manage${sgr("22")}</local-command-stdout>`, 2),
+  handoffCall(3, "terminal-call-1", "bun test tests/terminal.test.ts"),
+  handoffResult(4, "terminal-call-1", `${sgr("32")}✓${sgr("0")} renders ${sgr("1;4")}styled${sgr("0")} output\n${sgr("38;5;208")}warning${sgr("39")} and ${sgr("38;2;200;100;50")}truecolor${sgr("0")} ${sgr("7")}inverse${sgr("0")}\n\u001b]0;window title\u0007plain tail\u001b[2K\u001b[1A`),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "system-interleaved-recording.jsonl"), Array.from({ length: 70 }, (_, index) => JSON.stringify(event(index ? `Interleaved event ${index}` : "System interleaved verification", index, index > 0 && index <= 5 ? "system" : index % 2 ? "assistant" : "user"))).join("\n") + "\n");
 await writeFile(join(folder, "filtered-live-recording.jsonl"), JSON.stringify(event("Filtered live verification", 0)) + "\n");
 await writeFile(join(folder, "unsafe-markdown.jsonl"), [event("Unsafe markdown verification", 0), event('<script>window.blackboxXss = true</script><img src="https://blocked.invalid/pixel" onerror="window.blackboxXss = true"><p class="nav-scrim">Untrusted styling</p>\n[Unsafe](javascript:alert(1))\n![Remote image](https://blocked.invalid/image)\n## Safe content', 1, "assistant")].map(record => JSON.stringify(record)).join("\n") + "\n");
