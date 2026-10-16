@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { folderName, localDayOffset, modelName, recordedRange, resumeCommand, searchHighlight, timeAgo, withLocalDays } from "../src/client/lib/format";
+import { folderLabels, folderName, localDayOffset, modelName, recordedRange, resumeCommand, searchHighlight, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
 
 test("search highlights use the term the server matched records with", () => {
@@ -53,6 +53,11 @@ test("folder names take the last path segment on either separator", () => {
   expect(folderName("/synthetic/workspaces/orbit-auth")).toBe("orbit-auth");
   expect(folderName("C:\\work\\orbit-auth\\")).toBe("orbit-auth");
   expect(folderName("")).toBe("Unknown folder");
+});
+
+test("folder labels add parent segments only until folders that share a name differ", () => {
+  const labels = folderLabels(["/a/packages/shared", "/b/packages/shared", "C:\\work\\app", "/srv/app", "/srv/api", "/"]);
+  expect([...labels.values()]).toEqual(["a/packages/shared", "b/packages/shared", "work\\app", "srv/app", "api", "/"]);
 });
 
 test("resume commands quote POSIX and PowerShell paths as literal arguments", () => {

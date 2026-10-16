@@ -1,24 +1,12 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { SessionSummary, SummaryFile, SummaryRead, SummaryRecord } from "../../shared/types";
 import { formatEventTime } from "../lib/content";
-import { folderName } from "../lib/format";
+import { folderLabels, folderName } from "../lib/format";
 import { Icon } from "./icon";
 
 function splitPath(display: string): { name: string; dir: string } {
   const split = Math.max(display.lastIndexOf("/"), display.lastIndexOf("\\"));
   return { name: display.slice(split + 1) || display, dir: split > 0 ? display.slice(0, split) : "" };
-}
-
-// Folders are named by their last segment; two that share one are named by their last two instead.
-function folderLabels(paths: string[]): Map<string, string> {
-  const labels = new Map(paths.map(path => [path, folderName(path)]));
-  const uses = new Map<string, number>();
-  for (const label of labels.values()) uses.set(label, (uses.get(label) ?? 0) + 1);
-  for (const path of paths) {
-    if ((uses.get(labels.get(path)!) ?? 0) < 2) continue;
-    labels.set(path, path.replace(/[\\/]+$/, "").split(/[\\/]/).slice(-2).join(path.includes("\\") ? "\\" : "/"));
-  }
-  return labels;
 }
 
 const plural = (count: number, word: string) => `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;

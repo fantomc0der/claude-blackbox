@@ -80,6 +80,17 @@ export function folderName(path: string): string {
   return path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || "Unknown folder";
 }
 
+/** Short names for a set of folders: each takes its last segment, plus as many parent segments as tell it apart. */
+export function folderLabels(paths: string[]): Map<string, string> {
+  const segments = new Map(paths.map(path => [path, path.replace(/[\\/]+$/, "").split(/[\\/]/)]));
+  const label = (path: string, depth: number) => segments.get(path)!.slice(-depth).join(path.includes("\\") ? "\\" : "/") || path;
+  return new Map(paths.map(path => {
+    let depth = 1;
+    while (depth < segments.get(path)!.length && paths.some(other => other !== path && label(other, depth) === label(path, depth))) depth++;
+    return [path, label(path, depth)];
+  }));
+}
+
 export function modelName(model: string): string {
   if (!model || model === "<synthetic>") return "Model not recorded";
   const variant = model.match(/\[[^\]]*\]$/)?.[0] ?? "";
