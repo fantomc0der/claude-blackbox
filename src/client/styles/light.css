@@ -24,6 +24,7 @@
   --light-shadow: #2628251f;
   --theme-selected-text: var(--light-on-accent);
   --theme-selected-surface: var(--accent);
+  --ansi-0: #262825; --ansi-1: #9a3b30; --ansi-2: #3d6b2e; --ansi-3: #7a5a16; --ansi-4: #1f5a8a; --ansi-5: #6b3fa0; --ansi-6: #0f6e6e; --ansi-7: #5c5f5a; --ansi-8: #4a4d48; --ansi-9: #8a2f25; --ansi-10: #405a38; --ansi-11: #6a4e12; --ansi-12: #1a4f7a; --ansi-13: #5e3590; --ansi-14: #0b5f5f; --ansi-15: #262825;
 
   input, select, textarea { background: var(--surface); border-color: var(--line); color: var(--text); }
   input::placeholder { color: var(--muted); }
@@ -119,6 +120,7 @@
   .tool-code .json-boolean { color: #0f6e6e; }
   .tool-code .json-null { color: #6e4f85; }
   .tool-code .json-punctuation { color: var(--muted); }
+  .tool-code pre, .tool-thinking pre { --terminal-fg: var(--text); --terminal-bg: var(--light-inset); }
   .tool-diff-added { color: var(--light-success); background: var(--light-success-surface); }
   .tool-diff-removed { color: var(--danger); background: var(--light-error-surface); }
   .tool-thinking { background: var(--light-inset); border-color: var(--line); }

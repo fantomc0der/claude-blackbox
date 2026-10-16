@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
+import { stripAnsi } from "../shared/ansi";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -742,7 +743,7 @@ export class Recorder {
           FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ? AND e.session_id=? ORDER BY rank LIMIT 1`)
           .get(ftsPhrase(positive.value), row.id);
         if (match) {
-          session.snippet = (match.raw.length > snippetLimit ? "" : displaySnippet(match.raw, positive.value)) || match.snippet;
+          session.snippet = (match.raw.length > snippetLimit ? "" : displaySnippet(match.raw, positive.value)) || stripAnsi(match.snippet);
           session.matchEventId = match.event_id;
           // The replay chooses its opening view from these, since the view decides which records the anchor offset counts.
           session.matchCategory = match.category;

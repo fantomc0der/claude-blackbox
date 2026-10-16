@@ -1,8 +1,12 @@
+import type { TerminalStyle } from "../../shared/ansi";
+
 export type JsonTokenKind = "key" | "string" | "number" | "boolean" | "null" | "punctuation";
 
 export interface TextSegment {
   text: string;
   kind?: JsonTokenKind;
+  /** Styling from the ANSI SGR sequences around this run of recorded terminal output. */
+  terminal?: TerminalStyle;
 }
 
 /** A run of consecutive segments that are all inside, or all outside, a search match. */
@@ -176,7 +180,7 @@ export function sliceSegments(segments: TextSegment[], start: number, end: numbe
     const segmentEnd = offset + segment.text.length;
     if (segmentEnd > start && offset < end) {
       const text = segment.text.slice(Math.max(0, start - offset), Math.min(segment.text.length, end - offset));
-      if (text) result.push(segment.kind ? { text, kind: segment.kind } : { text });
+      if (text) result.push({ ...segment, text });
     }
     offset = segmentEnd;
     if (offset >= end) break;
@@ -192,7 +196,7 @@ export function markSegments(segments: TextSegment[], term: string): MarkedRun[]
   const result: MarkedRun[] = [];
   const push = (segment: TextSegment, text: string, match: boolean) => {
     if (!text) return;
-    const piece = segment.kind ? { text, kind: segment.kind } : { text };
+    const piece = { ...segment, text };
     const last = result[result.length - 1];
     if (last && last.match === match) last.segments.push(piece);
     else result.push({ match, segments: [piece] });

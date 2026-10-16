@@ -1,4 +1,5 @@
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
+import { stripAnsi } from "../../shared/ansi";
 import { diffLines } from "diff";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,7 +58,7 @@ export function toolPreviewParts(block: ContentBlock): { head: string; tail: str
     return typeof value === "string" && value.trim() !== "";
   });
   if (!key) return { head: "", tail: "" };
-  const value = (input[key] as string).replace(/\s+/g, " ").trim();
+  const value = stripAnsi(input[key] as string).replace(/\s+/g, " ").trim();
   if (!pathPreviewKeys.has(key)) return { head: truncate(value, 1000), tail: "" };
   const split = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\")) + 1;
   const head = value.slice(0, split), tail = truncate(value.slice(split), 1000), room = 1000 - tail.length;
