@@ -45,7 +45,7 @@ bun start --state-dir .blackbox/review-state --port 12004
 - Solid and `@solidjs/web` are pinned to the same Solid 2 prerelease, with a matching compiler plugin. Upgrade the runtime, renderer, and plugin together.
 - Browser tests use Bun's test runner and an installed Microsoft Edge through Playwright. Do not replace them with Playwright's Node test runner without intentionally redesigning the harness.
 - `src-tauri/binaries`, `src-tauri/gen`, `src-tauri/target`, and `dist` are generated. Only the `.gitkeep`, Tauri source/configuration, Cargo lockfile, and selected desktop icons belong in git.
-- Tauri requires a target-suffixed sidecar name. `scripts/build-sidecar.ts` maps Rust target triples to Bun compile targets and embeds `dist`; update both sides together when adding a platform.
+- Tauri requires a target-suffixed sidecar name. `scripts/build-sidecar.ts` maps Rust target triples to Bun compile targets and embeds `dist`; update both sides together when adding a platform, and list the platform's updater bundles in `scripts/updater-manifest.ts` or the release workflow's `updater manifest` job will fail.
 
 ## Validation And Releases
 
