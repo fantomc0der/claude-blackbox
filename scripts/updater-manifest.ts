@@ -50,6 +50,12 @@ export async function buildUpdaterManifest(
   if (missing.length) {
     throw new Error(`Cannot write latest.json for ${release.version}: the release is missing ${missing.join(", ")}.`);
   }
+  // A signed bundle without a target here would ship with no updates, such as after adding a build platform.
+  const signatures = new Set(bundles.map(({ asset }) => `${asset}.sig`));
+  const unlisted = [...assets.keys()].filter(name => name.endsWith(".sig") && !signatures.has(name));
+  if (unlisted.length) {
+    throw new Error(`Cannot write latest.json for ${release.version}: no updater target is listed for ${unlisted.join(", ")}.`);
+  }
 
   const platforms: UpdaterManifest["platforms"] = {};
   for (const { target, bundle, asset } of bundles) {

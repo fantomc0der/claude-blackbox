@@ -70,6 +70,17 @@ test("updater manifest names every missing bundle and signature before downloadi
   expect(downloads).toEqual([]);
 });
 
+test("updater manifest rejects a signed bundle that has no updater target", async () => {
+  const downloads: string[] = [];
+  const windowsArm = "claude-blackbox_1.0.2_arm64-setup.exe";
+  const result = buildUpdaterManifest(release([...allAssets, windowsArm, `${windowsArm}.sig`]), async signature => {
+    downloads.push(signature.name);
+    return "signature";
+  });
+  await expect(result).rejects.toThrow(`no updater target is listed for ${windowsArm}.sig.`);
+  expect(downloads).toEqual([]);
+});
+
 test("updater manifest rejects an empty signature", async () => {
   const result = buildUpdaterManifest(release(allAssets), async signature =>
     signature.name.endsWith("_x64-setup.exe.sig") ? "\n" : "signature"
