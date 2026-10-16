@@ -62,6 +62,18 @@ test("pairs a page's results with their calls in both directions", async () => {
   expect(all.calls.probe.name).toBe("Bash");
 });
 
+test("serves a recording's file summary with positions under the replay filters", async () => {
+  const { handler, id } = await setup([
+    { type: "user", cwd: "/work/example", message: { content: "Hello" } },
+    { type: "assistant", cwd: "/work/example", message: { role: "assistant", content: [{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "src/a.ts", old_string: "a", new_string: "b" } }] } },
+  ]);
+  const summary = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=all`))).json();
+  expect(summary).toMatchObject({ folders: [{ path: "/work/example", added: null, files: [{ path: "/work/example/src/a.ts", display: "src/a.ts", changes: [{ tool: "Edit", error: false, position: 1 }] }] }], changedFiles: 1 });
+  const prompts = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=prompts`))).json();
+  expect(prompts.folders[0].files[0].changes[0].position).toBeNull();
+  expect((await handler(new Request(`http://127.0.0.1:12001/api/sessions/${"0".repeat(24)}/summary`))).status).toBe(404);
+});
+
 test("SSE sends a fresh invalidation on reconnect and releases listeners", async () => {
   const { handler, recorder } = await setup();
   const response = await handler(new Request("http://127.0.0.1:12001/api/live"));

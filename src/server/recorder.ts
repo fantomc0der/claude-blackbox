@@ -2,13 +2,14 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
+import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
+import { addedDirectory, buildSummary, changeTools, contentBlocks, isAddDirCommand, placeSummary, recordText, summaryRecordIds, type SummaryCall, type SummaryRoot } from "./summary";
 
 const timelineBucketLimit = 1500;
 const findMatchLimit = 5000;
@@ -207,6 +208,7 @@ export class Recorder {
   private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "facetsLimited"> | null = null;
   private replayFacets = new Map<string, EventPage["facets"]>();
   private replayTimelines = new Map<string, { total: number; rows: TimelineRow[] }>();
+  private replaySummaries = new Map<string, { total: number; summary: SessionSummary }>();
 
   private constructor(dataDir: string, stateDir: string, db: Database) {
     this.dataDir = resolve(dataDir);
@@ -465,7 +467,7 @@ export class Recorder {
 
   private publish(ids: string[]): void {
     this.catalogFacets = null;
-    for (const id of ids) { this.replayFacets.delete(id); this.replayTimelines.delete(id); }
+    for (const id of ids) { this.replayFacets.delete(id); this.replayTimelines.delete(id); this.replaySummaries.delete(id); }
     this.emit(ids);
   }
 
@@ -865,6 +867,70 @@ export class Recorder {
         FROM events e WHERE ${filter}) WHERE found ORDER BY position LIMIT ?`).all(find, ...bindings, limit);
     const total = rows[0]?.total ?? 0;
     return { total, limited: rows.length < total, items: rows.map(({ position, sequence, id }) => ({ position, sequence, id })) };
+  }
+
+  // The files a recording changed and read, grouped under the folders it worked in. The grouping is cached per recording
+  // size like the timeline. Positions follow the request's replay filters, as in `matches()`, so a summary entry opens
+  // the page that holds its record, or reports that the active view hides it.
+  summary(id: string, params: URLSearchParams): SessionSummary {
+    const total = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=?").get(id)!.total;
+    let cached = this.replaySummaries.get(id);
+    if (cached?.total !== total) {
+      cached = { total, summary: this.summaryData(id) };
+      this.replaySummaries.delete(id);
+      if (this.replaySummaries.size >= 32) this.replaySummaries.delete(this.replaySummaries.keys().next().value!);
+      this.replaySummaries.set(id, cached);
+    }
+    const { filter, bindings } = this.eventFilter(id, params);
+    const rows = this.db.query<{ id: string; position: number }, SQLQueryBindings[]>(`SELECT id, position FROM (
+        SELECT e.event_id AS id, row_number() OVER (ORDER BY e.sequence) - 1 AS position FROM events e WHERE ${filter})
+      WHERE id IN (SELECT value FROM json_each(?))`).all(...bindings, JSON.stringify(summaryRecordIds(cached.summary)));
+    return placeSummary(cached.summary, new Map(rows.map(row => [row.id, row.position])));
+  }
+
+  // Inputs are read from each call's own record, one record at a time, because a Write record carries the whole file it
+  // wrote. A result's error flag is found in SQL for the same reason: a Read result carries the whole file it read. The
+  // stored result is serialized JSON, where a quote inside recorded text is always escaped, so the flag cannot be faked.
+  private summaryData(id: string): SessionSummary {
+    const record = (row: { id: string; timestamp: string }): SummaryRecord => ({ id: row.id, position: null, timestamp: row.timestamp });
+    const roots: Array<SummaryRoot & { sequence: number }> = this.db.query<{ cwd: string; id: string; sequence: number; timestamp: string }, [string, string]>(
+      `SELECT e.cwd, e.event_id AS id, e.sequence, e.timestamp FROM events e JOIN (
+        SELECT cwd, min(sequence) AS first FROM events WHERE session_id=? AND cwd!='' GROUP BY cwd) f ON e.cwd=f.cwd AND e.sequence=f.first
+      WHERE e.session_id=?`).all(id, id).map(row => ({ path: row.cwd, added: false, record: record(row), sequence: row.sequence }));
+    // Claude Code records `/add-dir` as a user or system record and its outcome as a following local command output that
+    // names the command as its parentUuid. Assistant text that quotes either is not the command. A recording without
+    // parentUuid links can only pair a command with an output recorded directly after it.
+    const outputs = this.db.query<{ raw: string; sequence: number }, [string, number, number]>(
+      "SELECT raw, sequence FROM events WHERE session_id=? AND sequence>? AND sequence<=? AND role IN ('user','system') AND instr(text,'<local-command-stdout>')>0 ORDER BY sequence");
+    for (const row of this.db.query<{ id: string; sequence: number; timestamp: string; raw: string }, [string]>(
+      "SELECT event_id AS id, sequence, timestamp, raw FROM events WHERE session_id=? AND role IN ('user','system') AND instr(text,'/add-dir')>0 ORDER BY sequence").all(id)) {
+      const command = object(JSON.parse(row.raw));
+      if (!isAddDirCommand(recordText(command))) continue;
+      const candidates = outputs.all(id, row.sequence, row.sequence + 5).map(output => ({ sequence: output.sequence, raw: object(JSON.parse(output.raw)) }));
+      const uuid = string(command.uuid);
+      const output = (uuid ? candidates.find(entry => string(entry.raw.parentUuid) === uuid) : undefined)
+        ?? candidates.find(entry => entry.sequence === row.sequence + 1 && !string(entry.raw.parentUuid));
+      const path = output ? addedDirectory(recordText(output.raw)) : null;
+      if (path) roots.push({ path, added: true, record: record(row), sequence: row.sequence });
+    }
+    roots.sort((left, right) => left.sequence - right.sequence);
+
+    const tools = [...changeTools, "read"];
+    const calls: SummaryCall[] = [];
+    const source = this.db.query<{ raw: string }, [number]>("SELECT raw FROM events WHERE rowid=?");
+    let parsed = null as { row: number; blocks: unknown[] } | null;
+    for (const row of this.db.query<{ toolId: string; name: string; row: number; id: string; timestamp: string; cwd: string; error: number | null }, SQLQueryBindings[]>(
+      `SELECT call.tool_id AS toolId, call.name, call.event_row AS row, e.event_id AS id, e.timestamp, e.cwd, instr(result.raw,'"is_error":true')>0 AS error
+        FROM tool_calls call JOIN events e ON e.rowid=call.event_row
+        LEFT JOIN tool_results result ON result.session_id=call.session_id AND result.tool_id=call.tool_id
+        WHERE call.session_id=? AND lower(call.name) IN (${tools.map(() => "?").join(",")}) ORDER BY e.sequence`).all(id, ...tools)) {
+      if (parsed?.row !== row.row) parsed = { row: row.row, blocks: contentBlocks(JSON.parse(source.get(row.row)?.raw || "{}")) };
+      const block = object(parsed.blocks.find(entry => object(entry).type === "tool_use" && object(entry).id === row.toolId));
+      const input = object(block.input);
+      const path = string(input.file_path) || string(input.notebook_path);
+      if (path) calls.push({ tool: row.name, path, cwd: row.cwd, error: row.error === 1, record: record(row) });
+    }
+    return buildSummary(roots, calls);
   }
 
   // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Undated

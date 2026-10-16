@@ -223,6 +223,42 @@ await writeFile(join(nestedFolder, "agent-family-nested.jsonl"), familyChild("Ne
 const orphanFolder = join(folder, "missing-root", "subagents");
 await mkdir(orphanFolder, { recursive: true });
 await writeFile(join(orphanFolder, "agent-family-orphan.jsonl"), familyChild("Orphan worker", "missing-root", "family-orphan-tool", "missing-parent-event").map(record => JSON.stringify(record)).join("\n") + "\n");
+// The overview's Files changed view: a working folder, two folders added with /add-dir (one left unchanged), an
+// /add-dir that only names a folder inside the working one, a file outside every folder, a Write whose result is an
+// error, reads, and enough prose between them that the later changes sit on the second page.
+const overviewStart = Date.parse("2026-01-04T15:00:00Z");
+let overviewSequence = 0;
+const overviewRecord = (record: Record<string, unknown>) => {
+  const sequence = overviewSequence++;
+  return { uuid: `overview-${sequence}`, cwd: "/synthetic/overview-app", timestamp: new Date(overviewStart + sequence * 60_000).toISOString(), ...record };
+};
+const overviewText = (text: string, type = "user", extra: Record<string, unknown> = {}) => overviewRecord({ type, message: { role: type, content: text, model: "claude-sonnet-4-5" }, ...extra });
+const overviewCall = (id: string, name: string, input: Record<string, unknown>, extra: Record<string, unknown> = {}) => overviewRecord({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }], model: "claude-sonnet-4-5" }, ...extra });
+const overviewResult = (id: string, content: string, is_error = false, extra: Record<string, unknown> = {}) => overviewRecord({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error }] }, ...extra });
+const overviewAddDir = (path: string, output: string) => {
+  const command = overviewText(`<command-name>/add-dir</command-name>\n            <command-message>add-dir</command-message>\n            <command-args>${path}</command-args>`);
+  return [command, overviewText(`<local-command-stdout>${output}</local-command-stdout>`, "user", { parentUuid: command.uuid })];
+};
+await writeFile(join(folder, "overview-files.jsonl"), [
+  overviewText("Overview files verification"),
+  overviewCall("overview-read-1", "Read", { file_path: "/synthetic/overview-app/README.md" }),
+  overviewResult("overview-read-1", "# Overview app"),
+  overviewCall("overview-edit-1", "Edit", { file_path: "src/app.ts", old_string: "const ready = false;", new_string: "const ready = true;" }),
+  overviewResult("overview-edit-1", "The file src/app.ts has been updated."),
+  overviewCall("overview-write-1", "Write", { file_path: "/synthetic/overview-app/src/config/defaults.json", content: "{}" }),
+  overviewResult("overview-write-1", "Permission to write was denied.", true),
+  ...overviewAddDir("/synthetic/overview-shared", `Added ${sgr("1")}/synthetic/overview-shared${sgr("22")} as a working directory for this session ${sgr("2")}· /permissions to manage${sgr("22")}`),
+  ...overviewAddDir("/synthetic/overview-archive", `Added ${sgr("1")}/synthetic/overview-archive${sgr("22")} as a working directory for this session ${sgr("2")}· /permissions to manage${sgr("22")}`),
+  ...overviewAddDir("/synthetic/overview-app/docs", `${sgr("1")}/synthetic/overview-app/docs${sgr("22")} is inside the current working directory ${sgr("1")}/synthetic/overview-app${sgr("22")}; loading its skills`),
+  ...Array.from({ length: 62 }, (_, index) => overviewText(prose(`Overview filler ${index + 1}`), index % 2 ? "user" : "assistant")),
+  overviewCall("overview-edit-2", "Edit", { file_path: "/synthetic/overview-shared/lib/format.ts", old_string: "a", new_string: "b" }),
+  overviewResult("overview-edit-2", "The file has been updated."),
+  overviewCall("overview-edit-3", "MultiEdit", { file_path: "src/app.ts", edits: [{ old_string: "true", new_string: "false" }] }),
+  overviewResult("overview-edit-3", "Applied 1 edit."),
+  overviewCall("overview-edit-4", "Edit", { file_path: "/synthetic/elsewhere/notes.md", old_string: "a", new_string: "b" }),
+  overviewResult("overview-edit-4", "The file has been updated."),
+  overviewText("The overview files are ready.", "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);
