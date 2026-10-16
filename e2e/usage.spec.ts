@@ -89,7 +89,7 @@ test("group expense matrix switches between folders and per-request model effort
 
 test("model matrix preserves unknown prices and missing effort instead of presenting them as free", async ({ page }) => {
   const listing = recorder.list(new URLSearchParams({ q: DEMO_HERO_TITLE }));
-  const usage = { ...listing.usage, costUSD: 0, unpricedRequests: listing.usage.requests };
+  const usage = { ...listing.usage, costUSD: 0, unpricedRequests: listing.usage.requests, unratedRequests: listing.usage.requests };
   await page.route(/\/api\/sessions(?:\?|$)/, route => route.fulfill({ json: {
     ...listing, usage, modelUsage: [{ model: "future-claude-model-with-a-long-unfamiliar-identifier", effort: null, usage }],
   } }));
@@ -98,8 +98,11 @@ test("model matrix preserves unknown prices and missing effort instead of presen
   const matrix = page.locator(".usage-matrix");
   await expect(matrix).toContainText("Not recorded");
   await expect(matrix.locator("tbody")).toContainText("Unavailable");
+  await expect(matrix.locator("tbody")).toContainText("Model not recognized");
   await expect(matrix).not.toContainText("$0.00");
   await expect(page.locator(".usage-body")).toContainText("Cost is incomplete");
+  await expect(page.locator(".usage-body")).toContainText("this version of Claude Blackbox has no rates for yet: future-claude-model-with-a-long-unfamiliar-identifier.");
+  await expect(page.locator(".usage-summary .usage-unrated")).toBeVisible();
   await page.setViewportSize({ width: 320, height: 640 });
   expect(await matrix.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });

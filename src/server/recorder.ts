@@ -7,7 +7,7 @@ import { stripAnsi } from "../shared/ansi";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
-import { addUsage, emptyUsage, normalizeModel, readUsage, usageColumns } from "./usage";
+import { addUsage, emptyUsage, normalizeModel, rateStamp, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
 import { addedDirectory, buildSummary, changeTools, contentBlocks, isAddDirCommand, placeSummary, recordText, summaryRecordIds, type SummaryCall, type SummaryRoot } from "./summary";
 
@@ -71,7 +71,7 @@ const schema = `
     request_key TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL,
     cache_creation INTEGER NOT NULL, cache_read INTEGER NOT NULL, cost REAL,
     recorded INTEGER NOT NULL, sidechain INTEGER NOT NULL,
-    model TEXT NOT NULL DEFAULT '', effort TEXT,
+    model TEXT NOT NULL DEFAULT '', effort TEXT, rates TEXT NOT NULL DEFAULT '', unrated INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(session_id, request_key)
   );
   CREATE TABLE IF NOT EXISTS tool_results (
@@ -225,6 +225,8 @@ export class Recorder {
     const usageFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(usage_records)").all().map(row => row.name));
     if (!usageFields.has("model")) db.exec("ALTER TABLE usage_records ADD COLUMN model TEXT NOT NULL DEFAULT ''");
     if (!usageFields.has("effort")) db.exec("ALTER TABLE usage_records ADD COLUMN effort TEXT");
+    if (!usageFields.has("rates")) db.exec("ALTER TABLE usage_records ADD COLUMN rates TEXT NOT NULL DEFAULT ''");
+    if (!usageFields.has("unrated")) db.exec("ALTER TABLE usage_records ADD COLUMN unrated INTEGER NOT NULL DEFAULT 0");
     const eventFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(events)").all().map(row => row.name));
     for (const field of ["role", "timestamp", "model", "cwd"]) {
       if (!eventFields.has(field)) db.exec(`ALTER TABLE events ADD COLUMN ${field} TEXT NOT NULL DEFAULT ''`);
@@ -249,6 +251,12 @@ export class Recorder {
     })();
     const interrupted = db.query<{ id: string }, []>("SELECT id FROM sessions WHERE events != (SELECT count(*) FROM events WHERE session_id=sessions.id)").all();
     for (const row of interrupted) db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(row.id);
+    // Unchanged recordings are never rescanned, so requests indexed with other rates or rules (or by a build that did
+    // not stamp them) are re-indexed to keep every total on the bundled rates.
+    const stale = db.query<{ model: string; rates: string }, []>("SELECT DISTINCT model, rates FROM usage_records").all()
+      .filter(row => row.rates !== rateStamp(row.model));
+    if (stale.length) db.query(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT session_id FROM usage_records
+      WHERE (model, rates) IN (VALUES ${stale.map(() => "(?,?)").join(",")}))`).run(...stale.flatMap(row => [row.model, row.rates]));
   }
 
   /**
@@ -371,11 +379,13 @@ export class Recorder {
           const insertResult = this.db.query("INSERT OR REPLACE INTO tool_results(session_id,tool_id,raw,event_row) VALUES (?,?,?,?)");
           const insertCall = this.db.query("INSERT OR REPLACE INTO tool_calls(session_id,tool_id,name,event_row) VALUES (?,?,?,?)");
           const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
-          const insertUsage = this.db.query(`INSERT INTO usage_records(session_id,request_key,input,output,cache_creation,cache_read,cost,recorded,sidechain,model,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+          const insertUsage = this.db.query(`INSERT INTO usage_records(session_id,request_key,input,output,cache_creation,cache_read,cost,recorded,sidechain,model,effort,rates,unrated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(session_id,request_key) DO UPDATE SET input=excluded.input, output=excluded.output,
               cache_creation=excluded.cache_creation, cache_read=excluded.cache_read, cost=excluded.cost,
               recorded=excluded.recorded, sidechain=excluded.sidechain,
               model=CASE WHEN excluded.model='' THEN usage_records.model ELSE excluded.model END,
+              rates=CASE WHEN excluded.model='' THEN usage_records.rates ELSE excluded.rates END,
+              unrated=CASE WHEN excluded.model='' THEN usage_records.unrated ELSE excluded.unrated END,
               effort=coalesce(excluded.effort,usage_records.effort)
             WHERE excluded.sidechain < usage_records.sidechain OR (excluded.sidechain = usage_records.sidechain AND
               (excluded.input+excluded.output+excluded.cache_creation+excluded.cache_read > usage_records.input+usage_records.output+usage_records.cache_creation+usage_records.cache_read
@@ -390,7 +400,7 @@ export class Recorder {
               Number(event.blocks.some(block => block.type === "tool_use" || block.type === "tool_result")));
             const usage = readUsage(event.raw, id, event.id);
             if (usage) {
-              insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain), usage.model, usage.effort);
+              insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain), usage.model, usage.effort, rateStamp(usage.model), Number(usage.unrated));
               if (usage.effort) enrichEffort.run(usage.effort, id, usage.key);
             }
             if (inserted.changes) {
@@ -678,9 +688,9 @@ export class Recorder {
     }
     if (effort || effortMissing) {
       conditions.push(`EXISTS (SELECT 1 FROM usage_records model_usage WHERE model_usage.session_id=s.id
-        ${effortMissing ? " AND model_usage.effort IS NULL" : ""}${effort ? " AND model_usage.effort=?" : ""}${model ? " AND model_usage.model=?" : ""})`);
+        ${effortMissing ? " AND model_usage.effort IS NULL" : ""}${effort ? " AND model_usage.effort=?" : ""}${model ? " AND model_usage.model IN (?,?)" : ""})`);
       if (effort) bindings.push(effort);
-      if (model) bindings.push(normalizeModel(model));
+      if (model) bindings.push(model, normalizeModel(model));
     }
     if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
     if (params.get("errors") === "1") conditions.push("s.errors>0");

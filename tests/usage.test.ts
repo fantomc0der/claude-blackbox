@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
-import { emptyUsage, readUsage } from "../src/server/usage";
+import { emptyUsage, rateStamp, readUsage } from "../src/server/usage";
 import { dollars, effortName, usageCost } from "../src/client/lib/format";
 import { removeTestDirectory } from "./helpers";
 
@@ -98,6 +98,24 @@ describe("usage extraction and pricing", () => {
     expect(sample("claude-opus-5", { input_tokens: 1000, speed: "fast" })?.cost).toBe(0.01);
     expect(sample("claude-sonnet-4-5", { input_tokens: 1000, speed: "fast" })?.cost).toBeNull();
     expect(sample("claude-opus-5", { input_tokens: 1000, inference_geo: "us" })?.cost).toBeCloseTo(0.0055, 9);
+  });
+
+  test("prices current models, Haiku 5.5 prompt-length tiers and gateway model names", () => {
+    expect(sample("claude-sonnet-5-5", { input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 1000 })?.cost).toBeCloseTo(0.0031, 9);
+    expect(sample("claude-haiku-5-5", { input_tokens: 100000, output_tokens: 1000 })?.cost).toBeCloseTo(0.0105, 9);
+    expect(sample("claude-haiku-5-5", { input_tokens: 1, cache_read_input_tokens: 100000, output_tokens: 1000 })?.cost).toBeCloseTo(0.0075005, 9);
+    expect(sample("claude-haiku-5-5", { input_tokens: 1, cache_read_input_tokens: 100000, output_tokens: 1000, inference_geo: "us" })?.cost).toBeCloseTo(0.00825055, 9);
+    expect(sample("anthropic/claude-fable-5.1", { input_tokens: 1000 })).toMatchObject({ model: "claude-fable-5-1", cost: 0.01 });
+    expect(sample("anthropic/claude-opus-5.5", { input_tokens: 1000 })).toMatchObject({ model: "claude-opus-5-5", cost: 0.004 });
+    for (const model of ["glm-4.6", "z-ai/glm-4.6", "gemini-2.5-pro"]) expect(sample(model, { input_tokens: 1000 })?.model).toBe(model);
+  });
+
+  test("separates models without rates from fast mode without a known rate", () => {
+    expect(sample("future-model", { input_tokens: 10 })).toMatchObject({ cost: null, unrated: true });
+    expect(sample("", { input_tokens: 10 })).toMatchObject({ cost: null, unrated: false });
+    expect(sample("claude-sonnet-4-5", { input_tokens: 10, speed: "fast" })).toMatchObject({ cost: null, unrated: false });
+    expect(sample("future-model", { input_tokens: 10 }, { costUSD: 1 })).toMatchObject({ cost: 1, unrated: false });
+    expect(sample("claude-opus-5", { input_tokens: 10 })?.unrated).toBe(false);
   });
 
   test("distinguishes missing, unpriced, zero, fractional and partial cost displays", () => {
@@ -204,6 +222,24 @@ describe("indexed usage", () => {
     expect(recorder.list(params).modelUsage).toHaveLength(1);
     expect(recorder.list(new URLSearchParams({ q: "sonnet-missing-effort" })).modelUsage).toHaveLength(3);
     expect(recorder.list(new URLSearchParams({ q: "no-such-request" })).modelUsage).toEqual([]);
+  });
+
+  test("a later copy without a model keeps whether the request's model is recognized", async () => {
+    const setup = await fixture();
+    const known = record("known"), unknown = record("unknown");
+    const named = [known, { ...unknown, message: { ...unknown.message, model: "future-model" } }];
+    const file = await setup.write("session-a", named);
+    const recorder = await setup.open();
+    const copies = named.map(entry => {
+      const message: Record<string, unknown> = { ...entry.message, usage: { ...entry.message.usage, output_tokens: 800 } };
+      delete message.model;
+      return JSON.stringify({ ...entry, uuid: `${entry.uuid}-unnamed`, message });
+    });
+    await appendFile(file, copies.join("\n") + "\n");
+    await recorder.scan();
+    const rows = recorder.list(new URLSearchParams()).modelUsage;
+    expect(rows.find(row => row.model === "claude-sonnet-4-5")?.usage).toMatchObject({ requests: 1, unpricedRequests: 1, unratedRequests: 0, outputTokens: 800 });
+    expect(rows.find(row => row.model === "future-model")?.usage).toMatchObject({ requests: 1, unpricedRequests: 1, unratedRequests: 1, outputTokens: 800 });
   });
 
   test("deduplicates model aliases and copied requests while keeping recorded effort", async () => {
@@ -349,7 +385,7 @@ describe("indexed usage", () => {
     await setup.write("session-b", [{ type: "user", message: { content: "No usage data" } }]);
     const recorder = await setup.open();
     const page = recorder.list(new URLSearchParams());
-    expect(page.usage).toMatchObject({ requests: 2, unpricedRequests: 1, totalTokens: 1942 });
+    expect(page.usage).toMatchObject({ requests: 2, unpricedRequests: 1, unratedRequests: 1, totalTokens: 1942 });
     expect(page.sessionsWithUsage).toBe(1);
     expect(page.total).toBe(2);
     expect(page.items.find(session => session.title === "No usage data")?.usage).toEqual(emptyUsage());
@@ -382,6 +418,47 @@ describe("indexed usage", () => {
     expect(after.getSession(id)?.bookmarked).toBe(true);
     expect(after.groups()[0].id).toBe(group.id);
     expect(after.list(new URLSearchParams()).usage.requests).toBe(2);
+    expect(await Bun.file(file).text()).toBe(original);
+  });
+
+  test("re-indexes only the recordings whose models were indexed with other rates, keeping bookmarks and sources", async () => {
+    const setup = await fixture();
+    const file = await setup.write("sonnet", [record("sonnet")]);
+    await setup.write("opus", [record("opus", { cwd: "C:\\work\\opus", message: { ...record("opus").message, model: "claude-opus-5" } })]);
+    const original = await Bun.file(file).text();
+    const first = await setup.open();
+    const items = first.list(new URLSearchParams()).items;
+    const sonnet = items.find(session => session.cwd === "C:\\work\\orbit")!, opus = items.find(session => session.cwd === "C:\\work\\opus")!;
+    first.bookmark(sonnet.id, true);
+    first.db.exec("UPDATE usage_records SET cost=cost*10");
+    await first.close();
+    const current = await setup.open();
+    expect(current.getSession(sonnet.id)?.usage.costUSD).toBeCloseTo(sonnet.usage.costUSD * 10, 9);
+    current.db.exec("UPDATE usage_records SET rates='earlier' WHERE model='claude-sonnet-4-5'");
+    await current.close();
+    const repriced = await setup.open();
+    expect(repriced.getSession(sonnet.id)).toMatchObject({ bookmarked: true, usage: sonnet.usage });
+    expect(repriced.getSession(opus.id)?.usage.costUSD).toBeCloseTo(opus.usage.costUSD * 10, 9);
+    const stamps = repriced.db.query<{ model: string; rates: string }, []>("SELECT model, rates FROM usage_records ORDER BY model").all();
+    expect(stamps).toEqual(["claude-opus-5", "claude-sonnet-4-5"].map(model => ({ model, rates: rateStamp(model) })));
+    expect(await Bun.file(file).text()).toBe(original);
+  });
+
+  test("prices requests an older build indexed without their rates", async () => {
+    const setup = await fixture();
+    const newer = record("newer"), future = record("future");
+    const file = await setup.write("session-a", [{ ...newer, message: { ...newer.message, model: "claude-sonnet-5-5" } }, { ...future, message: { ...future.message, model: "future-model" } }]);
+    const original = await Bun.file(file).text();
+    const before = await setup.open();
+    const expected = before.list(new URLSearchParams());
+    before.bookmark(expected.items[0].id, true);
+    before.db.exec("ALTER TABLE usage_records DROP COLUMN rates; ALTER TABLE usage_records DROP COLUMN unrated; UPDATE usage_records SET cost=NULL;");
+    await before.close();
+    const after = await setup.open();
+    const page = after.list(new URLSearchParams());
+    expect(page.usage).toEqual(expected.usage);
+    expect(page.usage).toMatchObject({ requests: 2, unpricedRequests: 1, unratedRequests: 1 });
+    expect(page.items[0].bookmarked).toBe(true);
     expect(await Bun.file(file).text()).toBe(original);
   });
 });

@@ -21,10 +21,29 @@ export function TokenBreakdown(props: { usage: UsageSummary }) {
   </dl>;
 }
 
-export function UsageNote(props: { usage: UsageSummary }) {
+const modelList = new Intl.ListFormat("en", { type: "conjunction" });
+
+/** Explains which requests have no estimate and why: a model this build has no rates for, which a later release can
+ *  price, or else fast mode without a known rate or no recorded model. `unratedModels` names the former when known. */
+function pricingGap(usage: UsageSummary, unratedModels: string[]): string {
+  const unrated = usage.unratedRequests, other = usage.unpricedRequests - unrated, several = unratedModels.length > 1;
+  const unratedText = (subject: string) => `${subject} ${unrated === 1 ? "uses" : "use"} ${several ? "models" : "a model"} this version of Claude Blackbox has no rates for yet${unratedModels.length ? `: ${modelList.format(unratedModels)}` : ""}.`;
+  const otherText = (subject: string) => `${subject} used fast mode without a known rate for ${other === 1 ? "its" : "their"} model, or recorded no model.`;
+  const share = `${tokenCount(usage.unpricedRequests)} of ${tokenCount(usage.requests)} requests`;
+  const reasons = unrated && other ? `${share} have no estimate. ${unratedText(tokenCount(unrated))} ${otherText(tokenCount(other))}` : unrated ? unratedText(share) : otherText(share);
+  const update = unrated ? `, and a release that adds ${several ? "their" : "its"} rates will price ${unrated === 1 ? "it" : "them"}` : "";
+  return `Cost is incomplete: ${reasons} Their tokens are still included${update}.`;
+}
+
+/** Requests without bundled rates make a total incomplete in a way an update can fix, so the summary flags them. */
+function unratedTitle(usage: UsageSummary): string {
+  return `Leaves out ${tokenCount(usage.unratedRequests)} ${usage.unratedRequests === 1 ? "request" : "requests"} from models Claude Blackbox does not recognize yet`;
+}
+
+export function UsageNote(props: { usage: UsageSummary; unratedModels?: string[] }) {
   return <div class="usage-note">
-    <Show when={props.usage.unpricedRequests}><p class="usage-warning">Cost is incomplete: {tokenCount(props.usage.unpricedRequests)} of {tokenCount(props.usage.requests)} requests have no known price. Their tokens are still included.</p></Show>
-    <p>USD API equivalent, not your Claude subscription bill. Uses recorded costs when available; otherwise bundled model rates (Sep 23, 2026). Historical rates, provider discounts and tool fees may differ.</p>
+    <Show when={props.usage.unpricedRequests}><p class="usage-warning">{pricingGap(props.usage, props.unratedModels ?? [])}</p></Show>
+    <p>USD API equivalent, not your Claude subscription bill. Uses recorded costs when available; otherwise bundled model rates (Oct 16, 2026). Historical rates, provider discounts and tool fees may differ.</p>
   </div>;
 }
 
@@ -37,7 +56,9 @@ function ModelExpenses(props: { rows: ModelUsage[]; usage: UsageSummary; filterM
         <th scope="row" title={row().model}><button class="usage-drilldown" disabled={!row().model} aria-label={`Show recordings using ${modelName(row().model)}, effort ${effortName(row().effort)}`} onClick={() => props.filterModel(row().model, row().effort)}>{modelName(row().model)}<small>{tokenCount(row().usage.requests)} {row().usage.requests === 1 ? "request" : "requests"}</small></button></th>
         <td class={row().effort ? undefined : "usage-effort-missing"}>{effortName(row().effort)}</td>
         <td title={tokenCount(row().usage.totalTokens)}>{compact(row().usage.totalTokens)}</td>
-        <td>{usageCost(row().usage)}<Show when={row().usage.unpricedRequests > 0 && row().usage.unpricedRequests < row().usage.requests}><small class="usage-warning">Partial</small></Show></td>
+        <td>{usageCost(row().usage)}<Show when={row().usage.unratedRequests} fallback={<Show when={row().usage.unpricedRequests > 0 && row().usage.unpricedRequests < row().usage.requests}><small class="usage-warning">Partial</small></Show>}>
+          <small class="usage-warning" title={`This version of Claude Blackbox has no rates for ${row().model || "this model"} yet. Its tokens are counted, but its cost is not estimated.`}>Model not recognized</small>
+        </Show></td>
       </tr>}</For></tbody>
       <tfoot><tr><th scope="row" colspan="2">All models</th><td title={tokenCount(props.usage.totalTokens)}>{compact(props.usage.totalTokens)}</td><td>{usageCost(props.usage)}</td></tr></tfoot>
     </table>
@@ -53,7 +74,9 @@ export function UsagePanel(props: { page: SessionPage | null; pending: boolean; 
       <Show when={props.page} fallback={<span class="usage-loading" aria-label="Usage not yet available">—</span>}>{page => <>
         <Show when={page().usage.requests} fallback={<span class="usage-empty">{page().total ? "No usage recorded" : "No matching recordings"}</span>}>
           <span class="usage-total" title={`${tokenCount(page().usage.totalTokens)} tokens, including cache reads and writes`}>{compact(page().usage.totalTokens)} <span>tokens</span></span>
-          <span class="usage-total usage-total-cost" title={page().hiddenAgentUsage.requests ? `Includes ${hiddenShare(page())}` : undefined}>{usageCost(page().usage)} <span>est.</span></span>
+          <span class="usage-total usage-total-cost" title={[page().hiddenAgentUsage.requests ? `Includes ${hiddenShare(page())}` : "", page().usage.unratedRequests ? unratedTitle(page().usage) : ""].filter(Boolean).join("\n") || undefined}>
+            {usageCost(page().usage)} <span>est.</span><Show when={page().usage.unratedRequests}><span class="usage-unrated"><Icon name="alert" size={13} /></span></Show>
+          </span>
         </Show>
       </>}</Show>
       <span class="usage-expand"><span>Breakdown</span><Icon name="down" size={14} /></span>
@@ -91,7 +114,7 @@ export function UsageBreakdown(props: { page: SessionPage | null; open: boolean;
             </table>
           }><ModelExpenses rows={sortUsage(page().modelUsage, sort(), row => `${row.model}\n${row.effort || ""}`)} usage={page().usage} filterModel={props.filterModel} /></Show>
           <p class="usage-scope">{tokenCount(page().usage.requests)} unique requests. Cache tokens are included. Repeated messages are counted once across the selection; shared history is assigned to one source folder. Date filters select recordings by their last activity, not individual requests.</p>
-          <UsageNote usage={page().usage} />
+          <UsageNote usage={page().usage} unratedModels={[...new Set(page().modelUsage.filter(row => row.usage.unratedRequests && row.model).map(row => row.model))]} />
         </Show>
       </>}</Show>
   </div>;

@@ -40,6 +40,9 @@ export interface UsageSummary {
   costUSD: number;
   requests: number;
   unpricedRequests: number;
+  /** The part of `unpricedRequests` naming a model without bundled rates; the rest used fast mode without a known rate
+   *  or recorded no model. */
+  unratedRequests: number;
   recordedCostRequests: number;
 }
 
