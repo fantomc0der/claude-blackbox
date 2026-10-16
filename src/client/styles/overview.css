@@ -1,0 +1,51 @@
+@layer components {
+  .overview-view { display: block; width: 100%; min-height: 32px; padding: 4px 6px; font-size: var(--text-support); }
+  .overview-scope { margin: 12px 0 0; font-size: var(--text-meta); color: var(--muted); }
+  .overview-empty { margin: 10px 0 0; font-size: var(--text-support); }
+  .overview-loading { margin-top: 14px; }
+  .overview-loading .skeleton-row { height: 34px; margin-bottom: 8px; }
+  .overview-status { margin: 14px 0 0; font-size: var(--text-support); color: var(--muted); }
+  .overview-status .text-button { margin-left: 4px; font-size: var(--text-support); }
+
+  .overview-folder { padding-top: 16px; }
+  .overview-folder h3 { display: flex; align-items: center; gap: 7px; min-width: 0; margin: 0; font: 600 var(--text-support)/1.4 var(--mono); color: var(--text); }
+  .overview-folder h3 svg { color: var(--muted); }
+  .overview-folder h3 > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .overview-provenance { display: flex; flex-wrap: wrap; align-items: center; column-gap: 5px; margin: 1px 0 6px 21px; font-size: var(--text-meta); color: var(--muted); }
+  .overview-provenance .text-button { flex-wrap: wrap; column-gap: 4px; min-height: 24px; padding: 2px 0; font-size: var(--text-meta); text-align: left; }
+  .overview-when { white-space: nowrap; }
+  .overview-provenance .meta-dot { margin: 0; }
+  .overview-none { margin: 0 0 4px 21px; font-size: var(--text-meta); color: var(--muted); }
+
+  .overview-file-list { list-style: none; margin: 0; padding: 0; }
+  .overview-file { display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: start; border-top: 1px solid #252e28; }
+  .overview-file-open { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: baseline; width: 100%; padding: 8px 0 8px 21px; border-radius: 4px; text-align: left; line-height: 1.45; }
+  .overview-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--text-support)/1.45 var(--mono); color: var(--text); }
+  .overview-file-count { grid-column: 2; grid-row: 1; justify-self: end; font-size: var(--text-meta); font-variant-numeric: tabular-nums; color: var(--muted); }
+  .overview-file-dir { grid-column: 1; grid-row: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--text-meta)/1.45 var(--mono); color: var(--muted); }
+  .overview-file-error { color: var(--danger); font-size: var(--text-meta); white-space: nowrap; }
+  .overview-file-open > .overview-file-error { grid-column: 2; grid-row: 2; justify-self: end; }
+  .overview-file-open:hover .overview-file-name { color: var(--accent); }
+  .overview-file.selected { background: var(--accent-dim); border-radius: 4px; }
+  .overview-file.selected .overview-file-name { color: var(--accent); }
+  .overview-file-toggle { grid-column: 2; margin-top: 4px; }
+  .overview-file-toggle svg { transition: transform .15s; }
+  .overview-file-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .overview-changes { grid-column: 1 / -1; list-style: none; margin: 0 0 8px 21px; padding: 0 0 0 10px; border-left: 1px solid var(--line); }
+  .overview-changes button { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; min-height: 28px; padding: 2px 0; text-align: left; font-size: var(--text-meta); color: var(--muted); }
+  .overview-changes button:hover, .overview-changes button[aria-current="true"] { color: var(--accent); }
+
+  .overview-reads { margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--line); }
+  .overview-reads > summary { display: flex; align-items: center; gap: 6px; min-height: 32px; list-style: none; font-size: var(--text-support); color: var(--muted); }
+  .overview-reads > summary:hover { color: var(--accent); }
+  .overview-reads > summary svg { transition: transform .15s; }
+  .overview-reads[open] > summary svg { transform: rotate(90deg); }
+  .overview-reads .overview-file-open { padding-left: 19px; }
+  .overview-note { margin: 16px 0 0; font-size: var(--text-meta); line-height: 1.5; color: var(--muted); }
+
+  @media (pointer: coarse) {
+    .overview-view, .overview-reads > summary, .overview-provenance .text-button, .overview-changes button { min-height: 44px; }
+    .overview-file { grid-template-columns: minmax(0, 1fr) 44px; }
+    .overview-file-toggle { width: 44px; height: 44px; margin-top: 0; }
+  }
+}

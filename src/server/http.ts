@@ -109,7 +109,7 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
       if (request.method === "POST" && url.pathname === "/api/groups") return json(recorder.saveGroup(await body()), 201);
       const groupRoute = url.pathname.match(/^\/api\/groups\/([\w-]+)$/);
       if (groupRoute && request.method === "DELETE") { recorder.deleteGroup(groupRoute[1]); return json({ ok: true }); }
-      const route = url.pathname.match(/^\/api\/sessions\/([a-f0-9]{24})(?:\/(events|matches|timeline|bookmark|export|subagents|family))?$/);
+      const route = url.pathname.match(/^\/api\/sessions\/([a-f0-9]{24})(?:\/(events|matches|timeline|summary|bookmark|export|subagents|family))?$/);
       if (route) {
         const session = recorder.getSession(route[1]);
         if (!session) return json({ error: "This recording is no longer available." }, 404);
@@ -118,6 +118,7 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
         if (request.method === "GET" && route[2] === "family") return json(recorder.family(session.id));
         if (request.method === "GET" && route[2] === "timeline") return json(recorder.timeline(session.id, url.searchParams));
         if (request.method === "GET" && route[2] === "matches") return json(recorder.matches(session.id, url.searchParams));
+        if (request.method === "GET" && route[2] === "summary") return json(recorder.summary(session.id, url.searchParams));
         if (request.method === "GET" && route[2] === "events") {
           const page = recorder.events(session.id, url.searchParams);
           const toolIds = page.items.flatMap(event => event.blocks.filter(block => block.type === "tool_use").map(block => block.id || ""));

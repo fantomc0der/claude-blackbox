@@ -5,6 +5,7 @@ import "./styles/app.css";
 import "./styles/replay.css";
 import "./styles/theme-control.css";
 import "./styles/usage.css";
+import "./styles/overview.css";
 import "./styles/light.css";
 import "./styles/subagents.css";
 

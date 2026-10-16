@@ -233,6 +233,83 @@ describe("recording index", () => {
     expect(recorder.matches(id, new URLSearchParams({ kind: "all" }))).toEqual({ total: 0, limited: false, items: [] });
   });
 
+  test("summarizes changed and read files under the folders a recording worked in", async () => {
+    const fixtureData = await fixture();
+    const assistant = (content: unknown[], extra = {}) => fixtureData.record("", { type: "assistant", message: { role: "assistant", content }, ...extra });
+    const use = (id: string, name: string, input: Record<string, unknown>) => ({ type: "tool_use", id, name, input });
+    const result = (id: string, is_error = false) => ({ type: "tool_result", tool_use_id: id, content: is_error ? "Permission denied" : "ok", is_error });
+    const addDir = (path: string) => `<command-name>/add-dir</command-name>\n            <command-message>add-dir</command-message>\n            <command-args>${path}</command-args>`;
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Start"),
+      assistant([use("edit-1", "Edit", { file_path: "src/app.ts", old_string: "a", new_string: "b" })]),
+      fixtureData.record([result("edit-1")]),
+      assistant([use("write-1", "Write", { file_path: "C:\\work\\orbit\\src\\new.ts", content: "export {}" }), use("read-1", "Read", { file_path: "C:\\work\\orbit\\README.md" })]),
+      fixtureData.record([result("write-1", true), result("read-1")]),
+      fixtureData.record(addDir("C:\\work\\shared"), { uuid: "cmd-1" }),
+      fixtureData.record("<local-command-stdout>Added \u001b[1mC:\\work\\shared\u001b[22m as a working directory for this session</local-command-stdout>", { uuid: "out-1", parentUuid: "cmd-1" }),
+      fixtureData.record(addDir("C:\\work\\orbit\\docs"), { uuid: "cmd-2" }),
+      fixtureData.record("<local-command-stdout>\u001b[1mC:\\work\\orbit\\docs\u001b[22m is inside the current working directory \u001b[1mC:\\work\\orbit\u001b[22m</local-command-stdout>", { uuid: "out-2", parentUuid: "cmd-2" }),
+      assistant([use("edit-2", "Edit", { file_path: "C:\\work\\shared\\lib.ts", old_string: "a", new_string: "b" })], { cwd: "C:\\work\\shared" }),
+      fixtureData.record([result("edit-2")], { cwd: "C:\\work\\shared" }),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const id = recorder.list(new URLSearchParams()).items[0].id;
+    const sequence = new Map(recorder.events(id, new URLSearchParams({ kind: "all", limit: "200" })).items.map(event => [event.id, event.sequence]));
+    const summary = recorder.summary(id, new URLSearchParams({ kind: "all" }));
+    expect(summary.folders.map(folder => [folder.path, folder.working && sequence.get(folder.working.id), folder.added && sequence.get(folder.added.id),
+      folder.files.map(file => [file.display, file.changes.map(change => [change.tool, change.error, sequence.get(change.id), change.position])])])).toEqual([
+      ["C:\\work\\orbit", 0, null, [["src\\app.ts", [["Edit", false, 1, 1]]], ["src\\new.ts", [["Write", true, 3, 3]]]]],
+      ["C:\\work\\shared", 9, 5, [["lib.ts", [["Edit", false, 9, 9]]]]],
+    ]);
+    expect(summary.read.map(file => [file.display, file.folder, sequence.get(file.id)])).toEqual([["README.md", "C:\\work\\orbit", 3]]);
+    expect(summary).toMatchObject({ other: [], changedFiles: 3, readFiles: 1, limited: false });
+
+    // Prompts leave out the tool calls, so their changes have no position; the commands keep theirs among the prompts.
+    const prompts = recorder.summary(id, new URLSearchParams({ kind: "prompts" }));
+    expect(prompts.folders[0].files[0].changes[0].position).toBeNull();
+    expect(prompts.folders[1].added!.position).toBe(1);
+    for (const change of recorder.summary(id, new URLSearchParams({ kind: "conversation" })).folders.flatMap(folder => folder.files.flatMap(file => file.changes))) {
+      const page = recorder.events(id, new URLSearchParams({ kind: "conversation", offset: String(change.position), limit: "1" }));
+      expect(page.items[0].id).toBe(change.id);
+    }
+
+    // A growing recording refreshes the cached grouping.
+    await appendFile(fixtureData.file, assistant([use("edit-3", "Edit", { file_path: "src/app.ts", old_string: "b", new_string: "c" })]) + "\n");
+    await recorder.scan();
+    expect(recorder.summary(id, new URLSearchParams({ kind: "all" })).folders[0].files[0].changes.map(change => sequence.get(change.id) ?? "new")).toEqual([1, "new"]);
+  });
+
+  test("adds folders only for /add-dir commands Claude Code recorded as added", async () => {
+    const fixtureData = await fixture();
+    const addDir = (path: string) => `<command-name>/add-dir</command-name>\n<command-message>add-dir</command-message>\n<command-args>${path}</command-args>`;
+    const stdout = (text: string) => `<local-command-stdout>${text}</local-command-stdout>`;
+    await writeFile(fixtureData.file, [
+      fixtureData.record("Start", { uuid: "start" }),
+      // A prompt that quotes the command and an assistant reply that quotes an output are conversation, not commands.
+      fixtureData.record(`What does ${addDir("C:\\work\\quoted")} print?`, { uuid: "ask" }),
+      fixtureData.record("", { type: "assistant", uuid: "reply", parentUuid: "ask", message: { role: "assistant", content: [{ type: "text", text: stdout("Added C:\\work\\quoted as a working directory for this session") }] } }),
+      // Newer recordings store local commands as system records.
+      { type: "system", subtype: "local_command", uuid: "sys-cmd", content: addDir("C:\\work\\system"), cwd: "C:\\work\\orbit", timestamp: "2026-09-19T12:00:00Z" },
+      { type: "system", subtype: "local_command", uuid: "sys-out", parentUuid: "sys-cmd", content: stdout("Added \u001b[1mC:\\work\\system\u001b[22m as a working directory for this session"), cwd: "C:\\work\\orbit", timestamp: "2026-09-19T12:00:00Z" },
+      // Without parentUuid links, a command pairs only with the output right after it, never a later command's output.
+      fixtureData.record(addDir("C:\\work\\unanswered")),
+      fixtureData.record(addDir("C:\\work\\answered")),
+      fixtureData.record(stdout("Added C:\\work\\answered as a working directory for this session")),
+    ].map(entry => typeof entry === "string" ? entry : JSON.stringify(entry)).join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const id = recorder.list(new URLSearchParams()).items[0].id;
+    const summary = recorder.summary(id, new URLSearchParams({ kind: "conversation" }));
+    expect(summary.folders.map(folder => [folder.path, Boolean(folder.working), Boolean(folder.added)])).toEqual([
+      ["C:\\work\\orbit", true, false],
+      ["C:\\work\\system", false, true],
+      ["C:\\work\\answered", false, true],
+    ]);
+    // Conversation leaves out system records, so the system command opens in All events.
+    expect(summary.folders[1].added!.position).toBeNull();
+    const sequence = new Map(recorder.events(id, new URLSearchParams({ kind: "all", limit: "200" })).items.map(event => [event.id, event.sequence]));
+    expect(sequence.get(summary.folders[2].added!.id)).toBe(6);
+  });
+
   test("timeline coarsens long recordings without losing records", async () => {
     const fixtureData = await fixture();
     const start = Date.parse("2026-09-19T00:00:00Z");

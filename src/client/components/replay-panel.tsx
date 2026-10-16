@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, flush, For, Show, untrack } from "solid-js";
-import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, SessionFamily } from "../../shared/types";
+import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, SessionFamily, SessionSummary, SummaryRecord } from "../../shared/types";
 import { stripAnsi } from "../../shared/ansi";
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
@@ -15,11 +15,31 @@ import { EventCard, type SubagentNavigation } from "./event-card";
 import { SubagentDialog } from "./subagent-dialog";
 import { SessionFamilyNavigation } from "./session-family";
 import { ReplayTimeline } from "./replay-timeline";
+import { OverviewFiles } from "./overview-files";
 import { isPlainNavigation, recalledReplayPosition, rememberReplayPosition, replayPositionKey, sessionDestination, sessionHref } from "../lib/session-navigation";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock>; calls: Record<string, ContentBlock> };
 
 const pageSize = 60;
+const overviewStorageKey = "blackbox:overview-view";
+type OverviewView = "page" | "files";
+
+function savedOverviewView(): OverviewView {
+  try { return localStorage.getItem(overviewStorageKey) === "files" ? "files" : "page"; }
+  catch { return "page"; }
+}
+
+function summaryRecord(summary: SessionSummary, id: string): SummaryRecord | undefined {
+  for (const folder of summary.folders) {
+    if (folder.working?.id === id) return folder.working;
+    if (folder.added?.id === id) return folder.added;
+  }
+  for (const file of [...summary.folders.flatMap(folder => folder.files), ...summary.other]) {
+    const change = file.changes.find(entry => entry.id === id);
+    if (change) return change;
+  }
+  return summary.read.find(file => file.id === id);
+}
 
 function outlineLabel(event: ReplayEvent): string {
   if (event.error) return "Error";
@@ -481,6 +501,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     }
     const match = list[index];
     setCurrentMatch(match.id);
+    setPinned("");
     const current = page();
     if (current && current.items[match.position - current.offset]?.id === match.id) {
       // A page an earlier step is still fetching must not reveal that older match over this one.
@@ -534,6 +555,79 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const outline = () => visibleEvents().filter(event => event.category === "message" || event.error || event.toolNames.length).slice(0, 24);
   const jumpToEvent = (id: string) => {
     scroll.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  };
+
+  const [overviewView, setOverviewView] = createSignal<OverviewView>(savedOverviewView());
+  const changeOverviewView = (value: string) => {
+    const next: OverviewView = value === "files" ? "files" : "page";
+    setOverviewView(next);
+    try { localStorage.setItem(overviewStorageKey, next); }
+    catch {}
+  };
+  // A container query hides the rail on narrow panes and Hide overview hides it on wide ones, so its width says whether
+  // it shows; the file summary is only fetched while it does.
+  const [rail, setRail] = createSignal<HTMLElement>();
+  const [railShown, setRailShown] = createSignal(false);
+  createEffect(() => rail(), element => {
+    if (!element) return;
+    const observer = new ResizeObserver(() => setRailShown(element.offsetWidth > 0));
+    observer.observe(element);
+    return () => observer.disconnect();
+  });
+  // Positions in the summary follow the replay filters, so the key ties it to the filters it was fetched for. A refresh
+  // keeps showing the previous summary, and a reader's choice made before fresh positions arrive is taken when they do.
+  const [summaryState, setSummaryState] = createSignal<{ key: string; data: SessionSummary } | null>(null);
+  const [summaryFailed, setSummaryFailed] = createSignal(false);
+  const [summaryRetry, setSummaryRetry] = createSignal(0);
+  const [pinned, setPinned] = createSignal("");
+  const pinnedCard = createMemo(() => pinned() ? cardOf(pinned()) : "");
+  // A record opened another way, such as Show surrounding context or a search hit, takes the selection from the rail.
+  createEffect(() => props.anchor, anchor => { if (anchor && anchor !== untrack(pinned)) setPinned(""); });
+  let pendingShow = "";
+  // Opens a summary entry's record as find stepping opens a match: in place on this page, or on the page that holds it.
+  // A record the active view hides opens in All events with its context, as Show in context does, and so does any
+  // record chosen while fresh positions could not be fetched.
+  const showRecord = (record: SummaryRecord) => {
+    const fresh = summaryState()?.key === filterQuery();
+    if (!fresh && !summaryFailed()) { pendingShow = record.id; return; }
+    setCurrentMatch(""); setPinned(record.id);
+    if (!fresh || record.position === null) { revealContext(record.id); return; }
+    const current = page();
+    if (current && current.items[record.position - current.offset]?.id === record.id) {
+      pendingMatch = "";
+      const card = cardOf(record.id);
+      if (card) revealAnchor(card);
+      return;
+    }
+    goTo(record.position);
+    pendingMatch = seekTarget === record.position ? record.id : "";
+  };
+  // On this page needs the summary only for the option's count, so it fetches once; Files changed follows the filters
+  // and live updates, and choosing it refreshes the summary.
+  createEffect(() => {
+    const files = overviewView() === "files";
+    return { id: props.id, shown: railShown(), files, filters: files ? filterQuery() : untrack(filterQuery), revision: files ? props.revision : 0, retry: summaryRetry() };
+  }, state => {
+    if (!state.shown || (!state.files && untrack(summaryState) && !untrack(summaryFailed))) return;
+    const controller = new AbortController();
+    void request<SessionSummary>(`/api/sessions/${state.id}/summary?${state.filters}`, { signal: controller.signal }).then(data => {
+      if (controller.signal.aborted) return;
+      setSummaryState({ key: state.filters, data });
+      setSummaryFailed(false);
+      const waiting = pendingShow ? summaryRecord(data, pendingShow) : undefined;
+      pendingShow = "";
+      // Writes settle on the next flush, so apply this one before the choice reads the fresh positions.
+      if (waiting) { flush(); showRecord(waiting); }
+    }).catch(error => {
+      if (controller.signal.aborted || isAbort(error)) return;
+      pendingShow = "";
+      setSummaryFailed(true);
+    });
+    return () => controller.abort();
+  });
+  const filesOption = () => {
+    const data = summaryState()?.data;
+    return data ? `Files changed · ${data.changedFiles.toLocaleString()}` : "Files changed";
   };
 
   return <section class={['replay-panel', { 'overview-hidden': !props.overviewVisible }]} aria-label="Session replay">
@@ -618,13 +712,18 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
-        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !narrowTerm() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} calls={page()?.calls} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={matchCard() ? event().id === matchCard() : event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
+        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !narrowTerm() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} calls={page()?.calls} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={matchCard() ? event().id === matchCard() : pinnedCard() ? event().id === pinnedCard() : event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{extraFilterCount() ? "End of matching records." : "You're all caught up."}<small>{extraFilterCount() ? "Reset filters to return to the conversation." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
-    </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview">
+    </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview" ref={setRail}>
       <p class="eyebrow">AT A GLANCE</p>
       <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
-      <nav class="replay-outline" aria-label="Events on this page"><p class="eyebrow">ON THIS PAGE</p><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>
+      <div class="overview-section">
+        <select class="overview-view" aria-label="Overview content" value={overviewView()} onChange={event => changeOverviewView(event.currentTarget.value)}><option value="page">On this page</option><option value="files">{filesOption()}</option></select>
+        <Show when={overviewView() === "files"} fallback={<nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>}>
+          <OverviewFiles summary={summaryState()?.data ?? null} failed={summaryFailed()} retry={() => { setSummaryFailed(false); setSummaryRetry(value => value + 1); }} show={showRecord} selected={pinned()} />
+        </Show>
+      </div>
       <p class="inspector-note"><Icon name="shield" size={13} />An original record. Nothing rewritten.</p>
     </aside></div>
     <Show when={updated()}><button class="new-events" onClick={() => extraFilterCount() ? latestUnfiltered() : latest()}><Icon name="down" size={15} />{extraFilterCount() ? "Recording updated · Show latest unfiltered" : "Recording updated · Show latest"}</button></Show>

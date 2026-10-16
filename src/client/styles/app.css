@@ -493,8 +493,8 @@
     .inspector-stats { display: flex; justify-content: space-between; gap: 8px; margin-top: 20px; }
     .inspector-stats strong { display: block; font-size: 22px; font-weight: 450; }
     .inspector-stats span { display: block; color: var(--muted); font-size: var(--text-meta); margin-top: 5px; }
-    .replay-outline { border-top: 1px solid var(--line); margin-top: 25px; padding-top: 20px; }
-    .replay-inspector > .eyebrow, .replay-outline .eyebrow { font-size: var(--text-meta); letter-spacing: 1px; }
+    .overview-section { border-top: 1px solid var(--line); margin-top: 25px; padding-top: 20px; }
+    .replay-inspector > .eyebrow { font-size: var(--text-meta); letter-spacing: 1px; }
     .replay-outline button { display: flex; align-items: flex-start; gap: 9px; text-align: left; width: 100%; padding: 12px 0; border-bottom: 1px solid #252e28; color: #aab6a5; font-size: var(--text-support); line-height: 1.6; }
     .replay-outline button:hover { color: var(--accent); }
     .replay-outline button > span:last-child { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }

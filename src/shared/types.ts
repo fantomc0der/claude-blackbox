@@ -192,3 +192,40 @@ export interface EventTimeline {
   bucketMs: number;
   buckets: TimelineBucket[];
 }
+
+/**
+ * A record a recording summary points at. `position` is its ordinal under the replay filters the summary was requested
+ * with, so it is directly a page offset as in `FindMatches`; it is null when those filters hide the record.
+ */
+export interface SummaryRecord { id: string; position: number | null; timestamp: string }
+
+/** One Edit, Write, MultiEdit, or NotebookEdit call. `error` means its recorded result was an error. */
+export interface SummaryChange extends SummaryRecord { tool: string; error: boolean }
+
+/**
+ * A changed file. `display` is the path relative to its folder, or the whole path when no folder contains it. `count`
+ * and `errors` cover every recorded change, even when `changes` stops at its limit.
+ */
+export interface SummaryFile { path: string; display: string; count: number; errors: number; changes: SummaryChange[] }
+
+/** A file the recording read but never changed, pointing at its first read. `folder` is its containing folder or "". */
+export interface SummaryRead extends SummaryRecord { path: string; display: string; folder: string; reads: number }
+
+/**
+ * A folder the recording worked in: `working` is the first record whose working directory it was, and `added` the
+ * `/add-dir` command whose recorded output says it was added. Either can be null, never both.
+ */
+export interface SummaryFolder { path: string; working: SummaryRecord | null; added: SummaryRecord | null; files: SummaryFile[] }
+
+/**
+ * The files a recording changed and read, grouped under the folders it worked in. `other` holds changed files outside
+ * every folder. The totals count every file even when a list stops at its limit, which `limited` reports.
+ */
+export interface SessionSummary {
+  folders: SummaryFolder[];
+  other: SummaryFile[];
+  read: SummaryRead[];
+  changedFiles: number;
+  readFiles: number;
+  limited: boolean;
+}
