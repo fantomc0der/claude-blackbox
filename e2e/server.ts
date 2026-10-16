@@ -194,6 +194,21 @@ await writeFile(join(folder, "tool-copy.jsonl"), [
     copyResult("copy-agent", "Done"), copyResult("copy-fail", "1 fail", true),
   ] } },
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Claude Code stores the messages an API request adds as untimed `api-request-blob` copies just before the request. The
+// second request's copy ends the first replay page, apart from its request at the top of the next one.
+const requestBlob = (hash: string, message: Record<string, unknown>) => ({ type: "api-request-blob", sessionId: "request-copies", hash, message });
+const apiRequest = (sequence: number, tail: string[]) => ({ type: "api-request", sessionId: "request-copies", id: `copy-request-${sequence}`, timestamp: "2026-01-01T00:00:05Z", tail });
+await writeFile(join(folder, "request-copies.jsonl"), [
+  event("Request copy verification", 0),
+  handoffCall(1, "request-copy-call", "bun test tests/marshwick.test.ts"),
+  handoffResult(2, "request-copy-call", "Marshwick suite passed"),
+  requestBlob("copy-hash-1", { role: "assistant", content: [{ type: "tool_use", id: "request-copy-call", name: "Bash", input: { command: "bun test tests/marshwick.test.ts" } }] }),
+  requestBlob("copy-hash-2", { role: "user", content: [{ type: "tool_result", tool_use_id: "request-copy-call", content: "Marshwick suite passed" }] }),
+  apiRequest(5, ["copy-hash-1", "copy-hash-2"]),
+  ...Array.from({ length: 53 }, (_, index) => event(`Request copy filler ${index + 1}`, index + 6, index % 2 ? "user" : "assistant")),
+  requestBlob("copy-hash-3", { role: "user", content: "Request copy follow-up" }),
+  apiRequest(60, ["copy-hash-3"]),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "subagent-parent.jsonl"),Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
 const agentsFolder = join(folder, "subagent-parent", "subagents");
 await mkdir(agentsFolder, { recursive: true });

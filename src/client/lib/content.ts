@@ -44,6 +44,40 @@ export function isToolResultEvent(event: Pick<ReplayEvent, "blocks">): boolean {
   return event.blocks.length > 0 && event.blocks.every(block => block.type === "tool_result");
 }
 
+export function isRequestMessage(event: Pick<ReplayEvent, "type">): boolean {
+  return event.type === "api-request-blob";
+}
+
+export interface RequestMessageRun {
+  messages: ReplayEvent[];
+  /** The run opens a page that has records before it, so more of it may be on the previous page. */
+  partial: boolean;
+}
+
+// Claude Code writes the messages an API request adds as a run of `api-request-blob` records directly before the
+// `api-request` record that lists their hashes in `tail`. Each run whose request follows it on the page is keyed by
+// that request's id; copies the request does not list are left out of its run.
+export function requestMessageRuns(events: readonly ReplayEvent[], continued = false): Map<string, RequestMessageRun> {
+  const runs = new Map<string, RequestMessageRun>();
+  let run: ReplayEvent[] = [];
+  for (const event of events) {
+    const follows = run.length > 0 && run[run.length - 1].sequence + 1 === event.sequence;
+    if (isRequestMessage(event)) {
+      if (follows) run.push(event);
+      else run = [event];
+      continue;
+    }
+    if (event.type === "api-request" && follows) {
+      const tail = Array.isArray(event.raw.tail) ? new Set(event.raw.tail) : undefined;
+      let start = run.length;
+      while (start > 0 && (!tail || tail.has(run[start - 1].raw.hash))) start--;
+      if (start < run.length) runs.set(event.id, { messages: run.slice(start), partial: continued && run[start] === events[0] });
+    }
+    run = [];
+  }
+  return runs;
+}
+
 // The command, path, query, or pattern a call was made with, in the order the summary row prefers them. The row also
 // previews a delegated task's description or prompt, which are not arguments to copy.
 const argumentKeys = ["command", "file_path", "notebook_path", "path", "query", "pattern"] as const;
