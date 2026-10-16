@@ -7,6 +7,7 @@
   .usage-label .usage-refresh.active { visibility: visible; animation: breathe .8s infinite; }
   .usage-total { font-variant-numeric: tabular-nums; font-weight: 550; }
   .usage-total > span { color: var(--muted); font-weight: 400; }
+  .usage-total > .usage-unrated { display: inline-flex; margin-left: 5px; color: var(--danger); vertical-align: -2px; }
   .usage-expand { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); }
   .usage-expand svg { transition: transform .15s; }
   .usage-summary[aria-expanded="true"] .usage-expand svg { transform: rotate(180deg); }

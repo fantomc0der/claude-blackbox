@@ -15,6 +15,20 @@ export function tokenCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+const modelList = new Intl.ListFormat("en", { type: "conjunction" });
+
+/** Explains which requests have no estimate and why: a model this build has no rates for, which a later release can
+ *  price, or else fast mode without a known rate or no recorded model. `unratedModels` names the former when known. */
+export function pricingGap(usage: UsageSummary, unratedModels: string[]): string {
+  const unrated = usage.unratedRequests, other = usage.unpricedRequests - unrated, several = unratedModels.length > 1;
+  const unratedText = (subject: string) => `${subject} ${unrated === 1 ? "uses" : "use"} ${several ? "models" : "a model"} this version of Claude Blackbox has no rates for yet${unratedModels.length ? `: ${modelList.format(unratedModels)}` : ""}.`;
+  const otherText = (subject: string) => `${subject} used fast mode without a known rate for ${other === 1 ? "its" : "their"} model, or recorded no model.`;
+  const share = `${tokenCount(usage.unpricedRequests)} of ${tokenCount(usage.requests)} requests`;
+  const reasons = unrated && other ? `${share} have no estimate. ${unratedText(tokenCount(unrated))} ${otherText(tokenCount(other))}` : unrated ? unratedText(share) : otherText(share);
+  const update = unrated ? `, and a release that adds ${several ? "their" : "its"} rates will price ${unrated === 1 ? "it" : "them"}` : "";
+  return `Cost is incomplete: ${reasons} ${usage.unpricedRequests === 1 ? "Its" : "Their"} tokens are still included${update}.`;
+}
+
 export function effortName(effort: string | null): string {
   if (!effort) return "Not recorded";
   const labels: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", auto: "Auto" };

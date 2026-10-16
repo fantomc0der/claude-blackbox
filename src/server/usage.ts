@@ -1,8 +1,13 @@
+import { createHash } from "node:crypto";
 import type { UsageSummary } from "../shared/types";
 import { object, string } from "./normalize";
 import { isFacetValue } from "./facets";
 
-interface Price { input: number; output: number; cacheRead?: number; longContext?: boolean; fast?: number }
+/** Rate multipliers for a request whose prompt, counting cache reads and writes, is over `above` tokens. */
+interface LongContext { above: number; input: number; output: number }
+interface Price { input: number; output: number; cacheRead?: number; longContext?: LongContext; fast?: number }
+
+const legacyLongContext: LongContext = { above: 200_000, input: 2, output: 1.5 };
 
 const prices: Record<string, Price> = {
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.025 },
@@ -17,10 +22,12 @@ const prices: Record<string, Price> = {
   "claude-opus-4-5": { input: 5, output: 25 },
   "claude-opus-4-1": { input: 15, output: 75 },
   "claude-opus-4": { input: 15, output: 75 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.05 },
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
-  "claude-sonnet-4-5": { input: 3, output: 15, longContext: true },
-  "claude-sonnet-4": { input: 3, output: 15, longContext: true },
+  "claude-sonnet-4-5": { input: 3, output: 15, longContext: legacyLongContext },
+  "claude-sonnet-4": { input: 3, output: 15, longContext: legacyLongContext },
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, longContext: { above: 100_000, input: 5, output: 5 } },
   "claude-haiku-4-5": { input: 1, output: 5 },
   "claude-3-7-sonnet": { input: 3, output: 15 },
   "claude-3-5-sonnet": { input: 3, output: 15 },
@@ -29,6 +36,24 @@ const prices: Record<string, Price> = {
   "claude-3-sonnet": { input: 3, output: 15 },
   "claude-3-haiku": { input: 0.25, output: 1.25 },
 };
+
+function priceOf(model: string): Price | undefined {
+  return Object.hasOwn(prices, model) ? prices[model] : undefined;
+}
+
+const stamps = new Map<Price | undefined, string>();
+
+/**
+ * Identifies the rates and rules a request of `model` is indexed with; its cost and normalized model are derived only
+ * then. Editing one model's rates changes only that model's stamp. Bump the revision when the formula or model
+ * normalization changes, which re-indexes every request.
+ */
+export function rateStamp(model: string): string {
+  const price = priceOf(model);
+  let stamp = stamps.get(price);
+  if (!stamp) stamps.set(price, stamp = createHash("sha256").update(JSON.stringify({ revision: 1, price: price ?? null })).digest("hex").slice(0, 16));
+  return stamp;
+}
 
 export interface UsageRecord {
   key: string;
@@ -40,6 +65,8 @@ export interface UsageRecord {
   cacheRead: number;
   cost: number | null;
   recorded: boolean;
+  /** No recorded cost and no bundled rates for a named model, as opposed to fast mode without a known rate or no model. */
+  unrated: boolean;
   sidechain: boolean;
 }
 
@@ -48,8 +75,9 @@ function count(value: unknown): number {
 }
 
 export function normalizeModel(model: string): string {
-  return model.replace(/\[[^\]]*\]$/, "").replace(/^(?:(?:us|eu|apac|global)\.)?anthropic\./, "")
-    .replace(/-v\d+:\d+$/, "").replace(/[-@]\d{8}$/, "").replace(/-latest$/, "").replace(/^(claude-(?:sonnet|opus)-4)-0$/, "$1");
+  return model.replace(/\[[^\]]*\]$/, "").replace(/^(?:(?:us|eu|apac|global)\.)?anthropic[./]/, "")
+    .replace(/-v\d+:\d+$/, "").replace(/[-@]\d{8}$/, "").replace(/-latest$/, "")
+    .replace(/^claude-.*/, name => name.replace(/(\d)\.(?=\d)/g, "$1-")).replace(/^(claude-(?:sonnet|opus)-4)-0$/, "$1");
 }
 
 export function readUsage(raw: Record<string, unknown>, sessionId: string, eventId: string): UsageRecord | null {
@@ -68,26 +96,26 @@ export function readUsage(raw: Record<string, unknown>, sessionId: string, event
   const key = messageId ? JSON.stringify(["message", messageId, requestId || string(raw.sessionId) || sessionId])
     : JSON.stringify(["event", string(raw.sessionId) || sessionId, string(raw.uuid) || eventId]);
   const model = normalizeModel(string(message.model));
-  const price = Object.hasOwn(prices, model) ? prices[model] : undefined;
+  const price = priceOf(model);
   const effort = [message.effort, raw.effort, object(message.output_config).effort, object(raw.output_config).effort]
     .map(value => string(value).trim().toLowerCase()).find(value => isFacetValue(value, 80)) || null;
   let cost = recordedCost;
   if (cost === null && price) {
     const fast = usage.speed === "fast" || raw.speed === "fast";
     if (!fast || price.fast) {
-      const longContext = price.longContext && input + cacheCreation + cacheRead > 200_000;
-      const inputRate = price.input * (longContext ? 2 : 1);
-      const outputRate = price.output * (longContext ? 1.5 : 1);
+      const longContext = price.longContext && input + cacheCreation + cacheRead > price.longContext.above ? price.longContext : undefined;
+      const inputRate = price.input * (longContext?.input ?? 1);
+      const outputRate = price.output * (longContext?.output ?? 1);
       const geography = usage.inference_geo === "us" ? 1.1 : 1;
       cost = (input * inputRate + output * outputRate + (cacheCreation - cacheHour) * inputRate * 1.25
         + cacheHour * inputRate * 2 + cacheRead * inputRate * (price.cacheRead ?? 0.1)) / 1_000_000 * (fast ? price.fast! : 1) * geography;
     }
   }
-  return { key, model, effort, input, output, cacheCreation, cacheRead, cost, recorded: recordedCost !== null, sidechain: raw.isSidechain === true };
+  return { key, model, effort, input, output, cacheCreation, cacheRead, cost, recorded: recordedCost !== null, unrated: cost === null && !price && model !== "", sidechain: raw.isSidechain === true };
 }
 
 export function emptyUsage(): UsageSummary {
-  return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0, requests: 0, unpricedRequests: 0, recordedCostRequests: 0 };
+  return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0, requests: 0, unpricedRequests: 0, unratedRequests: 0, recordedCostRequests: 0 };
 }
 
 /** Adds every counter of `source` to `target`; summaries only hold sums, so disjoint request sets combine exactly. */
@@ -99,4 +127,5 @@ export function addUsage(target: UsageSummary, source: UsageSummary): UsageSumma
 export const usageColumns = `coalesce(sum(input),0) AS inputTokens, coalesce(sum(output),0) AS outputTokens,
   coalesce(sum(cache_creation),0) AS cacheCreationTokens, coalesce(sum(cache_read),0) AS cacheReadTokens,
   coalesce(sum(input+output+cache_creation+cache_read),0) AS totalTokens, coalesce(sum(cost),0) AS costUSD,
-  count(*) AS requests, coalesce(sum(cost IS NULL),0) AS unpricedRequests, coalesce(sum(recorded),0) AS recordedCostRequests`;
+  count(*) AS requests, coalesce(sum(cost IS NULL),0) AS unpricedRequests, coalesce(sum(unrated),0) AS unratedRequests,
+  coalesce(sum(recorded),0) AS recordedCostRequests`;
