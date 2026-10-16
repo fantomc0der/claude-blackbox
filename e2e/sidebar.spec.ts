@@ -158,3 +158,48 @@ test("one canonical grouping action stays available before and after grouping", 
   }
   await expect(action).toBeVisible();
 });
+
+test("the grouping dialog's folder filter narrows the source list without losing selections", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Group workspaces", exact: true }).click();
+  const dialog = page.locator("dialog.workspace-dialog");
+  const options = dialog.locator(".source-option");
+  const filter = dialog.getByLabel("Filter source folders");
+  const summary = dialog.locator(".source-label > span:last-child");
+  await expect(dialog).toBeVisible();
+  await expect(filter).toBeVisible();
+  const paths = await options.allTextContents();
+  expect(paths.length).toBeGreaterThan(2);
+  const matching = paths.filter(path => path.includes("browser-tests"));
+  expect(matching.length).toBeGreaterThan(0);
+  expect(matching.length).toBeLessThan(paths.length);
+  await options.filter({ hasText: "/synthetic/overview-app" }).getByRole("checkbox").check();
+  await expect(summary).toHaveText("1 selected");
+  // The filter ignores case and keeps only matching folders, while the count keeps selections hidden by the filter.
+  await filter.fill(" BROWSER-TESTS ");
+  await expect(options).toHaveCount(matching.length);
+  await expect(options.first()).toContainText("browser-tests");
+  await expect(summary).toHaveText(`${matching.length} of ${paths.length} match · 1 selected`);
+  await options.first().getByRole("checkbox").check();
+  await expect(summary).toHaveText(`${matching.length} of ${paths.length} match · 2 selected`);
+  await filter.fill("no-such-folder");
+  await expect(options).toHaveCount(0);
+  await expect(dialog.locator(".source-empty")).toContainText("No folders match “no-such-folder”.");
+  await dialog.getByRole("button", { name: "Clear filter" }).click();
+  await expect(filter).toHaveValue("");
+  await expect(filter).toBeFocused();
+  await expect(options).toHaveCount(paths.length);
+  await expect(options.getByRole("checkbox", { checked: true })).toHaveCount(2);
+  await expect(summary).toHaveText("2 selected");
+  // Enter in the filter never submits the form, and Escape clears the filter before it closes the dialog.
+  await filter.fill("overview");
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeVisible();
+  await expect(options).toHaveCount(paths.filter(path => path.includes("overview")).length);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await expect(filter).toHaveValue("");
+  await expect(options).toHaveCount(paths.length);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});

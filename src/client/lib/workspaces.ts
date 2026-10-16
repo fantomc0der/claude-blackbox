@@ -7,9 +7,24 @@ export function workspaceSort(value: string | null): WorkspaceSort {
   return value === "cost" || value === "name" ? value : "sessions";
 }
 
-export function visibleWorkspaces(workspaces: Workspace[], sort: WorkspaceSort, filter: string): Workspace[] {
+/** A case-insensitive substring test that treats both path separators alike, so a filter typed either way finds the folder. */
+export function folderMatcher(filter: string): (value: string) => boolean {
   const query = filter.trim().toLocaleLowerCase().replaceAll("\\", "/");
-  const matches = (value: string) => value.toLocaleLowerCase().replaceAll("\\", "/").includes(query);
+  return value => value.toLocaleLowerCase().replaceAll("\\", "/").includes(query);
+}
+
+export interface SourceFolder { path: string; group: string }
+
+/** Every recorded folder the grouping dialog can offer, sorted by path, with the group that already claims it. `filter` narrows the list by path. */
+export function sourceFolders(workspaces: Workspace[], filter = ""): SourceFolder[] {
+  const matches = folderMatcher(filter);
+  return workspaces.flatMap(workspace => workspace.paths.map(path => ({ path, group: workspace.grouped ? workspace.id : "" })))
+    .filter(source => matches(source.path))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+export function visibleWorkspaces(workspaces: Workspace[], sort: WorkspaceSort, filter: string): Workspace[] {
+  const matches = folderMatcher(filter);
   return workspaces.filter(workspace => matches(workspace.name) || workspace.paths.some(matches)).sort((left, right) => {
     const byName = names.compare(left.name, right.name) || names.compare(left.id, right.id) || left.id.localeCompare(right.id);
     if (sort === "sessions") return right.count - left.count || byName;
