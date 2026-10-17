@@ -2,14 +2,14 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
+import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, RecordedCost, RecordedCostTotal, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
 import { sessionStateTypes } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
-import { addUsage, emptyUsage, normalizeModel, rateStamp, readUsage, usageColumns } from "./usage";
+import { addUsage, emptyUsage, normalizeModel, rateStamp, readCostState, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
 import { addedDirectory, buildSummary, changeTools, contentBlocks, isAddDirCommand, placeSummary, recordText, summaryRecordIds, type SummaryCall, type SummaryRoot } from "./summary";
 
@@ -25,6 +25,7 @@ interface SourceRow {
   started: string; updated: string; events: number; messages: number; tools: number; errors: number;
   edits: number; agent: number; size: number; mtime: number; cursor: number; fingerprint: string;
   warnings: number; named: number; identity: string; tailprint: string; group_id?: string; group_name?: string; bookmarked?: number;
+  recorded_cost?: number | null; recorded_started?: string | null; recorded_unknown?: number | null; recorded_models?: string | null;
 }
 
 interface StoredEvent { raw: string; event_id: string; sequence: number; offset: number; text: string }
@@ -76,6 +77,11 @@ const schema = `
     model TEXT NOT NULL DEFAULT '', effort TEXT, rates TEXT NOT NULL DEFAULT '', unrated INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(session_id, request_key)
   );
+  CREATE TABLE IF NOT EXISTS session_costs (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    cost REAL NOT NULL, started TEXT NOT NULL DEFAULT '', unknown_models INTEGER NOT NULL DEFAULT 0,
+    model_usage TEXT NOT NULL DEFAULT '{}'
+  );
   CREATE TABLE IF NOT EXISTS tool_results (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     tool_id TEXT NOT NULL, raw TEXT NOT NULL,
@@ -111,8 +117,10 @@ const schema = `
 `;
 
 const joins = `FROM sessions s LEFT JOIN group_paths gp ON gp.path = s.cwd
-  LEFT JOIN groups g ON g.id = gp.group_id LEFT JOIN bookmarks b ON b.session_id = s.id`;
-const columns = `s.*, g.id AS group_id, g.name AS group_name, (b.session_id IS NOT NULL) AS bookmarked`;
+  LEFT JOIN groups g ON g.id = gp.group_id LEFT JOIN bookmarks b ON b.session_id = s.id
+  LEFT JOIN session_costs sc ON sc.session_id = s.id`;
+const columns = `s.*, g.id AS group_id, g.name AS group_name, (b.session_id IS NOT NULL) AS bookmarked,
+  sc.cost AS recorded_cost, sc.started AS recorded_started, sc.unknown_models AS recorded_unknown, sc.model_usage AS recorded_models`;
 const snippetLimit = 262_144;
 const sessionUsageJoin = `LEFT JOIN (SELECT session_id, count(*) AS usageRequests, count(cost) AS pricedRequests,
   sum(cost) AS knownCost, sum(input+output+cache_creation+cache_read) AS usageTokens
@@ -125,6 +133,14 @@ function toolCondition(column: string, tool: string): string {
 
 function boundedLabel(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 120) || "Untitled session";
+}
+
+/** The `session_costs` row joined onto a session row, or null when the recording carries no `cost-state` record. */
+function recordedCostOf(row: SourceRow): RecordedCost | null {
+  if (typeof row.recorded_cost !== "number") return null;
+  let models: RecordedCost["models"] = {};
+  try { models = JSON.parse(row.recorded_models || "{}") as RecordedCost["models"]; } catch { /* an unreadable breakdown leaves the total */ }
+  return { costUSD: row.recorded_cost, startedAt: row.recorded_started || "", unknownModelCost: row.recorded_unknown === 1, models };
 }
 
 function agentFileId(source: string): string {
@@ -217,7 +233,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 12) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 13) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -342,8 +358,8 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9, 10, 11, and 12 steps below
-    // follow it in order for the same reason.
+    // its port, and before the recordings are compared with what was indexed; the version 9, 10, 11, 12, and 13 steps
+    // below follow it in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
@@ -383,6 +399,13 @@ export class Recorder {
       this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE error=1)");
       this.db.exec("PRAGMA user_version=12");
     })();
+    // Version 13 keeps Claude Code's own running total from the last `cost-state` record of a recording in
+    // `session_costs`, which earlier builds never filled. Only the recordings holding such a record are re-read; finding
+    // them reads every event, like version 8.
+    if (version < 13) this.db.transaction(() => {
+      this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='cost-state')");
+      this.db.exec("PRAGMA user_version=13");
+    })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -412,11 +435,15 @@ export class Recorder {
         if (reset) this.db.transaction(() => {
           this.db.query("DELETE FROM events WHERE session_id = ?").run(id);
           this.db.query("DELETE FROM usage_records WHERE session_id = ?").run(id);
+          this.db.query("DELETE FROM session_costs WHERE session_id = ?").run(id);
           this.db.query("DELETE FROM session_facets WHERE session_id = ?").run(id);
           this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
             messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0 WHERE id=?`).run(id);
         })();
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id)!;
+        // Claude Code files `cost-state` as last-wins, so the last one read replaces the stored total; a read that
+        // appends no new one keeps the total already stored.
+        let recordedCost: RecordedCost | null = null;
         let batch: ReplayEvent[] = [];
         const write = this.db.transaction((events: ReplayEvent[]) => {
           const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text,role,timestamp,model,cwd,has_thinking,has_tools,decision)
@@ -464,6 +491,7 @@ export class Recorder {
           row.cursor = line.nextOffset;
           if (!line.value) { row.warnings += Number(line.malformed); continue; }
           const event = normalize(line.value, id, line.offset, row.events);
+          recordedCost = readCostState(line.value) ?? recordedCost;
           row.events++;
           row.messages += Number(event.category === "message");
           row.tools += event.toolNames.length;
@@ -485,6 +513,8 @@ export class Recorder {
           if (batch.length >= 250) { write(batch); batch = []; await Bun.sleep(0); }
         }
         write(batch);
+        if (recordedCost) this.db.query("INSERT OR REPLACE INTO session_costs(session_id,cost,started,unknown_models,model_usage) VALUES (?,?,?,?,?)")
+          .run(id, recordedCost.costUSD, recordedCost.startedAt, Number(recordedCost.unknownModelCost), JSON.stringify(recordedCost.models));
         const stamp = new Date(info.mtimeMs).toISOString();
         this.db.query(`UPDATE sessions SET cwd=?,title=?,branch=?,model=?,started=?,updated=?,events=?,messages=?,tools=?,errors=?,
           edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=? WHERE id=?`).run(
@@ -558,6 +588,7 @@ export class Recorder {
       active: Date.now() - Date.parse(row.updated) < 120_000 && Date.now() - row.mtime < 120_000,
       source: relative(this.dataDir, row.source),
       usage: this.db.query<UsageSummary, [string]>(`SELECT ${usageColumns} FROM usage_records WHERE session_id=?`).get(row.id)!,
+      recordedCost: recordedCostOf(row),
     };
   }
 
@@ -862,7 +893,11 @@ export class Recorder {
     const usage = emptyUsage();
     for (const directory of directories) addUsage(usage, directory.usage);
     const counted = directoryCounts.reduce((sums, directory) => ({ sessions: sums.sessions + directory.sessions, withUsage: sums.withUsage + directory.withUsage }), { sessions: 0, withUsage: 0 });
-    return { items, total, offset, limit, usage, directories, modelUsage, sessionsWithUsage: counted.withUsage, hiddenAgents: counted.sessions - total, hiddenAgentUsage };
+    // Claude Code's totals are per session and already count that session's subagents, so they are summed over the same
+    // scope as `usage`, hidden subagents included, and a subagent recording contributes only when it carries its own.
+    const recordedCost = this.db.query<RecordedCostTotal, SQLQueryBindings[]>(
+      `SELECT coalesce(sum(sc.cost),0) AS costUSD, count(sc.cost) AS recordings ${selectionJoins} ${usageWhere}`).get(...bindings)!;
+    return { items, total, offset, limit, usage, directories, modelUsage, sessionsWithUsage: counted.withUsage, hiddenAgents: counted.sessions - total, hiddenAgentUsage, recordedCost };
   }
 
   private eventFilter(id: string, params: URLSearchParams): { filter: string; bindings: SQLQueryBindings[] } {

@@ -6,7 +6,7 @@ claude-blackbox keeps one SQLite database, `index.sqlite`, in its state director
 
 `src/server/cli.ts` chooses the state directory: `--state-dir` when given, otherwise `~/.cache/claude-blackbox/<source-directory-hash>/`, where the hash is the first 12 hexadecimal characters of the SHA-256 of the absolute Claude data directory path (`--dir`, else `CLAUDE_CONFIG_DIR`, else `~/.claude`) as given, before directory links are resolved. `Recorder.open()` resolves both the data directory and the state directory through existing directory links, refuses a state directory that is the data directory or lies inside it (compared case-insensitively on Windows), creates the state directory with mode `0700`, and opens `index.sqlite` with `create: true`.
 
-The index is derived data. Every row in `sessions`, `events`, `usage_records`, `tool_results`, `tool_calls`, `session_facets`, and `event_fts` is rebuilt from the JSONL recordings under `<data directory>/projects`, which the server only reads. The three user-owned tables, `bookmarks`, `groups`, and `group_paths`, exist nowhere else; deleting the state directory loses them, as the README says.
+The index is derived data. Every row in `sessions`, `events`, `usage_records`, `session_costs`, `tool_results`, `tool_calls`, `session_facets`, and `event_fts` is rebuilt from the JSONL recordings under `<data directory>/projects`, which the server only reads. The three user-owned tables, `bookmarks`, `groups`, and `group_paths`, exist nowhere else; deleting the state directory loses them, as the README says.
 
 The index holds sensitive, unencrypted transcript content. `events.raw` stores every recorded record verbatim, `events.text` stores its searchable flattening, and `tool_results.raw` stores recorded tool output. Protect the state directory like the Claude directory itself.
 
@@ -20,7 +20,7 @@ On every open, the constructor runs the `schema` script, which begins with three
 
 The code sets no other pragma; `synchronous`, `page_size`, and the rest keep SQLite's defaults. Because of WAL mode, `index.sqlite-wal` and `index.sqlite-shm` sit beside `index.sqlite` while a connection is open. A clean close checkpoints and removes them; after a forced exit they can remain and hold committed data, so a backup of the state directory must include all three files.
 
-The schema version lives in `PRAGMA user_version` and is currently 12 (see [Schema versions](#schema-versions)).
+The schema version lives in `PRAGMA user_version` and is currently 13 (see [Schema versions](#schema-versions)).
 
 ## Derived and user-owned data
 
@@ -29,6 +29,7 @@ The schema version lives in `PRAGMA user_version` and is currently 12 (see [Sche
 | `sessions` | Derived | `reconcile()`, one row per recording file | `reconcile()` when the file is gone from a complete scan |
 | `events` | Derived | `reconcile()`, one row per complete JSONL record | A re-index of its recording, or the cascade from `sessions` |
 | `usage_records` | Derived | `reconcile()` from `readUsage()` in `src/server/usage.ts` | A re-index, or the cascade from `sessions` |
+| `session_costs` | Derived | `reconcile()` from `readCostState()` in `src/server/usage.ts`, at most one row per recording | A re-index, or the cascade from `sessions` |
 | `tool_results` | Derived | `reconcile()` from `tool_result` blocks | The cascade from `events` or `sessions` |
 | `tool_calls` | Derived | `reconcile()` from `tool_use` blocks | The cascade from `events` or `sessions` |
 | `session_facets` | Derived | `reconcile()` | A re-index, or the cascade from `sessions` |
@@ -37,7 +38,7 @@ The schema version lives in `PRAGMA user_version` and is currently 12 (see [Sche
 | `groups` | User-owned | `saveGroup()` behind `POST /api/groups` | `deleteGroup()` behind `DELETE /api/groups/:id` |
 | `group_paths` | User-owned | `saveGroup()` | `saveGroup()` rewriting a group, or the cascade from `groups` |
 
-Resets and migrations preserve the user-owned tables by construction. No migration drops a table or deletes rows; every reset is the single statement `UPDATE sessions SET mtime=0, identity=''`, which only marks recordings for re-reading. When the next scan re-reads a marked recording, it deletes that recording's `events`, `usage_records`, and `session_facets` rows (the `tool_results` and `tool_calls` rows go with their events through `ON DELETE CASCADE`) and zeroes the counters on the `sessions` row, but the `sessions` row itself and its `id` stay. The id is deterministic, the first 24 hexadecimal characters of the SHA-256 of the recording's path relative to the data directory, so a `bookmarks` row keeps matching its recording across any number of re-indexes, and so does a `group_paths` row, which is keyed by the working directory rather than by a recording at all.
+Resets and migrations preserve the user-owned tables by construction. No migration drops a table or deletes rows; every reset is the single statement `UPDATE sessions SET mtime=0, identity=''`, which only marks recordings for re-reading. When the next scan re-reads a marked recording, it deletes that recording's `events`, `usage_records`, `session_costs`, and `session_facets` rows (the `tool_results` and `tool_calls` rows go with their events through `ON DELETE CASCADE`) and zeroes the counters on the `sessions` row, but the `sessions` row itself and its `id` stay. The id is deterministic, the first 24 hexadecimal characters of the SHA-256 of the recording's path relative to the data directory, so a `bookmarks` row keeps matching its recording across any number of re-indexes, and so does a `group_paths` row, which is keyed by the working directory rather than by a recording at all.
 
 Neither `bookmarks.session_id` nor `group_paths.path` declares a foreign key to `sessions`. A bookmark of a recording whose file disappears stays in the table as an orphan that no query returns (the catalog counts bookmarks through a join on `sessions`), and matches again if a recording with the same relative path returns. `saveGroup()` checks each path against `sessions.cwd` only at save time.
 
@@ -49,6 +50,7 @@ Solid lines are declared foreign keys, all with `ON DELETE CASCADE`. Dotted line
 erDiagram
   sessions ||--o{ events : "session_id"
   sessions ||--o{ usage_records : "session_id"
+  sessions ||--o| session_costs : "session_id"
   sessions ||--o{ session_facets : "session_id"
   sessions ||--o{ tool_calls : "session_id"
   sessions ||--o{ tool_results : "session_id"
@@ -123,6 +125,13 @@ erDiagram
     TEXT effort
     TEXT rates
     INTEGER unrated
+  }
+  session_costs {
+    TEXT session_id PK, FK
+    REAL cost "Claude Code's totalCostUSD"
+    TEXT started
+    INTEGER unknown_models
+    TEXT model_usage "JSON by normalized model"
   }
   tool_calls {
     TEXT session_id PK, FK
@@ -241,6 +250,20 @@ The primary key is `(session_id, request_key)`. The insert is an upsert: a confl
 
 Indexes: `usage_efforts` on `(effort)` serves the catalog's distinct effort list and the `effort` and `effortMissing` filters.
 
+### session_costs
+
+At most one row per recording: Claude Code's own running total for the session, from the last `cost-state` record in the file. `readCostState()` in `src/server/usage.ts` returns a total for a record whose `type` is `cost-state` and whose `totalCostUSD` is a finite non-negative number; `reconcile()` keeps the last one it reads and writes it with `INSERT OR REPLACE` after the recording's events, so an incremental read that appends a newer record replaces the row and one that appends none keeps it. Claude Code writes the record at the end of each turn and on resume, files the type as last-wins, and restores its tracker from it, so the total spans the whole session, including its subagents and the requests Claude Code bills but never writes to a recording (prompt suggestions, compaction, summaries, memory extraction, hook evaluations). The listing sums `cost` over the recordings in a selection and counts the rows, and each session carries its row as `recordedCost`.
+
+| Column | Type and constraints | Meaning and source |
+| --- | --- | --- |
+| `session_id` | `TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE` | The recording's `sessions.id`. |
+| `cost` | `REAL NOT NULL` | The record's `totalCostUSD`. |
+| `started` | `TEXT NOT NULL DEFAULT ''` | The record's `startTime`, a millisecond epoch number or a date string, as an ISO string; empty when missing or unparseable. |
+| `unknown_models` | `INTEGER NOT NULL DEFAULT 0` | 1 when the record has `hasUnknownModelCost: true`. |
+| `model_usage` | `TEXT NOT NULL DEFAULT '{}'` | `JSON.stringify` of an object keyed by `normalizeModel()` of each `modelUsage` key (Claude Code records the requested model string, such as `claude-opus-5[1m]` or `claude-haiku-4-5-20251001`; a key that does not pass `isFacetValue()` is dropped). Each value holds `inputTokens`, `outputTokens`, `thinkingTokens`, `cacheCreationTokens` (from `cacheCreationInputTokens`), `cacheReadTokens` (from `cacheReadInputTokens`), `webSearchRequests`, and `costUSD`, summed over the keys that normalize to the same model; a missing or malformed count is 0. |
+
+Indexes: none beyond the primary key, which also serves the cascade from `sessions` and the join in `columns`.
+
 ### tool_results
 
 One row per `tool_result` block, so a recorded result can be fetched by the id of the call it answers.
@@ -338,7 +361,7 @@ Interrupted imports are repaired at the next open. The constructor selects every
 
 ## Schema versions
 
-`PRAGMA user_version` records which normalization the derived rows were written with. The constructor reads it first and throws `This index was created by a newer version. Choose a different state directory.` when it is greater than 12, so after an upgrade an older installed build cannot open the index. It then runs the `schema` script (its pragmas, then `CREATE ... IF NOT EXISTS` statements), adds any column that `PRAGMA table_info` reports missing, creates the indexes of version 5, and applies the version steps in order. Versions 1 and 3 were never written by any build: the gate started at 2 and later moved from 2 to 4 directly.
+`PRAGMA user_version` records which normalization the derived rows were written with. The constructor reads it first and throws `This index was created by a newer version. Choose a different state directory.` when it is greater than 13, so after an upgrade an older installed build cannot open the index. It then runs the `schema` script (its pragmas, then `CREATE ... IF NOT EXISTS` statements), adds any column that `PRAGMA table_info` reports missing, creates the indexes of version 5, and applies the version steps in order. Versions 1 and 3 were never written by any build: the gate started at 2 and later moved from 2 to 4 directly.
 
 | Version | Introduced | What changed | Upgrade |
 | --- | --- | --- | --- |
@@ -353,6 +376,7 @@ Interrupted imports are repaired at the next open. The constructor selects every
 | 10 | 2026-10-17 | A session state record (`last-prompt`, `atis-latch`, `queue-operation`, `cost-state`, and the other types in `src/shared/records.ts`) indexes as a system record with no blocks, with the prompt copies in `last-prompt.lastPrompt` and `queue-operation.content` left out of its searchable text. | Targeted reset at the start of the first scan after open: recordings with an event of one of those types are marked for re-reading and the version is set in the same transaction. |
 | 11 | 2026-10-17 | An `assistant` record that Claude Code wrote itself in place of a model turn (`message.model` of `<synthetic>`, or `isApiErrorMessage: true`) is classified as `synthetic` instead of `message`, and an API error sets the error flag. | Targeted reset at the start of the first scan after open: recordings with an `assistant` event whose `model` column is `<synthetic>` are marked for re-reading and the version is set in the same transaction. |
 | 12 | 2026-10-17 | `events.decision`; a `tool_result` that records a permission denial, a hook stop, or an interruption sets `decision` instead of `error`. | Targeted reset at the start of the first scan after open: recordings with an event whose `error` is 1 are marked for re-reading and the version is set in the same transaction. Every result an earlier build flagged is in that group. |
+| 13 | 2026-10-17 | `session_costs`: Claude Code's own running total from the last `cost-state` record of a recording, with `modelUsage` keyed by normalized model. | Targeted reset at the start of the first scan after open: recordings with an event of type `cost-state` are marked for re-reading and the version is set in the same transaction. The table itself is created by the `schema` script on open. |
 
 "Full reset on open" is `UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=6;`, which runs whenever the version is below 6, or whenever the `tool_results` or `session_facets` table did not exist before the `schema` script ran, so any index older than version 6 is re-read in full and then passes through the version 7 to 12 steps. Versions up to 7 complete inside the constructor, before `Recorder.open()` returns. Versions 8 to 12 are different: version 8 reads every event to find the recordings holding `api-request-blob` records, version 9 reads stored user records to retitle recordings, version 10 reads every event to find the recordings holding session state records, version 11 reads every event to find the recordings holding a `<synthetic>` assistant record, and version 12 reads every event to find the recordings with an error, so `reconcile()` performs all five, in that order, when the first scan begins. `src/server/cli.ts` opens the recorder with `scan: false`, binds the HTTP port, and only then starts that scan, so a large index does not delay the desktop window. Until that scan runs, the version stays at the stored 7 to 11 and the derived rows are those of that version; the `decision` column already exists by then, added through the `PRAGMA table_info` check with its default of 0.
 
@@ -414,9 +438,9 @@ The existing migrations follow one pattern; a change should follow it too.
 
 - Decide whether the derived rows change. A new column with a default, filled only for new records, needs the `PRAGMA table_info` check and `ALTER TABLE ... ADD COLUMN` in the constructor, and nothing else, as `rates` and `unrated` show. A change in how `normalize()`, `readUsage()`, or the facet rules read a record needs a version bump, because unchanged recordings are never re-read.
 - Bump the version and the gate together: raise `if (version > N) throw` to the new number and set `PRAGMA user_version=N` in the step that completes the upgrade. The step must run only when the stored version is below the new one.
-- Choose the smallest reset. A targeted `UPDATE sessions SET mtime=0, identity='' WHERE id IN (...)` re-reads only the affected recordings (versions 8, 10, 11, and 12); an in-place `UPDATE` fixes stored values without re-reading anything (versions 7 and 9); the full reset is for changes that touch every record (versions 2 to 6). Never delete rows directly; the scan's own reset path deletes and rebuilds them.
+- Choose the smallest reset. A targeted `UPDATE sessions SET mtime=0, identity='' WHERE id IN (...)` re-reads only the affected recordings (versions 8, 10, 11, 12, and 13); an in-place `UPDATE` fixes stored values without re-reading anything (versions 7 and 9); the full reset is for changes that touch every record (versions 2 to 6). Never delete rows directly; the scan's own reset path deletes and rebuilds them.
 - Leave `bookmarks`, `groups`, and `group_paths` alone, and keep `sessions.id` deterministic, so bookmarks and groups keep matching their recordings.
 - Put an index on any new column that joins or filters, in the constructor if the column can arrive through `ALTER TABLE`, and remember that a foreign key with `ON DELETE CASCADE` needs an index on the child column for the cascade to stay fast.
-- Keep heavy work out of the constructor when it would delay port binding. Anything that reads every event, or stored records of every recording, belongs at the start of `reconcile()`, gated on the stored version like the version 8, 9, 10, 11, and 12 steps, so `cli.ts` can bind the port first.
+- Keep heavy work out of the constructor when it would delay port binding. Anything that reads every event, or stored records of every recording, belongs at the start of `reconcile()`, gated on the stored version like the version 8, 9, 10, 11, 12, and 13 steps, so `cli.ts` can bind the port first.
 - Add a migration test in `tests/discovery.test.ts` next to the existing `version N indexes ...` tests: index synthetic recordings into a fresh state directory, rewrite the database into the older shape (drop the new table or columns, write the old values, set `PRAGMA user_version` to the old number), close, reopen, and assert the upgraded rows, the final `user_version`, and that bookmarks and the source files are untouched. For a step that runs at scan time, open with `scan: false`, assert the version is still the old one, then call `scan()`.
 - Update this document, including its entity relationship diagram, and the data flow paragraph in `docs/architecture.md`.

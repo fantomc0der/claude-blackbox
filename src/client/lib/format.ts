@@ -1,8 +1,23 @@
-import type { Session, UsageSummary } from "../../shared/types";
+import type { RecordedCost, RecordedCostTotal, Session, UsageSummary } from "../../shared/types";
 
 export function dollars(value: number): string {
   if (value > 0 && value < 0.01) return "<$0.01";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+}
+
+/** Why Claude Code's own total normally runs above the estimate: the estimate covers only the requests a recording holds. */
+export const recordedCostNote = "Its running total also counts the session's subagents and the requests Claude Code bills but never writes to a recording, such as prompt suggestions, compaction, summaries, memory extraction, and hook evaluations, so the estimate from the recorded requests is a lower bound.";
+
+/** States Claude Code's own total for one session or for a selection, before `recordedCostNote` explains the gap. */
+export function recordedCostSummary(recorded: RecordedCost | RecordedCostTotal): string {
+  if (!("recordings" in recorded)) return `Claude Code recorded ${dollars(recorded.costUSD)} for this session.`;
+  return `Claude Code recorded ${dollars(recorded.costUSD)} across ${tokenCount(recorded.recordings)} of these recordings.`;
+}
+
+/** Claude Code's per-model costs from its running total, largest first, as `model $x · model $y`. */
+export function recordedModelCosts(recorded: RecordedCost): string {
+  return Object.entries(recorded.models).sort(([, left], [, right]) => right.costUSD - left.costUSD)
+    .map(([model, usage]) => `${modelName(model)} ${dollars(usage.costUSD)}`).join(" · ");
 }
 
 export function usageCost(usage: UsageSummary): string {

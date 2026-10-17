@@ -1,6 +1,6 @@
 import { createSignal, For, Show } from "solid-js";
-import type { ModelUsage, SessionPage, UsageSummary } from "../../shared/types";
-import { compact, effortName, modelName, pricingGap, tokenCount, usageCost } from "../lib/format";
+import type { ModelUsage, RecordedCost, RecordedCostTotal, SessionPage, UsageSummary } from "../../shared/types";
+import { compact, effortName, modelName, pricingGap, recordedCostNote, recordedCostSummary, tokenCount, usageCost } from "../lib/format";
 import { sortUsage, type UsageSort } from "../lib/usage-sort";
 import { Icon } from "./icon";
 
@@ -26,10 +26,16 @@ function unratedTitle(usage: UsageSummary): string {
   return `Leaves out ${tokenCount(usage.unratedRequests)} ${usage.unratedRequests === 1 ? "request" : "requests"} from models Claude Blackbox does not recognize yet`;
 }
 
-export function UsageNote(props: { usage: UsageSummary; unratedModels?: string[] }) {
+/** A recording's own `cost-state` total, or a selection's sum of them; shown only when at least one recording carries it. */
+function recordedCost(recorded: RecordedCost | RecordedCostTotal | null | undefined): RecordedCost | RecordedCostTotal | null {
+  return recorded && (!("recordings" in recorded) || recorded.recordings > 0) ? recorded : null;
+}
+
+export function UsageNote(props: { usage: UsageSummary; unratedModels?: string[]; recorded?: RecordedCost | RecordedCostTotal | null }) {
   return <div class="usage-note">
     <Show when={props.usage.unpricedRequests}><p class="usage-warning">{pricingGap(props.usage, props.unratedModels ?? [])}</p></Show>
-    <p>USD API equivalent, not your Claude subscription bill. Uses recorded costs when available; otherwise bundled model rates (Oct 16, 2026). Historical rates, provider discounts and tool fees may differ.</p>
+    <Show when={recordedCost(props.recorded)}>{recorded => <p class="usage-recorded">{recordedCostSummary(recorded())} {recordedCostNote}</p>}</Show>
+    <p>USD API equivalent for the requests the recordings hold, not your Claude subscription bill. Uses a request's recorded cost when available; otherwise bundled model rates (Oct 16, 2026). Historical rates, provider discounts and tool fees may differ.</p>
   </div>;
 }
 
@@ -100,7 +106,7 @@ export function UsageBreakdown(props: { page: SessionPage | null; open: boolean;
             </table>
           }><ModelExpenses rows={sortUsage(page().modelUsage, sort(), row => `${row.model}\n${row.effort || ""}`)} usage={page().usage} filterModel={props.filterModel} /></Show>
           <p class="usage-scope">{tokenCount(page().usage.requests)} unique requests. Cache tokens are included. Repeated messages are counted once across the selection; shared history is assigned to one source folder. Date filters select recordings by their last activity, not individual requests.</p>
-          <UsageNote usage={page().usage} unratedModels={[...new Set(page().modelUsage.filter(row => row.usage.unratedRequests && row.model).map(row => row.model))]} />
+          <UsageNote usage={page().usage} unratedModels={[...new Set(page().modelUsage.filter(row => row.usage.unratedRequests && row.model).map(row => row.model))]} recorded={page().recordedCost} />
         </Show>
       </>}</Show>
   </div>;
