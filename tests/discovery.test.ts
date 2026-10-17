@@ -272,15 +272,19 @@ test("version 7 indexes re-index only the recordings that hold API request messa
 });
 
 // When an API request fails for good, Claude Code records the failure itself as an `assistant` record marked
-// `isApiErrorMessage` with the error kind and HTTP status, the `<synthetic>` model, and zero usage. It writes other
-// stand-ins, such as `No response requested.`, the same way without the error marks.
+// `isApiErrorMessage` with the error kind and HTTP status, the `<synthetic>` model, and zero usage; 2.1.302 writes an
+// overload answered with 529 as server_error. It writes other stand-ins, such as `No response requested.`, the same way
+// without the error marks.
 const standIn = (uuid: string, parentUuid: string, timestamp: string, text: string, extra: Record<string, unknown> = {}) => ({
   type: "assistant", uuid, parentUuid, timestamp, cwd: "/synthetic/project", sessionId: "s1", ...extra,
   message: { id: `synthetic-${uuid}`, model: "<synthetic>", role: "assistant", type: "message", stop_reason: "stop_sequence", content: [{ type: "text", text }],
     usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
 });
 const apiErrorText = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
-const apiError = (uuid: string, parentUuid: string, timestamp: string) => standIn(uuid, parentUuid, timestamp, apiErrorText, { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } });
+const apiError = (uuid: string, parentUuid: string, timestamp: string) => standIn(uuid, parentUuid, timestamp, apiErrorText, { isApiErrorMessage: true, error: "server_error", apiErrorStatus: 529 });
+// Claude Code shows this banner while it waits to retry a request; 2.1.302 never writes it, but a version that did
+// would write it at the error level.
+const apiRetry = (uuid: string, timestamp: string) => ({ type: "system", subtype: "api_error", level: "error", error: { status: 529 }, retryInMs: 4210, retryAttempt: 1, maxRetries: 10, uuid, timestamp, cwd: "/synthetic/project", sessionId: "s1" });
 
 test("API error turns and other Claude Code stand-ins count as errors, never as Claude responses", async () => {
   const setup = await fixture();
@@ -290,22 +294,30 @@ test("API error turns and other Claude Code stand-ins count as errors, never as 
     standIn("a2", "a1", "2026-10-17T10:00:06Z", "No response requested."),
     { type: "assistant", uuid: "a3", parentUuid: "a2", timestamp: "2026-10-17T10:00:07Z", cwd: "/synthetic/project", sessionId: "s1",
       message: { id: "m1", model: "model-a", role: "assistant", content: [{ type: "text", text: "Login test fixed" }], usage: { input_tokens: 10, output_tokens: 5 } } },
+    apiRetry("r1", "2026-10-17T10:00:08Z"),
+    // A stand-in last of all still leaves the recording's model at the last model that answered.
+    standIn("a4", "a3", "2026-10-17T10:00:09Z", "No response requested."),
   ]);
   const recorder = await setup.open();
   const session = recorder.list(new URLSearchParams()).items[0];
   const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
   expect([session.messageCount, session.errorCount, session.usage.requests, session.model]).toEqual([2, 1, 1, "model-a"]);
   const all = events("kind=all");
-  expect(all.items.map(event => [event.role, event.category, event.error])).toEqual([["user", "message", false], ["assistant", "synthetic", true], ["assistant", "synthetic", false], ["assistant", "message", false]]);
+  expect(all.items.map(event => [event.role, event.category, event.error])).toEqual([
+    ["user", "message", false], ["assistant", "synthetic", true], ["assistant", "synthetic", false], ["assistant", "message", false],
+    ["system", "system", false], ["assistant", "synthetic", false],
+  ]);
   expect(all.items[1].blocks).toEqual([{ type: "text", text: apiErrorText }]);
-  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 1, 2, 3]);
+  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 1, 2, 3, 5]);
   expect(events("kind=responses").items.map(event => event.sequence)).toEqual([3]);
   expect(events("kind=all&errors=1").items.map(event => event.sequence)).toEqual([1]);
   expect(recorder.timeline(session.id, new URLSearchParams("kind=all")).buckets.map(bucket => bucket.errors)).toEqual([1]);
   expect(recorder.list(new URLSearchParams("errors=1")).items.map(item => item.id)).toEqual([session.id]);
   expect(recorder.list(new URLSearchParams("q=Overloaded")).items[0]).toMatchObject({ matchCategory: "synthetic", matchRole: "assistant" });
+  // The `<synthetic>` model is no model, so neither the replay's nor the library's model filter offers it.
+  expect(all.facets.models).toEqual(["model-a"]);
   const catalog = await recorder.catalog();
-  expect([catalog.messages, catalog.errors]).toEqual([2, 1]);
+  expect([catalog.messages, catalog.errors, catalog.models]).toEqual([2, 1, ["model-a"]]);
 });
 
 test("version 10 indexes re-index only the recordings that hold Claude Code's stand-ins", async () => {
@@ -422,14 +434,15 @@ test("version 16 indexes re-index only the recordings whose results Claude Code 
   const setup = await fixture();
   await setup.write("kinded", [record("Deploy the release"), kinded("deploy-call", "Deploys are frozen until Monday.", "permission-rule")]);
   await setup.write("skipped", [record("Run the batch"), toolResult("batch-call", skipped)]);
+  await setup.write("retried", [record("Retry the request"), apiRetry("r1", "2026-09-20T12:00:05Z")]);
   await setup.write("cancelled", [record("Clean the install"), toolResult("rm-call", denial)]);
   await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
   const before = await setup.open();
   const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
   before.bookmark(sessions["Deploy the release"], true);
   // Indexes written before version 17 read no kind, so a rule's denial in its own words, and a skipped call, were failures,
-  // and the stored result kept no kind.
-  for (const title of ["Deploy the release", "Run the batch"]) {
+  // and the stored result kept no kind; a retry banner was an error for its level.
+  for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) {
     before.db.query("UPDATE events SET error=1, decision=0 WHERE session_id=? AND sequence=1").run(sessions[title]);
     before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions[title]);
   }
@@ -446,7 +459,8 @@ test("version 16 indexes re-index only the recordings whose results Claude Code 
   expect(after.getSession(sessions["Deploy the release"])?.errorCount).toBe(1);
   await after.scan();
   expect(version()).toBe(17);
-  for (const title of ["Deploy the release", "Run the batch"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
+  for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
+  expect(after.getSession(sessions["Retry the request"])?.errorCount).toBe(0);
   // A decision an earlier build recognized keeps its flag and takes its new label from the stored record, unread.
   for (const title of ["Clean the install", "Run the tests"]) expect(cwds(sessions[title])).toEqual(["/synthetic/stale"]);
   expect(["Deploy the release", "Run the batch", "Clean the install", "Run the tests"].map(title => after.getSession(sessions[title])?.errorCount)).toEqual([0, 0, 0, 1]);

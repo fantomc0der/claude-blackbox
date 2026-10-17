@@ -1,6 +1,6 @@
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { noteFiling } from "../shared/records";
+import { apiRetry, noteFiling } from "../shared/records";
 import type { ContentBlock, ReplayEvent } from "../shared/types";
 
 export function object(value: unknown): Record<string, unknown> {
@@ -42,9 +42,10 @@ export const requestMessageType = "api-request-blob";
 const copiedBlocks = new Set(["tool_use", "tool_result", "thinking", "redacted_thinking"]);
 
 // When an API request fails for good, or a turn ends without a reply, Claude Code writes an `assistant` record itself:
-// `message.model` is `<synthetic>`, an API error also carries `isApiErrorMessage: true` with the error kind and HTTP
-// status, and its text is the error or a stand-in such as `No response requested.`. None of it is model output, so such
-// a record is never a message, and an API error is an error.
+// `message.model` is `<synthetic>`, an API error also carries `isApiErrorMessage: true` with the error kind in `error`,
+// a cause in `apiError`, and the HTTP status, when there was one, in `apiErrorStatus`, and its text is the error or a
+// stand-in such as `No response requested.`. None of it is model output, so such a record is never a message, and an
+// API error is an error.
 export const syntheticModel = "<synthetic>";
 
 export function isApiError(raw: Record<string, unknown>): boolean {
@@ -106,7 +107,8 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
   const stamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(string(raw.timestamp));
   // A result Claude Code marked `is_error` because the user, a permission rule, a hook, or the auto mode classifier
   // stopped the tool, or because the call was interrupted or cancelled, records a decision, not a failure; only the
-  // remaining `is_error` results, error-level records, and API error turns are errors.
+  // remaining `is_error` results, error-level records, and API error turns are errors. Claude Code's API retry banner is
+  // error-level but never an error, should a version write one.
   const decisions = blocks.map(resultDecision);
   return {
     id: `${sourceId}-${offset}`,
@@ -119,7 +121,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     text,
     category: role === "system" ? "system" : isStandIn(raw) ? "synthetic" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
     toolNames: tools.map(block => block.name || "Unknown tool"),
-    error: blocks.some((block, index) => block.is_error === true && !decisions[index]) || raw.is_error === true || raw.level === "error" || isApiError(raw),
+    error: blocks.some((block, index) => block.is_error === true && !decisions[index]) || raw.is_error === true || (raw.level === "error" && !apiRetry(raw)) || isApiError(raw),
     decision: decisions.find(decision => decision !== null) ?? null,
     parentId: string(raw.parentUuid) || undefined,
     uuid: string(raw.uuid) || undefined,

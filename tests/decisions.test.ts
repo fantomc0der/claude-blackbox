@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { decisionLabels, resultDecision } from "../src/shared/decisions";
 import { normalize } from "../src/server/normalize";
+import { apiRetry } from "../src/shared/records";
 
 const result = (content: unknown, is_error = true, extra: Record<string, unknown> = {}) => ({ type: "tool_result", tool_use_id: "call-1", content, is_error, ...extra }) as Parameters<typeof resultDecision>[0];
 const user = (content: unknown, extra: Record<string, unknown> = {}) => normalize({ type: "user", timestamp: "2026-10-17T10:00:02Z", message: { role: "user", content }, ...extra }, "s", 0, 0);
@@ -127,5 +128,14 @@ describe("normalized error flags", () => {
     expect([turn.error, turn.decision, turn.role, turn.category]).toEqual([true, null, "assistant", "synthetic"]);
     expect(normalize({ type: "assistant", message: { model: "claude-sonnet-5-5", content: "Done." } }, "s", 0, 2).error).toBe(false);
     expect(normalize({ type: "system", level: "error", content: "Hook failed" }, "s", 0, 3).error).toBe(true);
+  });
+
+  // Claude Code 2.1.302 shows this banner while it waits to retry a request and never writes it to a recording.
+  test("never counts an API retry banner as an error, whatever its level", () => {
+    const banner = { type: "system", subtype: "api_error", level: "error", error: { status: 529 }, retryInMs: 4210, retryAttempt: 2, maxRetries: 10, timestamp: "2026-10-17T10:00:04Z", uuid: "r1" };
+    expect([normalize(banner, "s", 0, 4).error, normalize(banner, "s", 0, 4).category]).toEqual([false, "system"]);
+    expect(apiRetry(banner)).toEqual({ attempt: 2, limit: 10, waitMs: 4210 });
+    expect(apiRetry({ ...banner, retryAttempt: "2", maxRetries: -1, retryInMs: Number.POSITIVE_INFINITY })).toEqual({ attempt: null, limit: null, waitMs: null });
+    expect([apiRetry({ ...banner, type: "assistant" }), apiRetry({ ...banner, subtype: "turn_duration" })]).toEqual([null, null]);
   });
 });

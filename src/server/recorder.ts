@@ -526,15 +526,18 @@ export class Recorder {
       for (const id of stale) reset.run(id);
       this.db.exec("PRAGMA user_version=16");
     })();
-    // Version 17 reads Claude Code's `toolDenialKind` before a result's message and tells its interruptions and
-    // cancellations apart from its denials. A decision an earlier build recognized stays a decision, and its label is
-    // read from the stored record whenever it is shown, so only two groups of recordings are re-read: those holding a
-    // flagged or decided record with a `toolDenialKind`, whose stored results lack the kind `normalize()` now copies
-    // onto them, and those holding a failure whose record carries part of a message version 17 first reads as a
-    // decision. Finding them reads the records an earlier build flagged or decided, like version 12.
+    // Version 17 reads Claude Code's `toolDenialKind` before a result's message, tells its interruptions and
+    // cancellations apart from its denials, and never counts its API retry banner as an error. A decision an earlier
+    // build recognized stays a decision, and its label is read from the stored record whenever it is shown, so only
+    // three groups of recordings are re-read: those holding a flagged or decided record with a `toolDenialKind`, whose
+    // stored results lack the kind `normalize()` now copies onto them; those holding a failure whose record carries part
+    // of a message version 17 first reads as a decision; and those holding a flagged `system` record of subtype
+    // `api_error`, which no 2.1.302 recording holds. Finding them reads the records an earlier build flagged or decided,
+    // like version 12.
     if (version < 17) this.db.transaction(() => {
       this.db.query(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE (error=1 OR decision=1)
-        AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(events.raw,value)>0))))`)
+        AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(events.raw,value)>0))
+          OR (error=1 AND type='system' AND instr(raw,'"subtype":"api_error"')>0)))`)
         .run(JSON.stringify(version17DecisionTexts));
       this.db.exec("PRAGMA user_version=17");
     })();

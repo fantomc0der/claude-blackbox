@@ -212,12 +212,15 @@ await writeFile(join(folder, "request-copies.jsonl"), [
   apiRequest(60, ["copy-hash-3"]),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // When an API request fails for good, Claude Code records the failure itself as an `assistant` record with the
-// `<synthetic>` model, marked `isApiErrorMessage`; `No response requested.` is another stand-in it writes the same way.
+// `<synthetic>` model, marked `isApiErrorMessage` with the kind, a cause code, and the HTTP status; `No response
+// requested.` is another stand-in it writes the same way. The retry banner before it is error-level, which 2.1.302 only
+// shows on screen, but it is not an error.
 const standIn = (sequence: number, text: string, extra: Record<string, unknown> = {}) => ({ ...event(text, sequence, "assistant"), ...extra,
   message: { role: "assistant", model: "<synthetic>", content: [{ type: "text", text }], usage: { input_tokens: 0, output_tokens: 0 } } });
 await writeFile(join(folder, "api-errors.jsonl"), [
   event("API error verification", 0),
-  standIn(1, 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}', { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } }),
+  { type: "system", subtype: "api_error", level: "error", error: { status: 429 }, retryInMs: 4210, retryAttempt: 2, maxRetries: 10, uuid: "browser-retry", cwd: "/synthetic/browser-tests", timestamp: "2026-01-01T00:00:00Z" },
+  standIn(1, 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Usage limit reached"}}', { isApiErrorMessage: true, error: "rate_limit", apiError: "usage_limit_reached", apiErrorStatus: 429 }),
   standIn(2, "No response requested."),
   event("The login test passes after the retry.", 3, "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");

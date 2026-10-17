@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from "solid-js";
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
-import { noteFiling, thinkingMeasure, turnDuration } from "../../shared/records";
+import { apiRetry, noteFiling, thinkingMeasure, turnDuration } from "../../shared/records";
 import {
   apiErrorLabel,
   boundedDiff,
@@ -309,6 +309,20 @@ function TurnDurationNote(props: { event: ReplayEvent; durationMs: number; highl
   </>;
 }
 
+type ApiRetry = NonNullable<ReturnType<typeof apiRetry>>;
+
+const apiRetryDetail = "Claude Code shows this record while it waits to retry a failed API request, and 2.1.302 never writes it to a recording. The request it retries can still succeed, and one that fails for good is recorded as an API error turn, so a retry is not counted as an error. Raw event shows the record.";
+
+// A retry reads as a one-line note with its attempt and wait rather than as an error card. Like a turn's measured time,
+// its searchable text shows only when a highlighted term is in it.
+function ApiRetryNote(props: { event: ReplayEvent; retry: ApiRetry; highlight?: string }) {
+  const highlighted = () => Boolean(props.highlight) && mentions(props.event.text, props.highlight!);
+  return <>
+    <p class="tool-hidden" title={apiRetryDetail}>API retry<Show when={props.retry.attempt !== null}> · attempt {props.retry.attempt}<Show when={props.retry.limit !== null}> of {props.retry.limit}</Show></Show><Show when={props.retry.waitMs !== null}> · retry after {duration(props.retry.waitMs!)}</Show></p>
+    <Show when={highlighted()}><CodePanel title="api_error record" value={props.event.text} highlight={props.highlight} json /></Show>
+  </>;
+}
+
 const requestMessageDetail = "Claude Code stores each message it sends to the API once, just before the request that first sends it. Assistant turns, tool calls and results, and reasoning repeat records shown elsewhere in this recording; context Claude Code composed for the request, such as hook output, may appear only here.";
 
 // Request messages mostly repeat records the replay already shows, so they stay closed unless a highlighted term is in
@@ -384,6 +398,7 @@ export function EventCard(props: EventCardProps) {
   const hasBlocks = createMemo(() => props.event.blocks.length > 0);
   const measure = createMemo(() => thinkingMeasure(props.event.raw));
   const turn = createMemo(() => turnDuration(props.event.raw));
+  const retry = createMemo(() => apiRetry(props.event.raw));
   const recordedModel = () => isRecord(props.event.raw.message) ? getString(props.event.raw.message.model) : undefined;
   const permalink = () => {
     const url = new URL(location.href);
@@ -399,6 +414,7 @@ export function EventCard(props: EventCardProps) {
       <Match when={note()}>{filing => <RecordNote event={props.event} filing={filing()} highlight={props.highlight} />}</Match>
       <Match when={isRequestMessage(props.event)}><p class="tool-hidden" title={`${requestMessageDetail} Raw event shows this copy.`}>Message stored for the API request that follows</p></Match>
       <Match when={turn() !== null}><TurnDurationNote event={props.event} durationMs={turn()!} highlight={props.highlight} /></Match>
+      <Match when={retry()}>{value => <ApiRetryNote event={props.event} retry={value()} highlight={props.highlight} />}</Match>
       <Match when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Match>
       <Match when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Match>
     </Switch><Show when={props.requestMessages}>{run => <RequestMessages run={run()} highlight={props.highlight} />}</Show></div>

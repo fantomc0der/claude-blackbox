@@ -151,6 +151,19 @@ export function turnDuration(raw: Record<string, unknown>): number | null {
 }
 
 /**
+ * Claude Code shows a `system` record of subtype `api_error` while it waits to retry a failed API request, with the
+ * attempt in `retryAttempt`, the limit in `maxRetries`, and the wait in `retryInMs`; 2.1.302 never writes one to a
+ * recording. Its `level` is `error`, but the request it retries can still succeed, and one that fails for good is
+ * recorded as an API error turn, so a retry is never an error itself. Returns what it carries, each null when it is
+ * not a count or a duration, or null for any other record.
+ */
+export function apiRetry(raw: Record<string, unknown>): { attempt: number | null; limit: number | null; waitMs: number | null } | null {
+  if (raw.type !== "system" || raw.subtype !== "api_error") return null;
+  const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  return { attempt: count(raw.retryAttempt), limit: count(raw.maxRetries), waitMs: recordedDuration(raw.retryInMs) };
+}
+
+/**
  * The time the model spent on a reasoning step, from the `thinkingDurationMs` Claude Code writes on the assistant
  * record that carries the thinking block, with the `thinking_tokens` the API reported for it when present. Claude Code
  * itself only trusts a safe integer of at least one millisecond. Null when the record measured nothing.

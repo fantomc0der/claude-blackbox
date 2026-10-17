@@ -57,14 +57,21 @@ export function isApiError(event: Pick<ReplayEvent, "raw">): boolean {
   return event.raw.isApiErrorMessage === true;
 }
 
-// Claude Code notes the kind of a failed request (`rate_limit`, `invalid_request`, `billing_error`, or `unknown`) and
-// the HTTP status when there was one. Both are recorded content, so the label keeps them short and leaves out a status
-// that is not one.
+// Claude Code 2.1.302 notes the kind of a failed request in `error` (authentication_failed, oauth_org_not_allowed,
+// account_on_hold, verification_required, billing_error, rate_limit, overloaded, invalid_request, model_not_found,
+// server_error, unknown, max_output_tokens, or cloud_credential_error; it writes an overload answered with 529 as
+// server_error, and max_output_tokens for a reply cut off at the output cap or the context window), a cause code such
+// as `usage_limit_reached` in `apiError`, and the HTTP status, when there was one, in `apiErrorStatus`. All are recorded
+// content, so the label keeps the kind short, names a cause only when it has the shape of a code and says more than
+// the kind, and leaves out a status that is not one. An `apiError` object's `status` is still read when
+// `apiErrorStatus` is absent, the shape this app first expected; 2.1.302 writes `apiError` as a string.
 export function apiErrorLabel(event: Pick<ReplayEvent, "raw">): string {
   const parts = ["API error"];
   const kind = getString(event.raw.error)?.trim().replace(/_/g, " ");
   if (kind && kind !== "unknown") parts.push(truncate(kind, 40));
-  const status = isRecord(event.raw.apiError) ? event.raw.apiError.status : undefined;
+  const cause = typeof event.raw.apiError === "string" && /^[a-z0-9_]{1,40}$/.test(event.raw.apiError) ? event.raw.apiError.replace(/_/g, " ") : "";
+  if (cause && cause !== kind) parts.push(cause);
+  const status = event.raw.apiErrorStatus ?? (isRecord(event.raw.apiError) ? event.raw.apiError.status : undefined);
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) parts.push(`HTTP ${status}`);
   return parts.join(" · ");
 }
