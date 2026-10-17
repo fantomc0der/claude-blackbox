@@ -1,0 +1,101 @@
+name: Bug report
+description: Something is broken, crashes, or behaves differently from the documentation.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. A clear report with a way to reproduce it is the fastest route to a fix.
+
+        **Keep your transcripts private.** Claude Code recordings and the derived index contain prompts, code, and tool output. Never paste a real recording or index content here. If a record is needed, copy its structure and replace every piece of content with placeholders (see the sample record field below).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I can reproduce this on the latest release.
+          required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see? Include the exact text of any error, banner, or label.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Start from a fresh launch. Mention the view, filters, and search terms involved.
+      placeholder: |
+        1. Run `bun start --state-dir .blackbox/repro-state`
+        2. Open a recording, choose the Tools tab
+        3. Search for "…"
+        4. The count reads "…" but the list shows "…"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Where it happens
+      options:
+        - Browser (bun start or bun run dev)
+        - Desktop app
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: claude-blackbox version
+      description: "`bun start --version`, the desktop app's About dialog, or the release tag."
+      placeholder: "1.3.1"
+    validations:
+      required: true
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version that wrote the recording
+      description: "`claude --version`, or the `version` field on any record in the `.jsonl` file. Needed for anything about counts, cards, search, titles, usage, or cost."
+      placeholder: "2.1.302"
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      placeholder: "Windows 11 24H2, macOS 15.4, Ubuntu 24.04"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      description: For browser mode only.
+      placeholder: "Edge 141"
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sanitized sample record
+      description: Optional. Keep `type`, field names, and structure; replace prompts, paths, code, and output with placeholders. One record per line.
+      render: json
+      placeholder: |
+        {"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"role":"assistant","model":"claude-sonnet-5-5","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"<redacted>"}}],"usage":{"input_tokens":1,"output_tokens":1}}}
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or console output
+      description: Optional. Terminal output from the server, the browser console, or the desktop app's native dialog. Remove paths and content you do not want public.
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Screenshots, a link to a related issue, or what you have already tried.
