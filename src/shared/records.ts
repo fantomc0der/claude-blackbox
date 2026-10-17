@@ -95,8 +95,9 @@ export function unrecognizedKind(type: string, subtype: unknown): string | null 
   return typeof subtype === "string" && recordName.test(subtype) ? `${type}:${subtype}` : "";
 }
 
-// Claude Code writes the version that wrote a record, such as `2.1.302`, on its transcript records and its `api-request`
-// and `api-request-shape` records; a resumed or forked copy keeps the version of its original.
+// Claude Code writes the version that wrote a record, such as `2.1.302`, on its transcript records (the `progress`
+// records older versions persisted among them) and its `api-request` and `api-request-shape` records; a resumed or forked
+// copy keeps the version of its original.
 const versionPattern = /^(\d{1,4})\.(\d{1,5})\.(\d{1,6})(?:-([0-9A-Za-z.-]{1,32}))?(?:\+[0-9A-Za-z.-]{1,32})?$/;
 
 /** The record's Claude Code version when it has the shape of one, or "". */

@@ -580,8 +580,10 @@ export class Recorder {
     // kept 1 for any explicit title. The counts come from the records an earlier build flagged or decided, like version
     // 12, each decided record parsed to count the results in it that record a decision, so every recording is filled
     // where it is. A recording holding a title record, or titled explicitly by a field
-    // on another record, is retitled where it is from those stored records, like version 9; finding the fields reads the
-    // explicitly titled recordings' events, and one already marked for re-reading gets its title from that read. A
+    // on another record, is retitled where it is from those stored records, like version 9. Finding a title field reads the
+    // explicitly titled recordings' events, and finding an `agentName` reads every recording's events, because Claude Code's
+    // transcript writer stamps a teammate's name on every record of its session and no earlier build read the field, so a
+    // `named` of 0 does not rule it out. One already marked for re-reading gets its title from that read. A
     // decision an earlier build recognized stays a decision, and its label is read from the stored record whenever it is
     // shown, so only three groups of recordings are re-read: those holding a flagged or decided record with a
     // `toolDenialKind`, whose stored results lack the kind `normalize()` now copies onto them; those holding a failure
@@ -595,7 +597,7 @@ export class Recorder {
         FROM events WHERE session_id=? AND error=1`);
       const decidedRecords = this.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? AND decision=1");
       const titleRecords = this.db.query<{ type: string; raw: string }, [string, number]>(`SELECT type, raw FROM events WHERE session_id=?1
-        AND (type IN ('agent-name','custom-title','ai-title','summary') OR (?2 AND (instr(raw,'"agentName":')>0 OR instr(raw,'"customTitle":')>0 OR instr(raw,'"aiTitle":')>0)))
+        AND (type IN ('agent-name','custom-title','ai-title','summary') OR instr(raw,'"agentName":')>0 OR (?2 AND (instr(raw,'"customTitle":')>0 OR instr(raw,'"aiTitle":')>0)))
         ORDER BY sequence`);
       const decided = this.db.query<{ found: number }, [string, string]>(`SELECT EXISTS (SELECT 1 FROM events WHERE session_id=?1 AND (error=1 OR decision=1)
         AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?2) WHERE instr(events.raw,value)>0))

@@ -507,6 +507,8 @@ test("version 16 indexes retitle recordings by Claude Code's title precedence wi
   await setup.write("agent", [record("Review the release"), sessionState("custom-title", { customTitle: "Release" }), sessionState("agent-name", { agentName: "Release reviewer" })]);
   await setup.write("renamed", [record("Fix it"), sessionState("custom-title", { customTitle: "Custom" }), sessionState("ai-title", { aiTitle: "Generated" })]);
   await setup.write("legacy", [record("Prompt", { customTitle: "Custom on a prompt" })]);
+  // Claude Code's transcript writer stamps a teammate's `agentName` on every record of its session, with no `agent-name` record.
+  await setup.write("teammate", [record("Teammate prompt", { agentName: "Harbor teammate", teamName: "harbor" }), record("Second teammate prompt", { agentName: "Harbor teammate", teamName: "harbor" })]);
   await setup.write("plain", [record("Plain prompt")]);
   const before = await setup.open();
   const ids: Record<string, string> = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.source.replace(/\.jsonl$/, "").split(/[\\/]/).at(-1), session.id]));
@@ -518,6 +520,7 @@ test("version 16 indexes retitle recordings by Claude Code's title precedence wi
   stored.run("Release", 1, ids.agent);
   stored.run("Generated", 1, ids.renamed);
   stored.run("Custom on a prompt", 1, ids.legacy);
+  stored.run("Teammate prompt", 0, ids.teammate);
   // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
   before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
   before.db.exec("PRAGMA user_version=16");
@@ -531,8 +534,8 @@ test("version 16 indexes retitle recordings by Claude Code's title precedence wi
   expect(titles().agent).toBe("Release");
   await after.scan();
   expect(version()).toBe(17);
-  expect(titles()).toEqual({ summarized: "Earlier work on the Larkspur parser", agent: "Release reviewer", renamed: "Custom", legacy: "Custom on a prompt", plain: "Plain prompt" });
-  expect(named()).toEqual({ summarized: 1, agent: 4, renamed: 3, legacy: 3, plain: 0 });
+  expect(titles()).toEqual({ summarized: "Earlier work on the Larkspur parser", agent: "Release reviewer", renamed: "Custom", legacy: "Custom on a prompt", teammate: "Harbor teammate", plain: "Plain prompt" });
+  expect(named()).toEqual({ summarized: 1, agent: 4, renamed: 3, legacy: 3, teammate: 4, plain: 0 });
   for (const id of Object.values(ids)) expect(cwds(id)).toEqual(["/synthetic/stale"]);
   expect(after.getSession(ids.agent)?.bookmarked).toBe(true);
   // The stored rank keeps a later AI title from replacing a custom title an earlier build kept as 1.
