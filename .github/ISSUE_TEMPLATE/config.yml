@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Claude Code itself
+    url: https://github.com/anthropics/claude-code/issues
+    about: Problems with Claude Code, its recordings, or its CLI belong in the Claude Code tracker. This project only reads the recordings.
+  - name: Setup and usage questions
+    url: https://github.com/fantomc0der/claude-blackbox#readme
+    about: The README covers starting the server, the desktop app, state directories, search syntax, filters, and usage estimates.
