@@ -32,11 +32,25 @@ export function isHiddenReasoning(blocks: ContentBlock[]): boolean {
   return blocks.length > 0 && blocks.every(block => block.type === "redacted_thinking" || (block.type === "thinking" && !readableThinking(block)));
 }
 
+// Claude Code stores each message of an API request body once, keyed by its hash, in an `api-request-blob` record written
+// just before the `api-request` record that sends it. Its assistant turns, tool calls and results, and reasoning repeat
+// other records verbatim, so a blob contributes no blocks or tool links, and only the context Claude Code composed for
+// the request, such as hook output and reminders, stays searchable. The raw record keeps the whole message.
+export const requestMessageType = "api-request-blob";
+const copiedBlocks = new Set(["tool_use", "tool_result", "thinking", "redacted_thinking"]);
+
+function requestMessageText(message: Record<string, unknown>): string {
+  if (message.role === "assistant") return "";
+  if (typeof message.content === "string") return message.content;
+  return Array.isArray(message.content) ? searchable(message.content.filter(entry => !copiedBlocks.has(string(object(entry).type)))) : "";
+}
+
 export function normalize(raw: Record<string, unknown>, sourceId: string, offset: number, sequence: number): ReplayEvent {
   const message = object(raw.message);
   const type = string(raw.type) || "unknown";
   const role = (type === "user" || type === "assistant") && raw.isMeta !== true && raw.isCompactSummary !== true ? type : "system";
-  const content = message.content ?? raw.content;
+  const copy = type === requestMessageType;
+  const content = copy ? undefined : message.content ?? raw.content;
   let blocks: ContentBlock[] = [];
   if (typeof content === "string") blocks = [{ type: "text", text: content }];
   else if (Array.isArray(content)) blocks = content.map(entry => {
@@ -45,7 +59,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     return { ...block, type: string(block.type) || "unknown" } as ContentBlock;
   });
   if (!blocks.length && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
-  const text = blocks.length ? searchable(blocks) : searchable(raw);
+  const text = copy ? requestMessageText(message) : blocks.length ? searchable(blocks) : searchable(raw);
   const tools = blocks.filter(block => block.type === "tool_use");
   const hasTools = blocks.some(block => block.type === "tool_use" || block.type === "tool_result");
   const hasText = blocks.some(block => block.type === "text" && block.text?.trim());
@@ -109,11 +123,29 @@ export function displaySnippet(raw: string, term: string, words = 28): string {
   return `${lead < before.length ? "… " : ""}${[...before.slice(before.length - lead), ...tail].join(" ")}${tail.length < after.length ? " …" : ""}`;
 }
 
+// Claude Code's own first-prompt picker, which titles its `--resume` listing, skips the records that slash commands, local
+// commands, hooks, interruptions, and the IDE integration write ahead of the user's first prompt, shows a slash command
+// with its arguments as `/name args`, and shows a shell command as `! command`. The same rules keep a recording's title in
+// agreement with it; a record the rules skip gives no title, so the next user record is tried.
+const skippedPrompt = /^(<local-command-stdout>|<local-command-caveat>|<session-start-hook>|\[Request interrupted by user)/;
+const attachedContext = /<(system-reminder|ide_opened_file|ide_selection)>[\s\S]*?<\/\1>/g;
+
+function titleText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
 export function promptTitle(event: ReplayEvent): string {
   if (event.role !== "user") return "";
-  return stripAnsi(event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" "))
-    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, " ")
-    .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+  const text = stripAnsi(event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" ")).trim();
+  if (skippedPrompt.test(text)) return "";
+  const command = /^<command-name>([\s\S]*?)<\/command-name>/.exec(text);
+  if (command) {
+    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "";
+    return args.trim() ? titleText(`${command[1].trim()} ${args}`) : "";
+  }
+  const shell = /^<bash-input>([\s\S]*?)<\/bash-input>/.exec(text);
+  if (shell) return shell[1].trim() ? titleText(`! ${shell[1]}`) : "";
+  return titleText(text.replace(attachedContext, " ").replace(/<[^>]+>/g, " "));
 }
 
 export function pathName(path: string): string {

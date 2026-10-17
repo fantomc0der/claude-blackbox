@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, string } from "./normalize";
+import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, rateStamp, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -215,7 +215,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 7) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 9) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -338,6 +338,25 @@ export class Recorder {
   }
 
   private async reconcile(): Promise<string[]> {
+    // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
+    // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
+    // its port, and before the recordings are compared with what was indexed.
+    if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 8) this.db.transaction(() => {
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
+      this.db.exec("PRAGMA user_version=8");
+    })();
+    // Version 9 titles a recording by Claude Code's own first-prompt rules, which skip the slash command, local command,
+    // hook, interruption, and IDE context records an earlier build read as the first prompt. The stored records hold every
+    // prompt, so a recording without an explicit title is retitled from them where it is instead of being re-read; one
+    // already marked for re-reading gets its title from that read.
+    if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 9) this.db.transaction(() => {
+      const update = this.db.query("UPDATE sessions SET title=? WHERE id=?");
+      for (const row of this.db.query<{ id: string; session_id: string; title: string }, []>("SELECT id, session_id, title FROM sessions WHERE named=0 AND mtime!=0").all()) {
+        const title = this.firstPrompt(row.id) || `Session ${row.session_id.slice(0, 8)}`;
+        if (title !== row.title) update.run(title, row.id);
+      }
+      this.db.exec("PRAGMA user_version=9");
+    })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -473,6 +492,23 @@ export class Recorder {
     if (changed.length > published) this.publish(changed.slice(published));
     else if (!interrupted && (firstIndex || changed.length)) this.emit();
     return changed;
+  }
+
+  /** The title `promptTitle()` gives a recording's stored user records, read in order until one titles it; empty when none does. */
+  private firstPrompt(id: string): string {
+    const page = this.db.query<{ raw: string; sequence: number }, [string, number]>(
+      "SELECT raw, sequence FROM events WHERE session_id=? AND role='user' AND sequence>? ORDER BY sequence LIMIT 50");
+    for (let after = -1; ;) {
+      const rows = page.all(id, after);
+      for (const row of rows) {
+        let title = "";
+        try { title = promptTitle(normalize(JSON.parse(row.raw) as Record<string, unknown>, id, 0, row.sequence)); }
+        catch { continue; }
+        if (title) return title;
+      }
+      if (rows.length < 50) return "";
+      after = rows[rows.length - 1].sequence;
+    }
   }
 
   private publish(ids: string[]): void {
@@ -909,14 +945,15 @@ export class Recorder {
       WHERE e.session_id=?`).all(id, id).map(row => ({ path: row.cwd, added: false, record: record(row), sequence: row.sequence }));
     // Claude Code records `/add-dir` as a user or system record and its outcome as a following local command output that
     // names the command as its parentUuid. Assistant text that quotes either is not the command. A recording without
-    // parentUuid links can only pair a command with an output recorded directly after it.
-    const outputs = this.db.query<{ raw: string; sequence: number }, [string, number, number]>(
-      "SELECT raw, sequence FROM events WHERE session_id=? AND sequence>? AND sequence<=? AND role IN ('user','system') AND instr(text,'<local-command-stdout>')>0 ORDER BY sequence");
-    for (const row of this.db.query<{ id: string; sequence: number; timestamp: string; raw: string }, [string]>(
-      "SELECT event_id AS id, sequence, timestamp, raw FROM events WHERE session_id=? AND role IN ('user','system') AND instr(text,'/add-dir')>0 ORDER BY sequence").all(id)) {
+    // parentUuid links can only pair a command with an output recorded directly after it. The copies an API request
+    // stores of both are not the command either.
+    const outputs = this.db.query<{ raw: string; sequence: number }, [string, number, number, string]>(
+      "SELECT raw, sequence FROM events WHERE session_id=? AND sequence>? AND sequence<=? AND role IN ('user','system') AND type!=? AND instr(text,'<local-command-stdout>')>0 ORDER BY sequence");
+    for (const row of this.db.query<{ id: string; sequence: number; timestamp: string; raw: string }, [string, string]>(
+      "SELECT event_id AS id, sequence, timestamp, raw FROM events WHERE session_id=? AND role IN ('user','system') AND type!=? AND instr(text,'/add-dir')>0 ORDER BY sequence").all(id, requestMessageType)) {
       const command = object(JSON.parse(row.raw));
       if (!isAddDirCommand(recordText(command))) continue;
-      const candidates = outputs.all(id, row.sequence, row.sequence + 5).map(output => ({ sequence: output.sequence, raw: object(JSON.parse(output.raw)) }));
+      const candidates = outputs.all(id, row.sequence, row.sequence + 5, requestMessageType).map(output => ({ sequence: output.sequence, raw: object(JSON.parse(output.raw)) }));
       const uuid = string(command.uuid);
       const output = (uuid ? candidates.find(entry => string(entry.raw.parentUuid) === uuid) : undefined)
         ?? candidates.find(entry => entry.sequence === row.sequence + 1 && !string(entry.raw.parentUuid));

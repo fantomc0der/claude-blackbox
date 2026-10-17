@@ -77,6 +77,12 @@
 .replay-raw summary:hover { color: var(--text); }
 .replay-raw summary:focus-visible { outline-offset: -3px; }
 @media (max-width: 680px) { .replay-raw summary { min-height: 44px; padding: 12px 11px; } }
+.request-messages { border: 1px solid var(--line); border-radius: 8px; }
+.request-messages summary { color: var(--muted); cursor: pointer; font-size: var(--text-control); padding: 9px 11px; }
+.request-messages summary:hover { color: var(--text); }
+.request-messages summary:focus-visible { outline-offset: -3px; }
+.request-messages-list { display: grid; gap: 8px; padding: 0 10px 10px; }
+@media (max-width: 680px) { .request-messages summary { min-height: 44px; padding: 12px 11px; } }
 .tool-image header { gap: 10px; }
 .tool-image header > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-image-meta { flex-shrink: 0; white-space: nowrap; }

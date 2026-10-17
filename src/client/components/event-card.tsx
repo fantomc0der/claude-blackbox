@@ -11,6 +11,7 @@ import {
   imageMeta,
   isImageBlock,
   isRecord,
+  isRequestMessage,
   isToolResultEvent,
   mentions,
   prettyValue,
@@ -21,6 +22,7 @@ import {
   toolPreviewParts,
   toolTitle,
   truncate,
+  type RequestMessageRun,
   type ToolArgumentKind,
 } from "../lib/content";
 import { jsonSegments, overlaySegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
@@ -51,6 +53,8 @@ export interface EventCardProps {
   selected?: boolean;
   onShowContext?: (id: string) => void;
   subagents?: SubagentNavigation;
+  /** The `api-request-blob` records written just before this API request, shown inside its card. */
+  requestMessages?: RequestMessageRun;
 }
 
 // Copy controls share one short-lived state: idle, then copied or failed for 2.4 seconds after each press, and a press
@@ -259,6 +263,24 @@ function HiddenReasoning(props: { label: string; detail: string }) {
   return <p class="tool-hidden" title={props.detail}>{props.label}</p>;
 }
 
+const requestMessageDetail = "Claude Code stores each message it sends to the API once, just before the request that first sends it. Assistant turns, tool calls and results, and reasoning repeat records shown elsewhere in this recording; context Claude Code composed for the request, such as hook output, may appear only here.";
+
+// Request messages mostly repeat records the replay already shows, so they stay closed unless a highlighted term is in
+// their searchable context.
+function RequestMessages(props: { run: RequestMessageRun; highlight?: string }) {
+  const [open, setOpen] = createSignal(false);
+  createEffect(() => Boolean(props.highlight) && props.run.messages.some(event => mentions(event.text, props.highlight!)), value => { if (value) setOpen(true); });
+  const count = () => props.run.messages.length;
+  const title = (event: ReplayEvent) => {
+    const role = isRecord(event.raw.message) ? getString(event.raw.message.role) : undefined;
+    return role ? `Recorded ${role} message` : "Recorded message";
+  };
+  return <details class="request-messages" open={open()} onToggle={(event) => { setOpen(event.currentTarget.open); }}>
+    <summary title={props.run.partial ? `${requestMessageDetail} Earlier messages for this request may be on the previous page.` : requestMessageDetail}>{count() === 1 ? "1 message" : `${count()} messages`} stored with this request{props.run.partial ? " on this page" : ""}</summary>
+    <Show when={open()}><div class="request-messages-list"><For each={props.run.messages}>{(event) => <CodePanel title={title(event)} value={eventRaw(event)} highlight={props.highlight} json />}</For></div></Show>
+  </details>;
+}
+
 function ThinkingBlock(props: { block: ContentBlock; highlight?: string }) {
   const [open, setOpen] = createSignal(false);
   const text = () => getString(props.block.thinking) ?? getString(props.block.text) ?? "";
@@ -300,7 +322,7 @@ export function EventCard(props: EventCardProps) {
   };
   return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
     <header class="replay-event-header"><span class="replay-role"><Show when={roleIcon()}>{name => <Icon name={name()} size={14} class="replay-role-icon" />}</Show>{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
-    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></div>
+    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={isRequestMessage(props.event)} fallback={<><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></>}><p class="tool-hidden" title={`${requestMessageDetail} Raw event shows this copy.`}>Message stored for the API request that follows</p></Show><Show when={props.requestMessages}>{run => <RequestMessages run={run()} highlight={props.highlight} />}</Show></div>
     <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} json /></Show></details>
   </article>;

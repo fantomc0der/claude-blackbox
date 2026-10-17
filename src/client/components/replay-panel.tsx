@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, flush, For, Show, untrack } fro
 import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, SessionFamily, SessionSummary, SummaryRecord } from "../../shared/types";
 import { stripAnsi } from "../../shared/ansi";
 import { isAbort, request } from "../lib/api";
-import { contentToText, getToolInput, isRecord, isToolResultEvent, toolPreview, truncate } from "../lib/content";
+import { contentToText, getToolInput, isRecord, isToolResultEvent, requestMessageRuns, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
 import { compact, dateTime, folderName, modelName, recordedRange, resumeCommand, searchHighlight, tokenCount, usageCost, withLocalDays } from "../lib/format";
 import { TokenBreakdown, UsageNote } from "./usage-panel";
@@ -306,7 +306,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
         }
         else if (navigation || initial) scroll?.scrollTo({ top: savedPosition ?? 0 });
         else if (keepAtEnd) scroll?.scrollTo({ top: scroll.scrollHeight });
-        if (state.anchor && savedPosition === undefined && (navigation || initial)) revealAnchor(state.anchor);
+        if (state.anchor && savedPosition === undefined && (navigation || initial)) revealAnchor(cardOf(state.anchor) || state.anchor);
         initial = false;
         setRestoreScroll(null);
       });
@@ -315,8 +315,12 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   });
 
   const toolIdsOnPage = createMemo(() => new Set(page()?.items.flatMap(event => event.blocks.filter(block => block.type === "tool_use").map(block => block.id)) || []));
+  // Every view folds the message copies stored for an API request into that request's card when both are on the page.
+  const requestMessages = createMemo(() => requestMessageRuns(page()?.items || [], (page()?.offset || 0) > 0));
+  const foldedMessages = createMemo(() => new Map([...requestMessages()].flatMap(([request, run]) => run.messages.map(event => [event.id, request] as const))));
   // Conversation and Tools fold a tool result into its call's card when both are on the page, so each tool reads once.
   const visibleEvents = createMemo(() => (page()?.items || []).filter(event => {
+    if (foldedMessages().has(event.id)) return false;
     if (!["conversation", "tool"].includes(kind()) || narrowTerm() || errorsOnly() || event.blocks.length === 0) return true;
     return !event.blocks.every(block => block.type === "tool_result" && toolIdsOnPage().has(block.tool_use_id));
   }));
@@ -330,7 +334,9 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const current = page();
     if (!current) return "Loading recording";
     const scope = current.total === current.unfilteredTotal ? `${current.total.toLocaleString()} records` : `${current.total.toLocaleString()} of ${current.unfilteredTotal.toLocaleString()} records in this view`;
-    return current.items.length > visibleEvents().length ? `${scope}. Tool results appear inside their calls.` : scope;
+    const messages = foldedMessages().size;
+    const notes = [current.items.length - visibleEvents().length > messages && "Tool results appear inside their calls.", messages && "Request messages appear inside their API requests."].filter(Boolean);
+    return notes.length ? `${scope}. ${notes.join(" ")}` : scope;
   };
   const workspaceChanges = createMemo(() => {
     const changed = new Set<string>();
@@ -464,12 +470,15 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   // The card on this page that shows a record. Conversation and Tools fold a tool result into its call's card, so a match
   // in the output is shown, and selected, on the call.
   const cardOf = (id: string) => {
+    const request = foldedMessages().get(id);
+    if (request) return request;
     const visible = visibleEvents();
     if (visible.some(event => event.id === id)) return id;
     const calls = new Set(page()?.items.find(event => event.id === id)?.blocks.flatMap(block => block.type === "tool_result" && block.tool_use_id ? [block.tool_use_id] : []));
     return calls.size ? visible.find(event => event.blocks.some(block => block.type === "tool_use" && block.id && calls.has(block.id)))?.id || "" : "";
   };
   const matchCard = createMemo(() => matchIndex() >= 0 ? cardOf(currentMatch()) : "");
+  const anchorCard = createMemo(() => props.anchor ? cardOf(props.anchor) || props.anchor : "");
   // The record at the top of the transcript, where the first step starts looking so the reader does not lose their place.
   const readingPosition = () => {
     const current = page();
@@ -712,7 +721,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
-        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !narrowTerm() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} calls={page()?.calls} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={matchCard() ? event().id === matchCard() : pinnedCard() ? event().id === pinnedCard() : event().id === props.anchor} onShowContext={revealContext} subagents={subagentNavigation()} />}</For>
+        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !narrowTerm() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} calls={page()?.calls} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={matchCard() ? event().id === matchCard() : pinnedCard() ? event().id === pinnedCard() : event().id === anchorCard()} onShowContext={revealContext} subagents={subagentNavigation()} requestMessages={requestMessages().get(event().id)} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{extraFilterCount() ? "End of matching records." : "You're all caught up."}<small>{extraFilterCount() ? "Reset filters to return to the conversation." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview" ref={setRail}>

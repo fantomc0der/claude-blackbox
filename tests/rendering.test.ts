@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { boundedDiff, contentToText, imageMeta, mentions, mentionsBudget, resultImages, resultText, safeDataImage, toolArgument, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
+import { boundedDiff, contentToText, imageMeta, mentions, mentionsBudget, requestMessageRuns, resultImages, resultText, safeDataImage, toolArgument, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
+import type { ReplayEvent } from "../src/shared/types";
 
 describe("replay content helpers", () => {
   test("keeps mixed nested content in source order", () => {
@@ -125,5 +126,23 @@ describe("replay content helpers", () => {
     expect(mentions({ output: `${filler} retry` }, "retry")).toBe(false);
     expect(mentions([filler, "retry"], "retry")).toBe(false);
     expect(mentions(["retry", filler], "retry")).toBe(true);
+  });
+
+  test("folds each unbroken run of request message copies into the API request directly after it", () => {
+    const copy = (sequence: number) => ({ id: `event-${sequence}`, sequence, type: "api-request-blob", raw: { hash: `hash-${sequence}` } }) as unknown as ReplayEvent;
+    const request = (sequence: number, tail?: number[]) => ({ id: `event-${sequence}`, sequence, type: "api-request", raw: tail ? { tail: tail.map(entry => `hash-${entry}`) } : {} }) as unknown as ReplayEvent;
+    const other = (sequence: number) => ({ id: `event-${sequence}`, sequence, type: "assistant", raw: {} }) as unknown as ReplayEvent;
+    const summarize = (runs: ReturnType<typeof requestMessageRuns>) => [...runs].map(([id, run]) => [id, run.messages.map(event => event.id), run.partial]);
+    const page = [
+      copy(0), copy(1), request(2, [0, 1]),
+      // A request without a tail list takes the whole run; one with a list takes only the copies it names.
+      copy(3), request(4), copy(5), copy(6), request(7, [6]),
+      // A filtered-out record between a copy and a request, a copy before another record, and one at the page end.
+      copy(8), request(10, [8]), copy(11), other(12), copy(13),
+    ];
+    expect(summarize(requestMessageRuns(page))).toEqual([["event-2", ["event-0", "event-1"], false], ["event-4", ["event-3"], false], ["event-7", ["event-6"], false]]);
+    // On a page that follows earlier records, the run that opens the page may continue on the previous one.
+    expect(summarize(requestMessageRuns(page, true))[0]).toEqual(["event-2", ["event-0", "event-1"], true]);
+    expect(summarize(requestMessageRuns(page.slice(1), true))[0]).toEqual(["event-2", ["event-1"], true]);
   });
 });
