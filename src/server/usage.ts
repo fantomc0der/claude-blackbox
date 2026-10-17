@@ -62,9 +62,14 @@ export function rateStamp(model: string): string {
   return stamp;
 }
 
-/** The stamp of a request that an advisor's or a fallback hop's model priced in part. Its row names only the request's
- *  own model, so any edit to the table changes this stamp. */
+/** The stamp of a request with a share at another model than its own, an advisor's or a fallback hop's, priced or not.
+ *  Its row names only the request's own model, so any edit to the table changes this stamp. */
 const tableStamp = stampOf({ revision, prices });
+
+/** Whether the bundled table has rates for `model`. */
+export function hasRates(model: string): boolean {
+  return priceOf(model) !== undefined;
+}
 
 /** Whether `rates` is a current stamp for a request of `model`: its own model's, or the whole table's. */
 export function currentRates(model: string, rates: string): boolean {
@@ -72,10 +77,10 @@ export function currentRates(model: string, rates: string): boolean {
 }
 
 /**
- * Why a request has no estimate: `model` when its own model has no bundled rates, `iteration` when an advisor or
- * fallback step ran on a model without bundled rates or named none, `unnamed` when it recorded no model, `fast` when it
- * ran in fast mode on a model without a fast rate, `tier` when it used a service tier other than standard, and
- * `credit` when it presented a fallback credit.
+ * Why a request has no estimate, in order of precedence: `unnamed` when it recorded no model, `model` when its own
+ * model has no bundled rates, `credit` when it presented a fallback credit, `tier` when it used a service tier other
+ * than standard, `iteration` when an advisor named no model or ran on a model without bundled rates, or a fallback hop
+ * ran on a model without bundled rates, and `fast` when it ran in fast mode on a model without a fast rate.
  */
 export type UnpricedReason = "model" | "iteration" | "unnamed" | "fast" | "tier" | "credit";
 
@@ -91,7 +96,7 @@ export interface UsageRecord {
   recorded: boolean;
   /** Set exactly when `cost` is null. */
   reason: UnpricedReason | null;
-  /** `rateStamp(model)`, or the table's stamp when another model's rates priced part of the request. */
+  /** `rateStamp(model)`, or the table's stamp when a share of the request is at another model. */
   rates: string;
   sidechain: boolean;
 }
@@ -135,7 +140,8 @@ const add = (left: number, right: number) => left + right;
  * in `usage.iterations`, and returns the tokens the request counts.
  * - The request's own share is its top-level usage at its own model, in its fast mode.
  * - A server-side fallback lists `fallback_message` iterations. When one names a model, the tracker prices the own
- *   share from those hops instead, each at its own model in the request's fast mode. It reads only their four counts,
+ *   share from the hops that name one instead, each at its own model in the request's fast mode. Its reducer charges
+ *   only a hop with a model, so a hop that names none costs nothing wherever it falls. It reads only their four counts,
  *   so every cache write of a hop is priced at the 5-minute rate, and when the reply still ended in a refusal, the
  *   last `fallback_message` is free. The stream has already rewritten `message.model` to the model that served the
  *   request, and the tracker files the top-level counts under it.
@@ -143,12 +149,13 @@ const add = (left: number, right: number) => left + right;
  *   at fast rates: the API leaves advisor tokens out of the top-level counts.
  * - A `message` iteration repeats the top-level counts. When no iteration is a `fallback_message`, a top-level count
  *   below the sum of the iterations other than an advisor's is raised to that sum, so a request never counts fewer
- *   tokens than its steps report.
+ *   tokens than its steps report. The tracker does not do this; it reads the top-level counts alone.
  */
 function splitRequest(usage: Record<string, unknown>, model: string, refused: boolean, fast: boolean): { tokens: Tokens; shares: Share[] } {
   const steps = Array.isArray(usage.iterations) ? usage.iterations.map(object) : [];
   const last = steps.findLastIndex(step => step.type === "fallback_message");
-  const own = combine([tokensOf(usage), combine(last < 0 ? steps.filter(step => step.type !== "advisor_message").map(tokensOf) : [], add)], Math.max);
+  const summed = combine(last < 0 ? steps.filter(step => step.type !== "advisor_message").map(tokensOf) : [], add);
+  const own = combine([tokensOf(usage), summed], Math.max);
   const hop = (step: Record<string, unknown>) => step.type === "fallback_message" && string(step.model) !== "";
   const hops = steps.flatMap((step, index): Share[] => hop(step) && !(refused && index === last)
     ? [{ model: normalizeModel(string(step.model)), tokens: tokensOf({ ...step, cache_creation: undefined }), fast }] : []);
@@ -158,16 +165,17 @@ function splitRequest(usage: Record<string, unknown>, model: string, refused: bo
 }
 
 /**
- * Why a request without a recorded cost has no estimate, or null when it has one. Claude Code's tracker never reads
- * `service_tier` and prices priority and batch requests at standard rates, but the API charges more for priority and
- * less for batch, and this table has rates for neither. Claude Code only copies `fallback_credit`: the API decides what
- * a request that presented one is billed, so no rate applies.
+ * Why a request without a recorded cost has no estimate, or null when it has one. A missing or unrated own model comes
+ * first, so the request keeps its "Model not recognized" flag and its model's name in the usage note. Claude Code's
+ * tracker never reads `service_tier` and prices priority and batch requests at standard rates, but the API charges more
+ * for priority and less for batch, and this table has rates for neither. Claude Code only copies `fallback_credit`:
+ * the API decides what a request that presented one is billed, so no rate applies.
  */
 function unpriced(usage: Record<string, unknown>, model: string, shares: Share[]): UnpricedReason | null {
-  if (usage.fallback_credit !== undefined && usage.fallback_credit !== null) return "credit";
-  if (typeof usage.service_tier === "string" && usage.service_tier !== "standard") return "tier";
   const unrated = shares.filter(share => !priceOf(share.model));
   if (unrated.some(share => share.model === model)) return model ? "model" : "unnamed";
+  if (usage.fallback_credit !== undefined && usage.fallback_credit !== null) return "credit";
+  if (typeof usage.service_tier === "string" && usage.service_tier !== "standard") return "tier";
   if (unrated.length) return "iteration";
   return shares.some(share => share.fast && !priceOf(share.model)!.fast) ? "fast" : null;
 }
@@ -182,7 +190,9 @@ function costOf(price: Price, tokens: Tokens, fast: boolean, geography: number):
     + cacheHour * inputRate * 2 + cacheRead * inputRate * (price.cacheRead ?? 0.1)) / 1_000_000 * (fast ? price.fast! : 1) * geography;
 }
 
-export function readUsage(raw: Record<string, unknown>, sessionId: string, eventId: string): UsageRecord | null {
+/** Reads one assistant record's request usage. A copy that names no model is read as `knownModel` when an earlier copy
+ *  of the same request named it. */
+export function readUsage(raw: Record<string, unknown>, sessionId: string, eventId: string, knownModel = ""): UsageRecord | null {
   const message = object(raw.message);
   if (raw.type !== "assistant" || message.model === syntheticModel) return null;
   const usage = object(message.usage);
@@ -194,7 +204,7 @@ export function readUsage(raw: Record<string, unknown>, sessionId: string, event
   const requestId = string(raw.requestId) || string(raw.request_id);
   const key = messageId ? JSON.stringify(["message", messageId, requestId || string(raw.sessionId) || sessionId])
     : JSON.stringify(["event", string(raw.sessionId) || sessionId, string(raw.uuid) || eventId]);
-  const model = normalizeModel(string(message.model));
+  const model = normalizeModel(string(message.model)) || knownModel;
   const fast = usage.speed === "fast" || raw.speed === "fast";
   const request = splitRequest(usage, model, message.stop_reason === "refusal", fast);
   const effort = [message.effort, raw.effort, object(message.output_config).effort, object(raw.output_config).effort]

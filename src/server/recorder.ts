@@ -9,7 +9,7 @@ import { newestVersions, recordedVersion, recordSubtype, turnDuration, unrecogni
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
-import { addUsage, currentRates, emptyUsage, normalizeModel, readCostState, readUsage, usageColumns } from "./usage";
+import { addUsage, currentRates, emptyUsage, hasRates, normalizeModel, readCostState, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
 import { addedDirectory, buildSummary, changeTools, contentBlocks, isAddDirCommand, placeSummary, recordText, summaryRecordIds, type SummaryCall, type SummaryRoot } from "./summary";
 
@@ -289,10 +289,17 @@ export class Recorder {
     if (!usageFields.has("effort")) db.exec("ALTER TABLE usage_records ADD COLUMN effort TEXT");
     if (!usageFields.has("rates")) db.exec("ALTER TABLE usage_records ADD COLUMN rates TEXT NOT NULL DEFAULT ''");
     if (!usageFields.has("unrated")) db.exec("ALTER TABLE usage_records ADD COLUMN unrated INTEGER NOT NULL DEFAULT 0");
-    // Rows written before `reason` existed get the reason the rules they were priced with gave: a model without rates,
-    // no model, or else fast mode. They keep it until the re-read that the rate-stamp check below schedules.
-    if (!usageFields.has("reason")) db.exec(`ALTER TABLE usage_records ADD COLUMN reason TEXT;
-      UPDATE usage_records SET reason=CASE WHEN unrated THEN 'model' WHEN model='' THEN 'unnamed' ELSE 'fast' END WHERE cost IS NULL`);
+    if (!usageFields.has("reason")) db.exec("ALTER TABLE usage_records ADD COLUMN reason TEXT");
+    // An unpriced row an earlier build wrote without a reason gets the one its rules gave: no model, a model without
+    // rates, or else fast mode. A build before `rates` never marked a model without rates, so the current table decides
+    // for its rows. Each keeps that reason until the re-read that the rate-stamp check below schedules.
+    const unexplained = db.query<{ model: string; rates: string; unrated: number }, []>(
+      "SELECT DISTINCT model, rates, unrated FROM usage_records WHERE cost IS NULL AND reason IS NULL").all();
+    const explain = db.query("UPDATE usage_records SET reason=?, unrated=? WHERE cost IS NULL AND reason IS NULL AND model=? AND rates=? AND unrated=?");
+    for (const row of unexplained) {
+      const reason = !row.model ? "unnamed" : row.unrated || (!row.rates && !hasRates(row.model)) ? "model" : "fast";
+      explain.run(reason, Number(reason === "model"), row.model, row.rates, row.unrated);
+    }
     const eventFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(events)").all().map(row => row.name));
     for (const field of ["role", "timestamp", "model", "cwd"]) {
       if (!eventFields.has(field)) db.exec(`ALTER TABLE events ADD COLUMN ${field} TEXT NOT NULL DEFAULT ''`);
@@ -679,29 +686,29 @@ export class Recorder {
           const insertResult = this.db.query("INSERT OR REPLACE INTO tool_results(session_id,tool_id,raw,event_row) VALUES (?,?,?,?)");
           const insertCall = this.db.query("INSERT OR REPLACE INTO tool_calls(session_id,tool_id,name,event_row) VALUES (?,?,?,?)");
           const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
-          // A copy that names no model keeps the stored model and stamp, and when only the missing name leaves it
-          // unpriced, the stored reason that the model has no rates.
           const insertUsage = this.db.query(`INSERT INTO usage_records(session_id,request_key,input,output,cache_creation,cache_read,cost,recorded,sidechain,model,effort,rates,unrated,reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(session_id,request_key) DO UPDATE SET input=excluded.input, output=excluded.output,
               cache_creation=excluded.cache_creation, cache_read=excluded.cache_read, cost=excluded.cost,
               recorded=excluded.recorded, sidechain=excluded.sidechain,
               model=CASE WHEN excluded.model='' THEN usage_records.model ELSE excluded.model END,
               rates=CASE WHEN excluded.model='' THEN usage_records.rates ELSE excluded.rates END,
-              unrated=CASE WHEN excluded.reason='unnamed' AND usage_records.reason='model' THEN 1 ELSE excluded.unrated END,
-              reason=CASE WHEN excluded.reason='unnamed' AND usage_records.reason='model' THEN 'model' ELSE excluded.reason END,
+              unrated=excluded.unrated, reason=excluded.reason,
               effort=coalesce(excluded.effort,usage_records.effort)
             WHERE excluded.sidechain < usage_records.sidechain OR (excluded.sidechain = usage_records.sidechain AND
               (excluded.input+excluded.output+excluded.cache_creation+excluded.cache_read > usage_records.input+usage_records.output+usage_records.cache_creation+usage_records.cache_read
               OR (excluded.input+excluded.output+excluded.cache_creation+excluded.cache_read = usage_records.input+usage_records.output+usage_records.cache_creation+usage_records.cache_read
                 AND (excluded.recorded > usage_records.recorded OR (excluded.recorded = usage_records.recorded AND coalesce(excluded.cost,-1) > coalesce(usage_records.cost,-1))))))`);
           const enrichEffort = this.db.query("UPDATE usage_records SET effort=? WHERE session_id=? AND request_key=? AND effort IS NULL");
+          const storedModel = this.db.query<{ model: string }, [string, string]>("SELECT model FROM usage_records WHERE session_id=? AND request_key=?");
           for (const event of events) {
             const toolNames = event.toolNames.filter(name => isFacetValue(name));
             const inserted = insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
               Number(event.error), toolNames.join("\n"), JSON.stringify(event.raw), event.text, event.role, event.timestamp,
               string(object(event.raw.message).model), event.cwd || "", Number(hasReadableThinking(event.blocks)),
               Number(event.blocks.some(block => block.type === "tool_use" || block.type === "tool_result")), Number(event.decision !== null));
-            const usage = readUsage(event.raw, id, event.id);
+            let usage = readUsage(event.raw, id, event.id);
+            // A copy of a request that names no model is read as the model an earlier copy in this recording named.
+            if (usage && !usage.model) usage = readUsage(event.raw, id, event.id, storedModel.get(id, usage.key)?.model);
             if (usage) {
               insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain), usage.model, usage.effort, usage.rates, Number(usage.reason === "model"), usage.reason);
               if (usage.effort) enrichEffort.run(usage.effort, id, usage.key);

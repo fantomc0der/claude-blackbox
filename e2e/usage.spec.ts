@@ -117,7 +117,7 @@ test("the usage note states why requests on another service tier or with a fallb
   await summary.click();
   const note = page.locator(".usage-note p.usage-warning");
   await expect(note).toHaveText(pricingGap(usage, []));
-  await expect(note).toContainText("2 used a service tier other than standard, such as priority or batch, which this version of Claude Blackbox has no rates for. 1 presented a fallback credit, whose billing is decided by the API.");
+  await expect(note).toContainText("2 used a service tier other than standard, which this version of Claude Blackbox has no rates for. 1 presented a fallback credit, so the API decides what it is billed.");
 });
 
 test("model expense matrix stays accessible and fits narrow screens in both themes", async ({ page }) => {

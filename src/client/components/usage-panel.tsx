@@ -21,9 +21,15 @@ export function TokenBreakdown(props: { usage: UsageSummary }) {
   </dl>;
 }
 
-/** Requests without bundled rates make a total incomplete in a way an update can fix, so the summary flags them. */
+/** Requests on models without bundled rates, their own or an advisor's or fallback's, make a total incomplete in a way
+ *  the reader should notice, so the summary flags them. */
+function unratedCount(usage: UsageSummary): number {
+  return usage.unratedRequests + usage.unratedIterationRequests;
+}
+
 function unratedTitle(usage: UsageSummary): string {
-  return `Leaves out ${tokenCount(usage.unratedRequests)} ${usage.unratedRequests === 1 ? "request" : "requests"} from models Claude Blackbox does not recognize yet`;
+  const count = unratedCount(usage), steps = usage.unratedIterationRequests ? ", or from advisor and fallback steps it cannot price" : "";
+  return `Leaves out ${tokenCount(count)} ${count === 1 ? "request" : "requests"} from models Claude Blackbox does not recognize yet${steps}`;
 }
 
 /** A recording's own `cost-state` total, or a selection's sum of them; shown only when at least one recording carries it. */
@@ -66,8 +72,8 @@ export function UsagePanel(props: { page: SessionPage | null; pending: boolean; 
       <Show when={props.page} fallback={<span class="usage-loading" aria-label="Usage not yet available">—</span>}>{page => <>
         <Show when={page().usage.requests} fallback={<span class="usage-empty">{page().total ? "No usage recorded" : "No matching recordings"}</span>}>
           <span class="usage-total" title={`${tokenCount(page().usage.totalTokens)} tokens, including cache reads and writes`}>{compact(page().usage.totalTokens)} <span>tokens</span></span>
-          <span class="usage-total usage-total-cost" title={[page().hiddenAgentUsage.requests ? `Includes ${hiddenShare(page())}` : "", page().usage.unratedRequests ? unratedTitle(page().usage) : ""].filter(Boolean).join("\n") || undefined}>
-            {usageCost(page().usage)} <span>est.</span><Show when={page().usage.unratedRequests}><span class="usage-unrated"><Icon name="alert" size={13} /></span></Show>
+          <span class="usage-total usage-total-cost" title={[page().hiddenAgentUsage.requests ? `Includes ${hiddenShare(page())}` : "", unratedCount(page().usage) ? unratedTitle(page().usage) : ""].filter(Boolean).join("\n") || undefined}>
+            {usageCost(page().usage)} <span>est.</span><Show when={unratedCount(page().usage)}><span class="usage-unrated"><Icon name="alert" size={13} /></span></Show>
           </span>
         </Show>
       </>}</Show>

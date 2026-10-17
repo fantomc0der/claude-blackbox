@@ -52,13 +52,14 @@ export interface UsageSummary {
   unpricedRequests: number;
   /** Requests naming a model without bundled rates. */
   unratedRequests: number;
-  /** Requests whose advisor or fallback step ran on a model without bundled rates, or on one it did not name. */
+  /** Requests whose advisor named no model or ran on a model without bundled rates, or whose fallback hop ran on a
+   *  model without bundled rates. A hop that names no model is never charged, so it is no reason. */
   unratedIterationRequests: number;
   /** Requests that recorded no model. */
   unnamedRequests: number;
   /** Requests in fast mode on a model without a known fast rate. */
   fastRequests: number;
-  /** Requests on a service tier other than standard, such as priority or batch, which have no bundled rates. */
+  /** Requests on a service tier other than standard, which has no bundled rates. */
   tierRequests: number;
   /** Requests that presented a fallback credit, whose billing the API decides. */
   creditRequests: number;

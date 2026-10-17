@@ -139,9 +139,12 @@ describe("usage extraction and pricing", () => {
     for (const fields of [{ service_tier: "standard" }, { service_tier: null }, { fallback_credit: null }, { service_tier: null, fallback_credit: null, speed: null, iterations: [] }]) {
       expect(sample("claude-opus-5", { input_tokens: 1000, ...fields })).toMatchObject({ cost: standard.cost, reason: null, rates: rateStamp("claude-opus-5") });
     }
-    // A credit outranks a tier, either outranks a model without rates, and a recorded cost outranks them all.
-    expect(sample("future-model", { input_tokens: 1, service_tier: "priority", fallback_credit: {} })?.reason).toBe("credit");
-    expect(sample("future-model", { input_tokens: 1, service_tier: "priority" })?.reason).toBe("tier");
+    // A missing or unrated model outranks a credit, so it keeps its flag and its name in the note; a credit outranks a
+    // tier, either outranks an advisor without rates, and a recorded cost outranks them all.
+    expect(sample("future-model", { input_tokens: 1, service_tier: "priority", fallback_credit: {} })?.reason).toBe("model");
+    expect(sample("", { input_tokens: 1, service_tier: "priority", fallback_credit: {} })?.reason).toBe("unnamed");
+    expect(sample("claude-opus-5", { input_tokens: 1, service_tier: "priority", fallback_credit: {} })?.reason).toBe("credit");
+    expect(sample("claude-opus-5", { input_tokens: 1, service_tier: "priority", iterations: [{ type: "advisor_message", model: "future-advisor", input_tokens: 1 }] })?.reason).toBe("tier");
     expect(sample("claude-opus-5", { input_tokens: 1, service_tier: "priority", fallback_credit: {} }, { costUSD: 0.5 })).toMatchObject({ cost: 0.5, recorded: true, reason: null });
     expect(sample("<synthetic>", { output_tokens: 5, service_tier: "priority", iterations: [{ type: "advisor_message", model: "claude-opus-5", output_tokens: 5 }] })).toBeNull();
   });
@@ -175,6 +178,8 @@ describe("usage extraction and pricing", () => {
     expect(fast.cost).toBeCloseTo(1000 * 5 * 2 / 1e6 + (500 * 3 + 100 * 15 + 50 * 3.75) / 1e6, 12);
     const hourly = { ...advisor, input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 100, cache_creation: { ephemeral_1h_input_tokens: 100 } };
     expect(sample("claude-sonnet-4-5", { input_tokens: 0, iterations: [hourly] })?.cost).toBeCloseTo(100 * 10 / 1e6, 12);
+    // The request's US inference applies to the advisor's share as well.
+    expect(sample("claude-sonnet-4-5", { ...top, inference_geo: "us", iterations: [advisor] })?.cost).toBeCloseTo(advised.cost! * 1.1, 12);
   });
 
   // With a server-side fallback Claude Code prices the request from its `fallback_message` hops, each at its own model
@@ -205,6 +210,10 @@ describe("usage extraction and pricing", () => {
     const cached = { ...hops[0], input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 100, cache_creation: { ephemeral_1h_input_tokens: 100 } };
     expect(fallback("end_turn", [cached]).cost).toBeCloseTo(100 * 6.25 / 1e6, 12);
     expect(fallback("end_turn", [hops[0]], { speed: "fast" }).cost).toBeCloseTo(opus * 2, 12);
+    expect(fallback("end_turn", hops, { inference_geo: "us" }).cost).toBeCloseTo((opus + sonnet) * 1.1, 12);
+    // The tracker's reducer charges only a hop with a model, so one without a model costs nothing, last or not.
+    expect(fallback("end_turn", [hops[0], { type: "fallback_message", input_tokens: 5000 }]).cost).toBeCloseTo(opus, 12);
+    expect(fallback("end_turn", [{ type: "fallback_message", input_tokens: 5000 }, hops[0]]).cost).toBeCloseTo(opus, 12);
     expect(fallback("end_turn", hops, { speed: "fast" })).toMatchObject({ cost: null, reason: "fast" });
     // A hop without rates leaves the request unpriced unless it is the free one.
     const unrated = [hops[0], { ...hops[1], model: "future-model" }];
@@ -245,8 +254,10 @@ describe("usage extraction and pricing", () => {
     const unknown = "this version of Claude Blackbox has no rates for yet";
     expect(pricingGap(usage(14, { unratedRequests: 14 }), ["claude-sonnet-6"])).toBe(`Cost is incomplete: 14 of 240 requests use a model ${unknown}: claude-sonnet-6. Their tokens are still included, and a release that adds its rates will price them.`);
     expect(pricingGap(usage(1, { unratedRequests: 1 }), [])).toBe(`Cost is incomplete: 1 of 240 requests uses a model ${unknown}. Its tokens are still included, and a release that adds its rates will price it.`);
-    expect(pricingGap(usage(15, { unratedRequests: 12, fastRequests: 3 }), ["claude-sonnet-6", "claude-haiku-6"])).toBe(`Cost is incomplete: 15 of 240 requests have no estimate. 12 use models ${unknown}: claude-sonnet-6 and claude-haiku-6. 3 used fast mode without a known rate for their model. Their tokens are still included, and a release that adds their rates will price them.`);
-    expect(pricingGap(usage(2, { unratedRequests: 1, unnamedRequests: 1 }), ["claude-sonnet-6"])).toBe(`Cost is incomplete: 2 of 240 requests have no estimate. 1 uses a model ${unknown}: claude-sonnet-6. 1 recorded no model. Their tokens are still included, and a release that adds its rates will price it.`);
+    expect(pricingGap(usage(15, { unratedRequests: 12, fastRequests: 3 }), ["claude-sonnet-6", "claude-haiku-6"])).toBe(`Cost is incomplete: 15 of 240 requests have no estimate. 12 use models ${unknown}: claude-sonnet-6 and claude-haiku-6. 3 used fast mode without a known rate for their model. Their tokens are still included, and a release that adds their rates will price 12 of them.`);
+    expect(pricingGap(usage(2, { unratedRequests: 1, unnamedRequests: 1 }), ["claude-sonnet-6"])).toBe(`Cost is incomplete: 2 of 240 requests have no estimate. 1 uses a model ${unknown}: claude-sonnet-6. 1 recorded no model. Their tokens are still included, and a release that adds its rates will price 1 of them.`);
+    // One reason that covers fewer requests than have no estimate still opens with the whole count.
+    expect(pricingGap(usage(3, { unratedRequests: 2 }), ["claude-sonnet-6"])).toBe(`Cost is incomplete: 3 of 240 requests have no estimate. 2 use a model ${unknown}: claude-sonnet-6. Their tokens are still included, and a release that adds its rates will price 2 of them.`);
     expect(pricingGap(usage(3, { fastRequests: 3 }), [])).toBe("Cost is incomplete: 3 of 240 requests used fast mode without a known rate for their model. Their tokens are still included.");
     expect(pricingGap(usage(1, { fastRequests: 1 }), [])).toBe("Cost is incomplete: 1 of 240 requests used fast mode without a known rate for its model. Its tokens are still included.");
     expect(pricingGap(usage(1, { unnamedRequests: 1 }), [])).toBe("Cost is incomplete: 1 of 240 requests recorded no model. Its tokens are still included.");
@@ -254,16 +265,19 @@ describe("usage extraction and pricing", () => {
 
   test("states service tiers, fallback credits and advisor or fallback models in plain English", () => {
     const usage = (unpricedRequests: number, reasons: Partial<UsageSummary>) => ({ ...emptyUsage(), requests: 240, unpricedRequests, ...reasons });
-    const tier = "used a service tier other than standard, such as priority or batch, which this version of Claude Blackbox has no rates for.";
-    const credit = "presented a fallback credit, whose billing is decided by the API.";
-    const step = "ran an advisor or fallback step on a model this version of Claude Blackbox has no rates for yet.";
+    const tier = "used a service tier other than standard, which this version of Claude Blackbox has no rates for.";
+    const credit = "presented a fallback credit, so the API decides what it is billed.";
+    const step = "ran an advisor or fallback step on a model this version of Claude Blackbox has no rates for, or an advisor that named no model.";
     expect(pricingGap(usage(2, { tierRequests: 2 }), [])).toBe(`Cost is incomplete: 2 of 240 requests ${tier} Their tokens are still included.`);
     expect(pricingGap(usage(1, { creditRequests: 1 }), [])).toBe(`Cost is incomplete: 1 of 240 requests ${credit} Its tokens are still included.`);
-    expect(pricingGap(usage(1, { unratedIterationRequests: 1 }), [])).toBe(`Cost is incomplete: 1 of 240 requests ${step} Its tokens are still included, and a release that adds its rates will price it.`);
-    expect(pricingGap(usage(3, { unratedIterationRequests: 3 }), [])).toBe(`Cost is incomplete: 3 of 240 requests ${step} Their tokens are still included, and a release that adds their rates will price them.`);
+    expect(pricingGap(usage(2, { creditRequests: 2 }), [])).toBe("Cost is incomplete: 2 of 240 requests presented a fallback credit, so the API decides what they are billed. Their tokens are still included.");
+    // An advisor that named no model shares the reason, so no release is promised to price these.
+    expect(pricingGap(usage(1, { unratedIterationRequests: 1 }), [])).toBe(`Cost is incomplete: 1 of 240 requests ${step} Its tokens are still included.`);
+    expect(pricingGap(usage(3, { unratedIterationRequests: 3 }), [])).toBe(`Cost is incomplete: 3 of 240 requests ${step} Their tokens are still included.`);
     expect(pricingGap(usage(3, { tierRequests: 2, creditRequests: 1 }), [])).toBe(`Cost is incomplete: 3 of 240 requests have no estimate. 2 ${tier} 1 ${credit} Their tokens are still included.`);
+    expect(pricingGap(usage(3, { tierRequests: 2 }), [])).toBe(`Cost is incomplete: 3 of 240 requests have no estimate. 2 ${tier} Their tokens are still included.`);
     expect(pricingGap(usage(7, { unratedRequests: 1, unratedIterationRequests: 1, fastRequests: 1, unnamedRequests: 1, tierRequests: 2, creditRequests: 1 }), ["claude-sonnet-6"])).toBe(
-      `Cost is incomplete: 7 of 240 requests have no estimate. 1 uses a model this version of Claude Blackbox has no rates for yet: claude-sonnet-6. 1 ${step} 1 used fast mode without a known rate for its model. 1 recorded no model. 2 ${tier} 1 ${credit} Their tokens are still included, and a release that adds their rates will price them.`);
+      `Cost is incomplete: 7 of 240 requests have no estimate. 1 uses a model this version of Claude Blackbox has no rates for yet: claude-sonnet-6. 1 ${step} 1 used fast mode without a known rate for its model. 1 recorded no model. 2 ${tier} 1 ${credit} Their tokens are still included, and a release that adds its rates will price 1 of them.`);
     // A count no reason covers, such as a total from a server older than the reasons, still reads as a sentence.
     expect(pricingGap(usage(1, {}), [])).toBe("Cost is incomplete: 1 of 240 requests has no estimate. Its tokens are still included.");
   });
@@ -366,7 +380,7 @@ describe("indexed usage", () => {
     expect(recorder.list(new URLSearchParams({ q: "no-such-request" })).modelUsage).toEqual([]);
   });
 
-  test("a later copy without a model keeps whether the request's model is recognized", async () => {
+  test("a later copy without a model is priced and flagged as the copy that named the model", async () => {
     const setup = await fixture();
     const known = record("known"), unknown = record("unknown");
     const named = [known, { ...unknown, message: { ...unknown.message, model: "future-model" } }];
@@ -380,7 +394,8 @@ describe("indexed usage", () => {
     await appendFile(file, copies.join("\n") + "\n");
     await recorder.scan();
     const rows = recorder.list(new URLSearchParams()).modelUsage;
-    expect(rows.find(row => row.model === "claude-sonnet-4-5")?.usage).toMatchObject({ requests: 1, unpricedRequests: 1, unratedRequests: 0, outputTokens: 800 });
+    expect(rows.find(row => row.model === "claude-sonnet-4-5")?.usage).toMatchObject({ requests: 1, unpricedRequests: 0, unratedRequests: 0, outputTokens: 800 });
+    expect(rows.find(row => row.model === "claude-sonnet-4-5")?.usage.costUSD).toBeCloseTo(readUsage(JSON.parse(copies[0]), "source", "event", "claude-sonnet-4-5")!.cost!, 12);
     expect(rows.find(row => row.model === "future-model")?.usage).toMatchObject({ requests: 1, unpricedRequests: 1, unratedRequests: 1, outputTokens: 800 });
   });
 
@@ -637,7 +652,24 @@ describe("indexed usage", () => {
       ["msg-advised", null, 0], ["msg-advisor-unrated", "iteration", 0], ["msg-batch", "tier", 0], ["msg-credit", "credit", 0],
       ["msg-fast", "fast", 0], ["msg-priority", "tier", 0], ["msg-standard", null, 0], ["msg-unnamed", "unnamed", 0],
     ]);
-    expect(pricingGap(page.usage, [])).toContain("2 used a service tier other than standard, such as priority or batch, which this version of Claude Blackbox has no rates for.");
+    expect(pricingGap(page.usage, [])).toContain("2 used a service tier other than standard, which this version of Claude Blackbox has no rates for.");
+  });
+
+  test("reopening an index whose requests another model priced in part marks nothing for re-reading", async () => {
+    const setup = await fixture();
+    await setup.write("session-a", [
+      request("advised", { input_tokens: 10, iterations: [{ type: "advisor_message", model: "claude-opus-5", input_tokens: 5 }] }),
+      request("fallback", { input_tokens: 10, iterations: [{ type: "fallback_message", model: "claude-opus-5", input_tokens: 10 }] }),
+    ]);
+    const first = await setup.open();
+    const stamps = first.db.query<{ model: string; rates: string }, []>("SELECT model, rates FROM usage_records").all();
+    expect(stamps).toHaveLength(2);
+    expect(stamps.every(row => row.rates !== rateStamp(row.model) && currentRates(row.model, row.rates))).toBe(true);
+    await first.close();
+    const reopened = await Recorder.open(setup.data, setup.state, { scan: false });
+    try {
+      expect(reopened.db.query("SELECT id FROM sessions WHERE mtime=0 OR identity=''").all()).toEqual([]);
+    } finally { await reopened.close(); }
   });
 
   test("a later copy keeps a stated reason coherent with the model and cost it counts", async () => {
@@ -670,8 +702,10 @@ describe("indexed usage", () => {
     const before = await setup.open();
     const expected = before.list(new URLSearchParams());
     before.bookmark(expected.items[0].id, true);
-    // As the previous rules left them: no reason column, an earlier stamp, and the priority request at standard rates.
+    // As the previous rules left them: no reason column, an earlier stamp, the priority request at standard rates, and
+    // the unrated model unmarked, as a build before `rates` left it.
     before.db.exec(`ALTER TABLE usage_records DROP COLUMN reason; UPDATE usage_records SET rates='revision-1';
+      UPDATE usage_records SET rates='', unrated=0 WHERE model='future-model';
       UPDATE usage_records SET cost=0.003 WHERE request_key LIKE '%msg-priority%'`);
     await before.close();
     const opened = await Recorder.open(setup.data, setup.state, { scan: false });
@@ -683,6 +717,10 @@ describe("indexed usage", () => {
     expect(page.usage).toMatchObject({ unpricedRequests: 4, unratedRequests: 1, fastRequests: 1, unnamedRequests: 1, tierRequests: 1, costUSD: 0 });
     expect(after.db.query<{ rates: string; model: string }, []>("SELECT rates, model FROM usage_records").all().every(row => currentRates(row.model, row.rates))).toBe(true);
     expect(page.items[0].bookmarked).toBe(true);
+    // Any open fills a reason that is missing, not only the one that adds the column.
+    after.db.exec("UPDATE usage_records SET reason=NULL WHERE model='future-model'");
+    await after.close();
+    expect((await setup.open()).list(new URLSearchParams()).usage).toEqual(page.usage);
     expect(await Bun.file(file).text()).toBe(original);
   });
 });
