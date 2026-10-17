@@ -33,7 +33,7 @@ test("usage keeps its layout focus scroll and values through background refreshe
       await page.route("**/api/sessions?*", async route => {
         const data = structuredClone(listing);
         data.usage.totalTokens += ++updates * 1_000_000;
-        await Bun.sleep(300);
+        await Bun.sleep(800);
         await route.fulfill({ json: data });
       });
       for (let cycle = 0; cycle < 2; cycle++) {
@@ -141,4 +141,31 @@ test("pagination and sorting keep usage for the same selection mounted", async (
   expect(await table!.evaluate(element => element.isConnected)).toBe(true);
   await expect(panel.locator(".usage-total-cost")).toHaveText(cost!);
   await expect(panel).toHaveAttribute("aria-busy", "false");
+});
+
+test("refreshes that answer quickly never draw the refresh dots", async ({ page }) => {
+  await page.goto("/");
+  const panel = page.locator(".usage-panel");
+  await expect(panel).toHaveAttribute("aria-busy", "false");
+  // A dot drawn for even one frame looks like a stray bullet, so the page watches every frame rather than sampling.
+  await page.evaluate(() => {
+    const drawn = { usage: false, count: false };
+    Object.assign(window, { drawn });
+    const watch = () => {
+      if (getComputedStyle(document.querySelector(".usage-refresh")!).visibility === "visible") drawn.usage = true;
+      if (document.querySelector(".list-caption .loading-dot")) drawn.count = true;
+      requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+  });
+  await page.route("**/api/sessions?*", async route => { await Bun.sleep(80); await route.continue(); });
+  const toggle = page.getByRole("button", { name: "Show subagents", exact: true });
+  for (const pressed of ["true", "false"]) {
+    const refreshed = page.waitForResponse("**/api/sessions?*");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", pressed);
+    await refreshed;
+    await expect(panel).toHaveAttribute("aria-busy", "false");
+  }
+  expect(await page.evaluate(() => (window as unknown as { drawn: object }).drawn)).toEqual({ usage: false, count: false });
 });

@@ -64,11 +64,12 @@ function ModelExpenses(props: { rows: ModelUsage[]; usage: UsageSummary; filterM
   </>;
 }
 
-/** The library's Usage bar: totals for every matching recording and the toggle for their breakdown, which the list hosts. */
-export function UsagePanel(props: { page: SessionPage | null; pending: boolean; open: boolean; toggle: () => void }) {
+/** The library's Usage bar: totals for every matching recording and the toggle for their breakdown, which the list hosts.
+ *  `pending` marks every refresh for assistive technology; `slow` is the refresh that has run long enough to show its dot. */
+export function UsagePanel(props: { page: SessionPage | null; pending: boolean; slow: boolean; open: boolean; toggle: () => void }) {
   return <div class="usage-panel" aria-busy={props.pending ? "true" : "false"}>
     <button type="button" class="usage-summary" aria-label="Usage and estimated cost" aria-expanded={props.open ? "true" : "false"} aria-controls="usage-breakdown" onClick={() => props.toggle()}>
-      <span class="usage-label">Usage<span class={['loading-dot usage-refresh', { active: props.pending }]} aria-hidden="true" title={props.pending ? "Updating usage" : undefined} /></span>
+      <span class="usage-label">Usage<span class={['loading-dot usage-refresh', { active: props.slow }]} aria-hidden="true" title={props.slow ? "Updating usage" : undefined} /></span>
       <Show when={props.page} fallback={<span class="usage-loading" aria-label="Usage not yet available">—</span>}>{page => <>
         <Show when={page().usage.requests} fallback={<span class="usage-empty">{page().total ? "No usage recorded" : "No matching recordings"}</span>}>
           <span class="usage-total" title={`${tokenCount(page().usage.totalTokens)} tokens, including cache reads and writes`}>{compact(page().usage.totalTokens)} <span>tokens</span></span>
