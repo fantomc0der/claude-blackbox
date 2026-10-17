@@ -57,8 +57,9 @@ export interface UsageSummary {
 /** One model's share of Claude Code's own running total, keyed by the requested model after `normalizeModel()`. */
 export interface RecordedModelUsage {
   inputTokens: number;
-  /** Includes `thinkingTokens`, which Claude Code counts inside its output tokens. */
   outputTokens: number;
+  /** Claude Code's own schema describes this field as "Thinking tokens, already counted inside outputTokens", so it is
+   *  never added to `outputTokens`. Absent, and so 0 here, for turns run by versions that did not record it. */
   thinkingTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
