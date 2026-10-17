@@ -386,10 +386,13 @@ export function EventCard(props: EventCardProps) {
   });
   const role = createMemo(() => props.event.role || "system");
   const note = createMemo(() => noteFiling(props.event.type));
-  // A stand-in Claude Code wrote in place of a model turn is labeled as its own, not as Claude's reply.
+  // A stand-in Claude Code wrote in place of a model turn is labeled as its own, not as Claude's reply, and the
+  // interruption marker it wrote in place of a prompt as its own, not as the user's words.
   const presentation = createMemo(() => note() ? "state" : isToolResultEvent(props.event) ? "tool-result" : isStandIn(props.event) ? "stand-in" : role());
   const roleLabel = createMemo(() => presentation() === "tool-result" ? "Tool result" : note() ? noteLabels[note()!] : presentation() === "stand-in" ? "Claude Code" : role());
-  const roleDetail = () => presentation() === "stand-in" ? "Claude Code wrote this record itself in place of a model turn; it is not model output." : undefined;
+  const roleDetail = () => presentation() !== "stand-in" ? undefined : props.event.role === "user"
+    ? "Claude Code wrote this record itself when the turn was interrupted; the user did not type it."
+    : "Claude Code wrote this record itself in place of a model turn; it is not model output.";
   const errorLabel = () => isApiError(props.event) ? apiErrorLabel(props.event) : "Error";
   // Claude Code writes most bookkeeping and state without a timestamp, so a note says so instead of reporting the time as unknown.
   const timeLabel = () => presentation() === "state" && !props.event.timestamp ? "No timestamp" : formatEventTime(props.event.timestamp);
