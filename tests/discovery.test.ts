@@ -175,13 +175,13 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(9);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(10);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
   const setup = await fixture();
   const styled = "Added \u001b[1mC:\\code\\app\u001b[22m as a working directory \u001b[2m· /permissions\u001b[22m";
-  await setup.write("styled-title", [record(`<local-command-stdout>${styled}</local-command-stdout>`)]);
+  await setup.write("styled-title", [record(styled)]);
   await setup.write("named", [record("Prompt", { customTitle: "Custom  title" })]);
   const before = await setup.open();
   const sessions = before.list(new URLSearchParams()).items;
@@ -264,11 +264,54 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(9);
+  expect(version()).toBe(10);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
   expect(after.getSession(copied.id)?.toolCount).toBe(1);
+});
+
+test("version 8 indexes retitle recordings by Claude Code's first-prompt rules without rescanning them", async () => {
+  const setup = await fixture();
+  const command = (name: string, args: string) => `<command-name>${name}</command-name>\n<command-message>${name.slice(1)}</command-message>\n<command-args>${args}</command-args>`;
+  const opened = "<ide_opened_file>The user opened the file /synthetic/project/upload.ts in the IDE. This may or may not be related to the current task.</ide_opened_file>";
+  await setup.write("command-first", [record(command("/clear", "")), record("<local-command-stdout></local-command-stdout>"), record("Add retries to the upload client")]);
+  await setup.write("ide-first", [record(opened), record("Why does the upload client hang?")]);
+  await setup.write("review", [record(command("/review", "PR 12")), record("Looks fine")]);
+  await setup.write("output-only", [record("<local-command-stdout>Added /synthetic/shared as a working directory for this session</local-command-stdout>")]);
+  await setup.write("named", [record(command("/clear", "")), record("Prompt", { customTitle: "Custom title" })]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const before = await setup.open();
+  const id = (title: string) => before.list(new URLSearchParams()).items.find(item => item.title === title)!.id;
+  const ids = { commandFirst: id("Add retries to the upload client"), ideFirst: id("Why does the upload client hang?"), review: id("/review PR 12"),
+    outputOnly: id("Session output-o"), named: id("Custom title"), plain: id("Plain prompt") };
+  before.bookmark(ids.commandFirst, true);
+  // Indexes written before version 9 titled a recording from the first user record with any text, tags removed.
+  const retitle = before.db.query("UPDATE sessions SET title=? WHERE id=?");
+  retitle.run("/clear clear", ids.commandFirst);
+  retitle.run("The user opened the file /synthetic/project/upload.ts in the IDE. This may or may not be related to the current task.", ids.ideFirst);
+  retitle.run("/review review PR 12", ids.review);
+  retitle.run("Added /synthetic/shared as a working directory for this session", ids.outputOnly);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings were re-read: only the one
+  // already marked for re-reading, which gets its title from that read instead of in place.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(ids.review);
+  before.db.exec("PRAGMA user_version=8");
+  await before.close();
+  // Retitling reads stored records, so opening leaves it to the first scan, after the server binds its port.
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const titles = () => Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, after.getSession(id)!.title]));
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(8);
+  expect(titles().commandFirst).toBe("/clear clear");
+  await after.scan();
+  expect(version()).toBe(10);
+  expect(titles()).toEqual({ commandFirst: "Add retries to the upload client", ideFirst: "Why does the upload client hang?", review: "/review PR 12",
+    outputOnly: "Session output-o", named: "Custom title", plain: "Plain prompt" });
+  for (const id of [ids.commandFirst, ids.ideFirst, ids.outputOnly, ids.named, ids.plain]) expect(cwds(id)).toEqual(["/synthetic/stale"]);
+  expect(cwds(ids.review)).toEqual(["/synthetic/project"]);
+  expect(after.getSession(ids.commandFirst)?.bookmarked).toBe(true);
 });
 
 const denial = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
@@ -276,7 +319,7 @@ const toolResult = (id: string, content: string, is_error = true) => record("", 
 const apiErrorTurn = () => record("", { type: "assistant", isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 },
   message: { id: "synthetic-1", model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "API Error: 529 Overloaded" }], usage: { input_tokens: 0, output_tokens: 0 } } });
 
-test("version 8 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
+test("version 9 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
   const setup = await fixture();
   await setup.write("denied", [record("Clean the install"), toolResult("rm-call", denial)]);
   await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
@@ -284,21 +327,21 @@ test("version 8 indexes re-index only the recordings whose errors need telling a
   await setup.write("plain", [record("Plain prompt")]);
   const before = await setup.open();
   const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
-  // Indexes written before version 9 flagged every `is_error` result as an error and no API error turn.
+  // Indexes written before version 10 flagged every `is_error` result as an error and no API error turn.
   before.db.query("UPDATE events SET error=1, decision=0 WHERE session_id=?").run(sessions["Clean the install"]);
   before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions["Clean the install"]);
   before.db.query("UPDATE events SET error=0 WHERE session_id=?").run(sessions["Fix the flaky test"]);
   before.db.query("UPDATE sessions SET errors=0 WHERE id=?").run(sessions["Fix the flaky test"]);
   before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=8");
+  before.db.exec("PRAGMA user_version=9");
   await before.close();
   const after = await setup.open({ scan: false });
   const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(8);
+  expect(version()).toBe(9);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(9);
+  expect(version()).toBe(10);
   for (const title of ["Clean the install", "Run the tests", "Fix the flaky test"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(0);

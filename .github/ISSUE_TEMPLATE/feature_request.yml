@@ -1,0 +1,52 @@
+name: Feature request
+description: Suggest an improvement or a new capability.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem before the solution. Requests that explain what you were trying to do are easier to evaluate than requests that only name a feature.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: How should it work? Where in the app would it live?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other designs, workarounds you use today, or why existing features do not cover it.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Library, search, and filters
+        - Replay and event cards
+        - Usage and estimated cost
+        - Indexing and recording formats
+        - Desktop app
+        - Accessibility
+        - Documentation
+        - Something else
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Mockups, screenshots, or links to related issues.
