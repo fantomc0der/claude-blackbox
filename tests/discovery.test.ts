@@ -176,7 +176,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(18);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(19);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -266,7 +266,7 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
@@ -317,7 +317,7 @@ test("API request message copies leave out the text an earlier user or attachmen
   expect([find("Retry"), find("worktree"), find("Sweep"), find("tool note"), find("conventions")]).toEqual([[4], [7], [9], [8, 10], [0]]);
 });
 
-test("version 17 indexes re-index only the recordings whose API request message copies have searchable text", async () => {
+test("version 18 indexes re-index only the recordings whose API request message copies have searchable text", async () => {
   const setup = await fixture();
   await setup.write("repeated", [record("Repeat the Fernhollow prompt"), requestBlob("hash-repeat", { role: "user", content: [text("Repeat the Fernhollow prompt")] }), apiRequest(["hash-repeat"])]);
   await setup.write("assistant", [record("Answer once"), requestBlob("hash-answer", { role: "assistant", content: [text("Answered")] }), apiRequest(["hash-answer"])]);
@@ -327,14 +327,14 @@ test("version 17 indexes re-index only the recordings whose API request message 
   // An earlier build kept the prompt a copy repeats in its searchable text.
   before.db.query("UPDATE events SET text=? WHERE session_id=? AND type='api-request-blob'").run("type: text\ntext: Repeat the Fernhollow prompt", sessions["Repeat the Fernhollow prompt"]);
   before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=17");
+  before.db.exec("PRAGMA user_version=18");
   await before.close();
   const after = await setup.open({ scan: false });
   const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(17);
-  await after.scan();
   expect(version()).toBe(18);
+  await after.scan();
+  expect(version()).toBe(19);
   expect(cwds(sessions["Repeat the Fernhollow prompt"])).not.toContain("/synthetic/stale");
   expect([cwds(sessions["Answer once"]), cwds(sessions["Plain prompt"])]).toEqual([["/synthetic/stale"], ["/synthetic/stale"]]);
   expect(after.matches(sessions["Repeat the Fernhollow prompt"], new URLSearchParams("kind=all&find=Fernhollow")).items.map(item => item.sequence)).toEqual([0]);
@@ -413,12 +413,82 @@ test("version 10 indexes re-index only the recordings that hold Claude Code's st
   expect(version()).toBe(10);
   expect([counts(failed.id), counts(quiet.id)]).toEqual([[2, 0], [2, 0]]);
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect([counts(failed.id), counts(quiet.id)]).toEqual([[1, 1], [1, 0]]);
   expect(after.events(failed.id, new URLSearchParams("kind=all&errors=1")).items.map(event => event.sequence)).toEqual([1]);
   expect(after.events(quiet.id, new URLSearchParams("kind=all")).items.map(event => event.category)).toEqual(["message", "synthetic"]);
   expect(cwds(failed.id)).not.toContain("/synthetic/stale");
   expect(cwds(quiet.id)).not.toContain("/synthetic/stale");
+  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
+});
+
+// When a turn is interrupted, Claude Code writes a user record itself whose only content is its interruption marker.
+const interruption = (text = "[Request interrupted by user for tool use]") => record("", { message: { role: "user", content: [{ type: "text", text }] } });
+
+test("Claude Code's interruption marker is its own record, never a prompt or a message", async () => {
+  const setup = await fixture();
+  await setup.write("interrupted", [
+    record("Run the migration"),
+    record("Running it now.", { type: "assistant", message: { model: "model-a", content: "Running it now." } }),
+    interruption(),
+    record("Stop and roll it back"),
+    // The marker as a plain string, and a prompt that quotes it, which is the user's own.
+    record("[Request interrupted by user]"),
+    record("It printed [Request interrupted by user] and stopped"),
+    record("  [Request interrupted by user]  "),
+  ]);
+  const recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
+  expect([session.messageCount, session.errorCount, session.decisionCount, session.title]).toEqual([4, 0, 0, "Run the migration"]);
+  expect(events("kind=all").items.map(event => [event.role, event.category, event.error, event.decision])).toEqual([
+    ["user", "message", false, null], ["assistant", "message", false, null], ["user", "synthetic", false, null], ["user", "message", false, null],
+    ["user", "synthetic", false, null], ["user", "message", false, null], ["user", "synthetic", false, null],
+  ]);
+  expect(events("kind=all").items[2].blocks).toEqual([{ type: "text", text: "[Request interrupted by user for tool use]" }]);
+  expect(events("kind=prompts").items.map(event => event.sequence)).toEqual([0, 3, 5]);
+  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  expect(events("kind=message").items.map(event => event.sequence)).toEqual([0, 1, 3, 5]);
+  expect(recorder.list(new URLSearchParams("q=roll+it+back")).items[0]).toMatchObject({ matchCategory: "message", matchRole: "user" });
+  expect(recorder.list(new URLSearchParams("q=interrupted+by+user+for+tool+use")).items[0]).toMatchObject({ matchCategory: "synthetic", matchRole: "user" });
+  expect((await recorder.catalog()).messages).toBe(4);
+});
+
+test("version 17 indexes re-index only the recordings that hold Claude Code's interruption marker", async () => {
+  const setup = await fixture();
+  await setup.write("interrupted", [record("Interrupted prompt"), interruption(), record("Keep going")]);
+  await setup.write("quoted", [record("Quoted prompt"), record("It printed [Request interrupted by user] and stopped")]);
+  await setup.write("stopped", [record("Stopped prompt"), toolResult("sleep-call", "[Request interrupted by user for tool use]")]);
+  await setup.write("plain", [record("Plain prompt"), record("Reply", { type: "assistant", message: { model: "model-a", content: "Reply" } })]);
+  const before = await setup.open();
+  const sessions = before.list(new URLSearchParams()).items;
+  const named = (title: string) => sessions.find(item => item.title === title)!;
+  const interrupted = named("Interrupted prompt"), quoted = named("Quoted prompt"), stopped = named("Stopped prompt"), plain = named("Plain prompt");
+  before.bookmark(interrupted.id, true);
+  // Indexes written before version 18 read the marker as a prompt and counted it as a message.
+  before.db.query("UPDATE events SET category='message' WHERE session_id=? AND sequence=1").run(interrupted.id);
+  before.db.query("UPDATE sessions SET messages=3 WHERE id=?").run(interrupted.id);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=17");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  // The stored category is what the Prompts view and the message count follow; a replay page derives its own afresh.
+  const categories = (id: string) => after.db.query<{ category: string }, [string]>("SELECT category FROM events WHERE session_id=? ORDER BY sequence").all(id).map(row => row.category);
+  const prompts = (id: string) => after.events(id, new URLSearchParams("kind=prompts")).items.map(event => event.sequence);
+  expect(version()).toBe(17);
+  expect([after.getSession(interrupted.id)?.messageCount, categories(interrupted.id), prompts(interrupted.id)]).toEqual([3, ["message", "message", "message"], [0, 1, 2]]);
+  await after.scan();
+  expect(version()).toBe(19);
+  expect([after.getSession(interrupted.id)?.messageCount, categories(interrupted.id), prompts(interrupted.id)]).toEqual([2, ["message", "synthetic", "message"], [0, 2]]);
+  expect(after.getSession(interrupted.id)?.bookmarked).toBe(true);
+  expect(cwds(interrupted.id)).toEqual(["/synthetic/project"]);
+  // A prompt that quotes the marker is re-read and stays a prompt; a tool result holding the message is a tool record,
+  // so its recording is left alone, like one without the marker.
+  expect([after.getSession(quoted.id)?.messageCount, cwds(quoted.id), categories(quoted.id)]).toEqual([2, ["/synthetic/project"], ["message", "message"]]);
+  expect([after.getSession(stopped.id)?.decisionCount, cwds(stopped.id)]).toEqual([1, ["/synthetic/stale"]]);
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
 });
 
@@ -457,7 +527,7 @@ test("version 8 indexes retitle recordings by Claude Code's first-prompt rules w
   expect(version()).toBe(8);
   expect(titles().commandFirst).toBe("/clear clear");
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(titles()).toEqual({ commandFirst: "Add retries to the upload client", ideFirst: "Why does the upload client hang?", review: "/review PR 12",
     outputOnly: "Session output-o", named: "Custom title", plain: "Plain prompt" });
   for (const id of [ids.commandFirst, ids.ideFirst, ids.outputOnly, ids.named, ids.plain]) expect(cwds(id)).toEqual(["/synthetic/stale"]);
@@ -488,7 +558,7 @@ test("version 11 indexes re-index only the recordings whose errors need telling 
   expect(version()).toBe(11);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   for (const title of ["Clean the install", "Run the tests"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(0);
@@ -534,7 +604,7 @@ test("version 16 indexes count API errors and decisions in place and re-index on
   expect(version()).toBe(16);
   expect(after.getSession(sessions["Deploy the release"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(after.getSession(sessions["Retry the request"])?.errorCount).toBe(0);
   // A decision an earlier build recognized keeps its flag and takes its new label from the stored record, unread.
@@ -600,7 +670,7 @@ test("version 16 indexes retitle recordings by Claude Code's title precedence wi
   expect(version()).toBe(16);
   expect(titles().agent).toBe("Release");
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(titles()).toEqual({ summarized: "Earlier work on the Larkspur parser", agent: "Release reviewer", renamed: "Custom", legacy: "Custom on a prompt", teammate: "Harbor teammate", plain: "Plain prompt" });
   expect(named()).toEqual({ summarized: 1, agent: 4, renamed: 3, legacy: 3, teammate: 4, plain: 0 });
   for (const id of Object.values(ids)) expect(cwds(id)).toEqual(["/synthetic/stale"]);
@@ -749,7 +819,7 @@ test("version 12 indexes re-index only the recordings that hold Claude Code's ru
   expect(version()).toBe(12);
   expect(after.getSession(sessions["Price the work"])?.recordedCost).toBeNull();
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Price the work"])).toMatchObject({ bookmarked: true, recordedCost: { costUSD: 1.27, models: { "claude-opus-5": { outputTokens: 300, costUSD: 1.27 } } } });
@@ -814,7 +884,7 @@ test("version 13 indexes re-index only the recordings that hold turn durations o
   expect(after.getSession(sessions["Time the work"])?.activeTime).toBeNull();
   expect(after.getSession(sessions["Price the work"])?.recordedCost).toMatchObject({ costUSD: 1.27, apiDurationMs: null, toolDurationMs: null });
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(cwds(sessions["Time the work"])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
@@ -842,7 +912,7 @@ test("version 14 indexes re-index only the recordings that Claude Code relocated
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT cwd FROM events WHERE session_id=? ORDER BY sequence").all(id).map(row => row.cwd);
   expect(version()).toBe(14);
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(cwds(sessions["Move to a worktree"])).toEqual(["/synthetic/project", worktree, worktree]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale", "/synthetic/stale"]);
   expect(after.getSession(sessions["Move to a worktree"])).toMatchObject({ bookmarked: true, cwd: "/synthetic/project" });
@@ -869,7 +939,7 @@ test("version 15 indexes fill the Claude Code version and unrecognized records i
   expect(version()).toBe(15);
   expect(after.getSession(ids.formats)).toMatchObject({ version: "", unrecognizedCount: 0 });
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(after.getSession(ids.formats)).toMatchObject({ bookmarked: true, version: "2.1.302", unrecognizedCount: 4 });
   expect(after.getSession(ids.plain)).toMatchObject({ version: "2.1.278", unrecognizedCount: 0 });
   const catalog = await after.catalog();
@@ -901,7 +971,7 @@ test("version 15 and 16 indexes re-read a recording holding a record SQLite's JS
     const after = await setup.open({ scan: false });
     const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
     await after.scan();
-    expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(18);
+    expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(19);
     expect([cwds(ids.deep), cwds(ids.plain)]).toEqual([["/synthetic/project"], ["/synthetic/stale"]]);
     expect(after.getSession(ids.deep)).toMatchObject({ version: "2.1.302", errorCount: 1, apiErrorCount: 1 });
     expect(after.getSession(ids.plain)).toMatchObject({ version: "2.1.278", errorCount: 0 });
@@ -927,7 +997,7 @@ test("version 9 indexes re-index only the recordings that hold session state rec
   expect(version()).toBe(9);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0, 1]);
   await after.scan();
-  expect(version()).toBe(18);
+  expect(version()).toBe(19);
   expect(cwds(stateful.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0]);

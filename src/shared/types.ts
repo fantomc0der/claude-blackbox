@@ -23,7 +23,8 @@ export interface ReplayEvent {
   timestamp: string;
   blocks: ContentBlock[];
   text: string;
-  /** `synthetic` marks a record Claude Code wrote itself in place of a model turn, such as an API error. */
+  /** `synthetic` marks a record Claude Code wrote itself: an assistant stand-in for a model turn, such as an API error,
+   *  or the interruption marker it writes as a user record when a turn is interrupted. Neither is a message. */
   category: "message" | "tool" | "thinking" | "hidden" | "system" | "synthetic";
   toolNames: string[];
   /** A failure is recorded: a tool result marked `is_error` that is not a decision, a record marked `is_error` or

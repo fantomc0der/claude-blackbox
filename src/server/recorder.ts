@@ -269,7 +269,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 18) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 19) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -467,7 +467,7 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9 to 18 steps below follow it
+    // its port, and before the recordings are compared with what was indexed; the version 9 to 19 steps below follow it
     // in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
@@ -628,12 +628,22 @@ export class Recorder {
       if (!filled) return [];
       this.db.exec("PRAGMA user_version=17");
     }
-    // Version 18 leaves out of an `api-request-blob` copy's searchable text the text an earlier user or attachment
+    // Version 18 reads Claude Code's interruption marker, the `user` record it writes itself when a turn is interrupted,
+    // as a stand-in like an assistant record it writes in place of a model turn, where earlier builds read it as a prompt
+    // and counted it as a message. Only the recordings holding such a record are re-read; finding them reads every
+    // event, like version 8. A user record's searchable text holds its text blocks, so the marker is matched there, on
+    // the records an earlier build read as messages; a prompt that quotes the marker is re-read too and stays a prompt.
+    if (version < 18) this.db.transaction(() => {
+      this.db.exec(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events
+        WHERE role='user' AND category='message' AND instr(text,'[Request interrupted by user')>0)`);
+      this.db.exec("PRAGMA user_version=18");
+    })();
+    // Version 19 leaves out of an `api-request-blob` copy's searchable text the text an earlier user or attachment
     // record holds, such as the prompt a copy repeats. Only the recordings holding a copy with searchable text are
     // re-read; finding them reads every event, like version 8.
-    if (version < 18) this.db.transaction(() => {
+    if (version < 19) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=? AND text!='')").run(requestMessageType);
-      this.db.exec("PRAGMA user_version=18");
+      this.db.exec("PRAGMA user_version=19");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
