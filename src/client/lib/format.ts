@@ -83,16 +83,26 @@ export function tokenCount(value: number): string {
 
 const modelList = new Intl.ListFormat("en", { type: "conjunction" });
 
-/** Explains which requests have no estimate and why: a model this build has no rates for, which a later release can
- *  price, or else fast mode without a known rate or no recorded model. `unratedModels` names the former when known. */
+/** Explains which requests have no estimate and why, one sentence per reason. A model this build has no rates for, as a
+ *  request's own or as its advisor's or fallback's, is one a later release can price; `unratedModels` names the
+ *  requests' own models when known. */
 export function pricingGap(usage: UsageSummary, unratedModels: string[]): string {
-  const unrated = usage.unratedRequests, other = usage.unpricedRequests - unrated, several = unratedModels.length > 1;
-  const unratedText = (subject: string) => `${subject} ${unrated === 1 ? "uses" : "use"} ${several ? "models" : "a model"} this version of Claude Blackbox has no rates for yet${unratedModels.length ? `: ${modelList.format(unratedModels)}` : ""}.`;
-  const otherText = (subject: string) => `${subject} used fast mode without a known rate for ${other === 1 ? "its" : "their"} model, or recorded no model.`;
+  const unrated = usage.unratedRequests, iteration = usage.unratedIterationRequests, several = unratedModels.length > 1;
+  const reasons: [number, (subject: string) => string][] = [
+    [unrated, subject => `${subject} ${unrated === 1 ? "uses" : "use"} ${several ? "models" : "a model"} this version of Claude Blackbox has no rates for yet${unratedModels.length ? `: ${modelList.format(unratedModels)}` : ""}.`],
+    [iteration, subject => `${subject} ran an advisor or fallback step on a model this version of Claude Blackbox has no rates for yet.`],
+    [usage.fastRequests, subject => `${subject} used fast mode without a known rate for ${usage.fastRequests === 1 ? "its" : "their"} model.`],
+    [usage.unnamedRequests, subject => `${subject} recorded no model.`],
+    [usage.tierRequests, subject => `${subject} used a service tier other than standard, such as priority or batch, which this version of Claude Blackbox has no rates for.`],
+    [usage.creditRequests, subject => `${subject} presented a fallback credit, whose billing is decided by the API.`],
+  ];
+  const stated = reasons.filter(([count]) => count > 0);
   const share = `${tokenCount(usage.unpricedRequests)} of ${tokenCount(usage.requests)} requests`;
-  const reasons = unrated && other ? `${share} have no estimate. ${unratedText(tokenCount(unrated))} ${otherText(tokenCount(other))}` : unrated ? unratedText(share) : otherText(share);
-  const update = unrated ? `, and a release that adds ${several ? "their" : "its"} rates will price ${unrated === 1 ? "it" : "them"}` : "";
-  return `Cost is incomplete: ${reasons} ${usage.unpricedRequests === 1 ? "Its" : "Their"} tokens are still included${update}.`;
+  const text = stated.length === 1 ? stated[0][1](share)
+    : [`${share} ${usage.unpricedRequests === 1 ? "has" : "have"} no estimate.`, ...stated.map(([count, reason]) => reason(tokenCount(count)))].join(" ");
+  const rateable = unrated + iteration, models = several || iteration > 0 && (unrated > 0 || iteration > 1);
+  const update = rateable ? `, and a release that adds ${models ? "their" : "its"} rates will price ${rateable === 1 ? "it" : "them"}` : "";
+  return `Cost is incomplete: ${text} ${usage.unpricedRequests === 1 ? "Its" : "Their"} tokens are still included${update}.`;
 }
 
 export function effortName(effort: string | null): string {

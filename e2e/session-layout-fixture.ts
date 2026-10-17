@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { SessionPage, UsageSummary } from "../src/shared/types";
 
-const usage = (costUSD: number, totalTokens: number, requests = 1, unpricedRequests = 0): UsageSummary => ({ inputTokens: totalTokens / 2, outputTokens: totalTokens / 4, cacheCreationTokens: 0, cacheReadTokens: totalTokens / 4, totalTokens, costUSD, requests, unpricedRequests, unratedRequests: 0, recordedCostRequests: requests - unpricedRequests });
+const usage = (costUSD: number, totalTokens: number, requests = 1, unpricedRequests = 0): UsageSummary => ({ inputTokens: totalTokens / 2, outputTokens: totalTokens / 4, cacheCreationTokens: 0, cacheReadTokens: totalTokens / 4, totalTokens, costUSD, requests, unpricedRequests, unratedRequests: 0, unratedIterationRequests: 0, unnamedRequests: unpricedRequests, fastRequests: 0, tierRequests: 0, creditRequests: 0, recordedCostRequests: requests - unpricedRequests });
 
 const rows = [
   { title: "A deliberately long session title that verifies the recording title reserves space for the bookmark instead of swallowing it at every responsive width", workspace: "workspace-with-a-name-long-enough-to-test-metadata-truncation", branch: "feature/a-branch-name-that-is-intentionally-long-for-column-boundary-coverage", model: "Custom research model with an exceptionally descriptive deployment label", bookmarked: true, usage: usage(0.004, 7_000), messageCount: 7, toolCount: 0, startedAt: "2026-01-01T08:00:00Z", updatedAt: "2026-01-01T08:01:00Z" },

@@ -48,10 +48,20 @@ export interface UsageSummary {
   totalTokens: number;
   costUSD: number;
   requests: number;
+  /** Requests without an estimate. The six counts below divide them by reason. */
   unpricedRequests: number;
-  /** The part of `unpricedRequests` naming a model without bundled rates; the rest used fast mode without a known rate
-   *  or recorded no model. */
+  /** Requests naming a model without bundled rates. */
   unratedRequests: number;
+  /** Requests whose advisor or fallback step ran on a model without bundled rates, or on one it did not name. */
+  unratedIterationRequests: number;
+  /** Requests that recorded no model. */
+  unnamedRequests: number;
+  /** Requests in fast mode on a model without a known fast rate. */
+  fastRequests: number;
+  /** Requests on a service tier other than standard, such as priority or batch, which have no bundled rates. */
+  tierRequests: number;
+  /** Requests that presented a fallback credit, whose billing the API decides. */
+  creditRequests: number;
   recordedCostRequests: number;
 }
 

@@ -131,6 +131,7 @@ erDiagram
     TEXT effort
     TEXT rates
     INTEGER unrated
+    TEXT reason
   }
   session_costs {
     TEXT session_id PK, FK
@@ -248,21 +249,26 @@ One row per API request. `readUsage()` in `src/server/usage.ts` returns a record
 | --- | --- | --- |
 | `session_id` | `TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE` | The recording's `sessions.id`. |
 | `request_key` | `TEXT NOT NULL` | A JSON array string: `["message", <message.id>, <requestId or request_id, else sessionId, else the session id>]` when the message has an id, otherwise `["event", <sessionId or session id>, <uuid or event_id>]`. The same key can appear in several recordings, and the library totals count each key once. |
-| `input` | `INTEGER NOT NULL` | `usage.input_tokens`. |
-| `output` | `INTEGER NOT NULL` | `usage.output_tokens`. |
-| `cache_creation` | `INTEGER NOT NULL` | The larger of `usage.cache_creation_input_tokens` and `cache_creation.ephemeral_5m_input_tokens + cache_creation.ephemeral_1h_input_tokens`. |
-| `cache_read` | `INTEGER NOT NULL` | `usage.cache_read_input_tokens`. |
-| `cost` | `REAL` | The record's `costUSD` when present; otherwise the cost computed from the bundled rates; `NULL` when neither applies. |
+| `input` | `INTEGER NOT NULL` | `usage.input_tokens`, or as [Iterations](#iterations) describes when `usage.iterations` is an array. |
+| `output` | `INTEGER NOT NULL` | `usage.output_tokens`, or as [Iterations](#iterations) describes. |
+| `cache_creation` | `INTEGER NOT NULL` | The larger of `usage.cache_creation_input_tokens` and `cache_creation.ephemeral_5m_input_tokens + cache_creation.ephemeral_1h_input_tokens`, or as [Iterations](#iterations) describes. |
+| `cache_read` | `INTEGER NOT NULL` | `usage.cache_read_input_tokens`, or as [Iterations](#iterations) describes. |
+| `cost` | `REAL` | The record's `costUSD` when present; otherwise the sum of the request's shares, each computed from the bundled rates of its model; `NULL` when `reason` is set. |
 | `recorded` | `INTEGER NOT NULL` | 1 when `cost` came from `costUSD`. |
 | `sidechain` | `INTEGER NOT NULL` | 1 when the record has `isSidechain: true`. |
 | `model` | `TEXT NOT NULL DEFAULT ''` | `normalizeModel(message.model)`, the bundled rate table's key. Since version 4. |
 | `effort` | `TEXT` | The first value among `message.effort`, `effort`, `message.output_config.effort`, and `output_config.effort` that, trimmed and lowercased, passes `isFacetValue()` with an 80-character limit; `NULL` when none. Since version 4. |
-| `rates` | `TEXT NOT NULL DEFAULT ''` | `rateStamp(model)`: 16 hexadecimal characters identifying the rate entry and formula revision the row was priced with. Added without a version bump, see [Schema versions](#schema-versions). |
-| `unrated` | `INTEGER NOT NULL DEFAULT 0` | 1 when `cost` is `NULL`, the model is named, and the rate table has no entry for it. Added with `rates`. |
+| `rates` | `TEXT NOT NULL DEFAULT ''` | `rateStamp(model)`: 16 hexadecimal characters identifying the rate entry and formula revision the row was priced with. When a share of the request is priced at another model's rates, the stamp is instead the same length of hash over the formula revision and the whole rate table, so any rate edit changes it. Added without a version bump, see [Schema versions](#schema-versions). |
+| `unrated` | `INTEGER NOT NULL DEFAULT 0` | 1 when `reason` is `model`. Added with `rates`. |
+| `reason` | `TEXT` | Why `cost` is `NULL`, and `NULL` when it is not. A request without a `costUSD` takes the first of these that applies: `credit` when `usage.fallback_credit` is neither `null` nor absent; `tier` when `usage.service_tier` is a string other than `standard`; `unnamed` when a charged share is at `model` and `model` is empty; `model` when a charged share is at `model` and the rate table has no entry for it; `iteration` when a charged share is at another model with no entry, or at an empty one; `fast` when `usage.speed` or the record's `speed` is `fast` and the model of a charged share other than an advisor's has no fast rate. A request without iterations is one charged share at `model`. Added without a version bump, see [Schema versions](#schema-versions). |
 
-The primary key is `(session_id, request_key)`. The insert is an upsert: a conflicting row is replaced only when the new row has a lower `sidechain`, or the same `sidechain` and more total tokens, or the same tokens and a recorded cost over a computed one, or the same again and a higher cost. `model`, `rates`, and `unrated` keep their stored values when the new row has an empty model, and `effort` is taken from whichever row has one. A second statement fills `effort` on an existing row that lacked it.
+The primary key is `(session_id, request_key)`. The insert is an upsert: a conflicting row is replaced only when the new row has a lower `sidechain`, or the same `sidechain` and more total tokens, or the same tokens and a recorded cost over a computed one, or the same again and a higher cost. `model` and `rates` keep their stored values when the new row has an empty model, and `effort` is taken from whichever row has one. `reason` and `unrated` follow the new row, except that a new row whose reason is `unnamed` keeps a stored `reason` of `model` and `unrated` of 1, since the stored model still has no rates. A second statement fills `effort` on an existing row that lacked it.
 
 Indexes: `usage_efforts` on `(effort)` serves the catalog's distinct effort list and the `effort` and `effortMissing` filters.
+
+#### Iterations
+
+When `usage.iterations` is an array, `readUsage()` splits the request into the shares that Claude Code 2.1.302's cost tracker charges; an entry that is not an object counts nothing. The token columns are the top-level counts plus the counts of every entry whose `type` is `advisor_message`. When no entry has `type` `fallback_message`, each top-level count is first raised to its sum over the entries whose `type` is not `advisor_message`, if that is larger. The request's own share is at `model` with those top-level counts, unless an entry has `type` `fallback_message` and a non-empty `model`: then the request is a server-side fallback, and each such entry is a share at `normalizeModel()` of its own `model` instead, counted from its `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` alone, so all its cache writes are priced at the 5-minute rate. When `message.stop_reason` is `refusal`, the entry with the highest index whose `type` is `fallback_message` is left out. Each `advisor_message` entry is a further share at `normalizeModel()` of its `model`, counted by the rules of the top-level usage, its own `cache_creation` split included. A share's cost uses the formula of a request without iterations, with its long-context tier judged on the share's own prompt and the request's `inference_geo` applied. The request's fast mode applies to its own share and to fallback hops, never to an advisor's.
 
 ### session_costs
 
@@ -374,7 +380,7 @@ A scan (`reconcile()`) walks `<data directory>/projects` up to six directories d
 
 Reading uses `readJsonLines()` in `src/server/jsonl.ts`, which yields one entry per newline-terminated line with its byte offset and the offset after it. A line that is not a JSON object counts as a warning and is skipped. Trailing bytes without a newline are yielded only when they already parse as a JSON object; otherwise `cursor` stays at the start of that partial line and the next scan picks it up once the writer finishes it. Events are inserted in transactions of 250 records, with a yield to the event loop between batches, and the `sessions` row is written once the whole file has been read, including the new `size`, `mtime`, `cursor`, `fingerprint`, `tailprint`, and `identity`. During a long first index, the changed ids are published to live clients about once a second.
 
-Interrupted imports are repaired at the next open. The constructor selects every `sessions` row whose `events` counter differs from `count(*)` of its `events` rows (the counter is written last, so a process killed mid-file leaves them apart) and marks each with `UPDATE sessions SET mtime=0, identity='' WHERE id=?`. The constructor also compares each distinct `(model, rates)` pair in `usage_records` with `rateStamp(model)` and marks the recordings that hold requests priced under other rates, so every total follows the bundled rates without re-reading unchanged recordings. The same reset idiom is how migrations invalidate derived rows.
+Interrupted imports are repaired at the next open. The constructor selects every `sessions` row whose `events` counter differs from `count(*)` of its `events` rows (the counter is written last, so a process killed mid-file leaves them apart) and marks each with `UPDATE sessions SET mtime=0, identity='' WHERE id=?`. The constructor also compares each distinct `(model, rates)` pair in `usage_records` with `rateStamp(model)` and with the whole table's stamp (`currentRates()` in `src/server/usage.ts`) and marks the recordings that hold requests priced under other rates, so every total follows the bundled rates without re-reading unchanged recordings. The same reset idiom is how migrations invalidate derived rows.
 
 ## Schema versions
 
@@ -401,7 +407,7 @@ Interrupted imports are repaired at the next open. The constructor selects every
 
 "Full reset on open" is `UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=6;`, which runs whenever the version is below 6, or whenever the `tool_results` or `session_facets` table did not exist before the `schema` script ran, so any index older than version 6 is re-read in full and then passes through the version 7 to 17 steps. Versions up to 7 complete inside the constructor, before `Recorder.open()` returns. Versions 8 to 17 are different: version 8 reads every event to find the recordings holding `api-request-blob` records, version 9 reads stored user records to retitle recordings, version 10 reads every event to find the recordings holding session state records, version 11 reads every event to find the recordings holding a `<synthetic>` assistant record, version 12 reads every event to find the recordings with an error, version 13 reads every event to find the recordings holding a `cost-state` record, version 14 reads every event to find the recordings holding a `cost-state` or `turn_duration` record, version 15 reads every event to find the recordings holding a `relocated` record, version 16 reads every event twice, once for its version and once for its type and subtype, and version 17 walks every event and reads the stored records an earlier build flagged or decided, the title records, and every stored record of an explicitly titled recording, so `reconcile()` performs all ten, in that order, when the first scan begins. Versions 16 and 17 go one recording at a time through `upgradeEach()`: each recording not already marked for re-reading, whose next read derives the same values afresh, is filled in its own transaction through `events_session`, the step yields to the event loop after every 20 ms of that work, and the version is set only after the last recording, so a shutdown midway leaves the stored version and the next scan repeats the step, whose writes are idempotent. `src/server/cli.ts` opens the recorder with `scan: false`, binds the HTTP port, and only then starts that scan, so a large index does not delay the desktop window. Until that scan runs, the version stays at the stored 7 to 16 and the derived rows are those of that version; the `decision`, `turns`, `active_ms`, `api_ms`, `tool_ms`, `version`, `unrecognized`, `api_errors`, and `decisions` columns already exist by then, added through the `PRAGMA table_info` checks with their defaults.
 
-The `rates` and `unrated` columns of `usage_records` were added after version 7 without a version bump. They arrive through the `PRAGMA table_info` check like every other added column, and the rate-stamp comparison described above re-indexes the rows that lack a current stamp, so no version step was needed.
+The `rates` and `unrated` columns of `usage_records` were added after version 7 without a version bump. They arrive through the `PRAGMA table_info` check like every other added column, and the rate-stamp comparison described above re-indexes the rows that lack a current stamp, so no version step was needed. The `reason` column was added later in the same way, together with revision 2 of the rate stamp, which changes every stamp and so re-indexes every recording that holds a usage row. When it adds the column, the constructor also fills it for the rows whose `cost` is `NULL` by the rules they were priced with: `model` when `unrated` is 1, `unnamed` when `model` is empty, and `fast` otherwise, so the usage notes account for every unpriced request until the scan re-reads the recordings.
 
 ## Safe inspection
 
@@ -448,6 +454,9 @@ WHERE event_fts MATCH '"synthetic project"' ORDER BY rank LIMIT 10;
 SELECT model, count(*) AS requests, sum(input + output + cache_creation + cache_read) AS tokens, sum(cost) AS cost, sum(unrated) AS unrated
 FROM usage_records GROUP BY model ORDER BY cost DESC;
 
+-- Why requests have no estimate.
+SELECT reason, count(*) AS requests FROM usage_records WHERE cost IS NULL GROUP BY reason ORDER BY requests DESC;
+
 -- Recordings the next scan will re-read, and the schema version.
 SELECT id, source FROM sessions WHERE mtime = 0 OR identity = '';
 PRAGMA user_version;
@@ -457,7 +466,7 @@ PRAGMA user_version;
 
 The existing migrations follow one pattern; a change should follow it too.
 
-- Decide whether the derived rows change. A new column with a default, filled only for new records, needs the `PRAGMA table_info` check and `ALTER TABLE ... ADD COLUMN` in the constructor, and nothing else, as `rates` and `unrated` show. A change in how `normalize()`, `readUsage()`, or the facet rules read a record needs a version bump, because unchanged recordings are never re-read.
+- Decide whether the derived rows change. A new column with a default, filled only for new records, needs the `PRAGMA table_info` check and `ALTER TABLE ... ADD COLUMN` in the constructor, and nothing else, as `rates` and `unrated` show. A change in how `normalize()`, `readUsage()`, or the facet rules read a record needs a version bump, because unchanged recordings are never re-read. A change in how `readUsage()` counts or prices a request it already returns a row for can instead raise `revision` in `src/server/usage.ts`, which re-indexes every recording that holds a usage row, as revision 2 did for `reason`.
 - Bump the version and the gate together: raise `if (version > N) throw` to the new number and set `PRAGMA user_version=N` in the step that completes the upgrade. The step must run only when the stored version is below the new one.
 - Choose the smallest reset. A targeted `UPDATE sessions SET mtime=0, identity='' WHERE id IN (...)` re-reads only the affected recordings (versions 8, 10, 11, 12, 13, 14, 15, and 17, and the recordings version 16 cannot fill in place); an in-place `UPDATE` fixes stored values without re-reading anything (versions 7, 9, 16, and the counts and titles of 17); the full reset is for changes that touch every record (versions 2 to 6). Never delete rows directly; the scan's own reset path deletes and rebuilds them.
 - Leave `bookmarks`, `groups`, and `group_paths` alone, and keep `sessions.id` deterministic, so bookmarks and groups keep matching their recordings.
