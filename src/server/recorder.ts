@@ -7,7 +7,7 @@ import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
 import { newestVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
 import { readJsonLines } from "./jsonl";
-import { decidedResults, displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
+import { decidedResults, displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel, TranscriptTexts } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, currentRates, emptyUsage, hasRates, normalizeModel, readCostState, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -236,6 +236,7 @@ export class Recorder {
   private workspaceUsage: Map<string, UsageSummary> | null = null;
   private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "versions" | "unrecognizedKinds" | "facetsLimited"> | null = null;
   private replayFacets = new Map<string, EventPage["facets"]>();
+  private transcripts = new Map<string, { cursor: number; texts: TranscriptTexts }>();
   private replayTimelines = new Map<string, { total: number; rows: TimelineRow[] }>();
   private replaySummaries = new Map<string, { total: number; summary: SessionSummary }>();
 
@@ -423,6 +424,26 @@ export class Recorder {
     return { ...row, source: path, identity: stored };
   }
 
+  // The transcript text a recording's indexed user and attachment records hold, and the message copies whose searchable
+  // text keeps some text, for a read that resumes at the cursor.
+  private indexedTranscript(id: string, texts: TranscriptTexts): void {
+    for (const row of this.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? AND ((type='user' AND has_tools=0) OR type='attachment')").all(id)) {
+      texts.note(object(JSON.parse(row.raw)));
+    }
+    for (const row of this.db.query<{ raw: string; sequence: number }, [string, string]>("SELECT raw, sequence FROM events WHERE session_id=? AND type=? AND text!=''").all(id, requestMessageType)) {
+      normalize(object(JSON.parse(row.raw)), id, 0, row.sequence, texts);
+    }
+  }
+
+  // The full-text index reads `events.text` only through the insert and delete triggers, so a rewrite replaces its row.
+  private reviseText(rowid: number, before: string, after: string): void {
+    this.db.transaction(() => {
+      this.db.query("INSERT INTO event_fts(event_fts, rowid, text) VALUES ('delete', ?, ?)").run(rowid, before);
+      this.db.query("UPDATE events SET text=? WHERE rowid=?").run(after, rowid);
+      this.db.query("INSERT INTO event_fts(rowid, text) VALUES (?, ?)").run(rowid, after);
+    })();
+  }
+
   /**
    * Runs one upgrade step's `fill` for every recording not already marked for re-reading, whose next read derives the
    * same values afresh, each recording in its own transaction through `events_session`. The scan runs after the server
@@ -510,7 +531,22 @@ export class Recorder {
         // Claude Code files `cost-state` as last-wins, so the last one read replaces the stored total; a read that
         // appends no new one keeps the total already stored.
         let recordedCost: RecordedCost | null = null;
+        // A read that resumes at the cursor continues the transcript text the previous read of this recording collected,
+        // or else reads what is already indexed once a record or message copy asks.
+        const cached = this.transcripts.get(id);
+        this.transcripts.delete(id);
+        const transcript = row.cursor && cached?.cursor === row.cursor ? cached.texts : new TranscriptTexts(row.cursor ? texts => this.indexedTranscript(id, texts) : undefined);
         let batch: ReplayEvent[] = [];
+        // A record holding text a message copy before it kept rewrites the copy's searchable text, in the batch or in
+        // the index, where the full-text row follows it.
+        const revise = (sequence: number) => {
+          const pending = batch.find(event => event.sequence === sequence);
+          if (pending) { pending.text = normalize(pending.raw, id, pending.offset, sequence, transcript).text; return; }
+          const stored = this.db.query<{ rowid: number; raw: string; text: string }, [string, number]>("SELECT rowid, raw, text FROM events WHERE session_id=? AND sequence=?").get(id, sequence);
+          if (!stored) return;
+          const text = normalize(object(JSON.parse(stored.raw)), id, 0, sequence, transcript).text;
+          if (text !== stored.text) this.reviseText(stored.rowid, stored.text, text);
+        };
         const write = this.db.transaction((events: ReplayEvent[]) => {
           const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text,role,timestamp,model,cwd,has_thinking,has_tools,decision)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
@@ -563,7 +599,8 @@ export class Recorder {
         for await (const line of readJsonLines(path, row.cursor, info.size)) {
           row.cursor = line.nextOffset;
           if (!line.value) { row.warnings += Number(line.malformed); continue; }
-          const event = normalize(line.value, id, line.offset, row.events);
+          const event = normalize(line.value, id, line.offset, row.events, transcript);
+          for (const sequence of transcript.note(line.value)) revise(sequence);
           recordedCost = readCostState(line.value) ?? recordedCost;
           const turn = turnDuration(line.value);
           if (turn !== null) { row.turns++; row.active_ms += turn; }
@@ -604,6 +641,9 @@ export class Recorder {
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
           await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true),
           row.turns, row.active_ms, row.version, row.unrecognized, row.api_errors, row.decisions, id);
+        // The recordings read most recently are the ones a live session keeps appending to.
+        if (this.transcripts.size >= 32) this.transcripts.delete(this.transcripts.keys().next().value!);
+        this.transcripts.set(id, { cursor: row.cursor, texts: transcript });
         changed.push(id);
         // Let live clients see a long first index fill in instead of an empty library.
         if (performance.now() - publishedAt >= 1000) {
@@ -1025,7 +1065,12 @@ export class Recorder {
     }
     offset = Math.min(offset, Math.max(0, total - 1));
     const items = this.db.query<StoredEvent, SQLQueryBindings[]>(`SELECT e.raw,e.event_id,e.sequence,e.offset,e.text FROM events e WHERE ${filter} ORDER BY e.sequence LIMIT ? OFFSET ?`)
-      .all(...bindings, limit, offset).map(row => normalize(JSON.parse(row.raw), id, row.offset, row.sequence));
+      .all(...bindings, limit, offset).map(row => {
+        const event = normalize(JSON.parse(row.raw), id, row.offset, row.sequence);
+        // A message copy's searchable text depends on the records before it, so the page carries the stored text that
+        // Find and the `q` filter test.
+        return event.type === requestMessageType ? { ...event, text: row.text } : event;
+      });
     const unfilteredTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=?").get(id)!.total;
     const hiddenTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=? AND category='hidden'").get(id)!.total;
     let facets = this.replayFacets.get(id);

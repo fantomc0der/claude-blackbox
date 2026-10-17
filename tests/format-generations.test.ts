@@ -166,12 +166,13 @@ describe("Claude Code recording generations", () => {
     const copies = all.items.filter(event => event.type === "api-request-blob");
     expect([copies.length, copies.every(event => event.category === "system" && !event.blocks.length && !event.timestamp)]).toEqual([9, true]);
     expect(all.items.filter(event => event.type === "api-request").every(event => event.timestamp)).toBe(true);
-    // `last-prompt` and `queue-operation` leave their copies of a prompt out of the searchable text, but the message copy
-    // of a prompt as it was sent keeps the user's words, so All events finds a prompt in its copy too. The conversation,
-    // and the library search that opens it, find only the prompt.
-    expect(find("Wrenfield")).toEqual({ total: 2, sequences: [1, 3] });
-    expect(find("smaller batch")).toEqual({ total: 2, sequences: [37, 38] });
+    // `last-prompt` and `queue-operation` leave their copies of a prompt out of the searchable text, and so does the
+    // message copy of a prompt as it was sent, so All events, the conversation, and the library search that opens it
+    // find only the prompt. The reminder Claude Code composed into that copy, which no other record holds, stays found.
+    expect(find("Wrenfield")).toEqual({ total: 1, sequences: [1] });
+    expect(find("smaller batch")).toEqual({ total: 1, sequences: [37] });
     expect(find("Wrenfield", "conversation").total).toBe(1);
+    expect(find("harbor style guide")).toEqual({ total: 1, sequences: [3] });
     expect([landing?.matchEventId, landing?.matchCategory, landing?.matchRole]).toEqual([all.items[1].id, "message", "user"]);
     // Five requests; the stand-ins carry no usage. At claude-opus-5-5's rates ($4 input, $20 output, a read at 0.05 of
     // input) and claude-fable-5-1's ($10 input, $50 output) for the advisor step, in millionths of a dollar:

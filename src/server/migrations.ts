@@ -28,7 +28,7 @@ import { decidedResults, explicitTitle, normalize, object, promptTitle, requestM
  */
 
 /** The version a fully upgraded index reports in `PRAGMA user_version`; the constructor refuses to open a newer one. */
-export const indexVersion = 18;
+export const indexVersion = 19;
 
 /** The row a per-recording step fills: a recording's id and `sessions.named`, the rank of its explicit title. */
 export interface UpgradeSession { readonly id: string; readonly named: number }
@@ -269,6 +269,15 @@ export const migrations: readonly Migration[] = [
     apply: db => {
       db.exec(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events
         WHERE role='user' AND category='message' AND instr(text,'[Request interrupted by user')>0)`);
+    },
+  },
+  // Version 19 leaves out of an `api-request-blob` copy's searchable text the text an earlier user or attachment
+  // record holds, such as the prompt a copy repeats. Only the recordings holding a copy with searchable text are
+  // re-read; finding them reads every event, like version 8.
+  {
+    version: 19,
+    apply: db => {
+      db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=? AND text!='')").run(requestMessageType);
     },
   },
 ];
