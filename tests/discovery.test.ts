@@ -244,7 +244,7 @@ test("API request message copies stay in the chronology without blocks, tool lin
     .toEqual([{ id: all.items[1].id, timestamp: "2026-09-20T12:00:01.000Z", error: true }]);
 });
 
-test("version 7 indexes re-index only the recordings that hold API request message copies", async () => {
+test("version 7 indexes re-index every recording and land on the current version", async () => {
   const setup = await fixture();
   const call = { type: "tool_use", id: "edit-call", name: "Edit", input: { file_path: "/synthetic/project/app.ts", old_string: "a", new_string: "b" } };
   const result = { type: "tool_result", tool_use_id: "edit-call", content: "Edited" };
@@ -253,6 +253,7 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const before = await setup.open();
   const sessions = before.queries.list(new URLSearchParams()).items;
   const copied = sessions.find(item => item.title === "Copied prompt")!, plain = sessions.find(item => item.title === "Plain prompt")!;
+  before.queries.bookmark(plain.id, true);
   // Indexes written before version 8 read each copy's blocks, so the copied call took over the original's tool link.
   before.db.query("UPDATE tool_calls SET event_row=(SELECT rowid FROM events WHERE session_id=? AND type='api-request-blob' ORDER BY sequence LIMIT 1)").run(copied.id);
   before.db.query("UPDATE sessions SET tools=2 WHERE id=?").run(copied.id);
@@ -260,17 +261,20 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
   before.db.exec("PRAGMA user_version=7");
   await before.close();
-  // Finding those recordings reads every event, so opening leaves it to the first scan, after the server binds its port.
+  // Versions 8 to 15 once each found the recordings to re-read by reading every event, so opening leaves the step that
+  // replaced them to the first scan too, after the server binds its port, where the steps that follow it read every event.
   const after = await setup.open({ scan: false });
   const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
   expect(version()).toBe(19);
+  // Every recording is re-read, whatever it holds, so a stale row an earlier build's predicate might have missed is gone too.
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
-  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
+  expect(cwds(plain.id)).toEqual(["/synthetic/project"]);
   expect(after.queries.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
   expect(after.queries.getSession(copied.id)?.toolCount).toBe(1);
+  expect(after.queries.getSession(plain.id)?.bookmarked).toBe(true);
 });
 
 // The user message Claude Code sends for a prompt merges the prompt with the context it composed, so its copy repeats
@@ -428,38 +432,6 @@ test("API error turns and other Claude Code stand-ins count as errors, never as 
   expect([catalog.messages, catalog.errors, catalog.models]).toEqual([2, 1, ["model-a"]]);
 });
 
-test("version 10 indexes re-index only the recordings that hold Claude Code's stand-ins", async () => {
-  const setup = await fixture();
-  await setup.write("failed", [record("Failed prompt"), apiError("a1", "u1", "2026-09-20T12:00:05Z")]);
-  await setup.write("quiet", [record("Quiet prompt"), standIn("a2", "u2", "2026-09-20T12:00:05Z", "No response requested.")]);
-  await setup.write("plain", [record("Plain prompt"), record("Reply", { type: "assistant", message: { model: "model-a", content: "Reply" } })]);
-  const before = await setup.open();
-  const sessions = before.queries.list(new URLSearchParams()).items;
-  const named = (title: string) => sessions.find(item => item.title === title)!;
-  const failed = named("Failed prompt"), quiet = named("Quiet prompt"), plain = named("Plain prompt");
-  // Indexes written before version 11 read a stand-in as a reply with no error flag.
-  before.db.exec("UPDATE events SET category='message', error=0 WHERE type='assistant' AND model='<synthetic>'");
-  before.db.query("UPDATE sessions SET messages=2, errors=0 WHERE id IN (?,?)").run(failed.id, quiet.id);
-  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
-  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=10");
-  await before.close();
-  const after = await setup.open({ scan: false });
-  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const counts = (id: string) => { const session = after.queries.getSession(id)!; return [session.messageCount, session.errorCount]; };
-  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(10);
-  expect([counts(failed.id), counts(quiet.id)]).toEqual([[2, 0], [2, 0]]);
-  await after.scan();
-  expect(version()).toBe(19);
-  expect([counts(failed.id), counts(quiet.id)]).toEqual([[1, 1], [1, 0]]);
-  expect(after.queries.events(failed.id, new URLSearchParams("kind=all&errors=1")).items.map(event => event.sequence)).toEqual([1]);
-  expect(after.queries.events(quiet.id, new URLSearchParams("kind=all")).items.map(event => event.category)).toEqual(["message", "synthetic"]);
-  expect(cwds(failed.id)).not.toContain("/synthetic/stale");
-  expect(cwds(quiet.id)).not.toContain("/synthetic/stale");
-  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
-});
-
 // When a turn is interrupted, Claude Code writes a user record itself whose only content is its interruption marker.
 const interruption = (text = "[Request interrupted by user for tool use]") => record("", { message: { role: "user", content: [{ type: "text", text }] } });
 
@@ -530,79 +502,8 @@ test("version 17 indexes re-index only the recordings that hold Claude Code's in
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
 });
 
-test("version 8 indexes retitle recordings by Claude Code's first-prompt rules without rescanning them", async () => {
-  const setup = await fixture();
-  const command = (name: string, args: string) => `<command-name>${name}</command-name>\n<command-message>${name.slice(1)}</command-message>\n<command-args>${args}</command-args>`;
-  const opened = "<ide_opened_file>The user opened the file /synthetic/project/upload.ts in the IDE. This may or may not be related to the current task.</ide_opened_file>";
-  await setup.write("command-first", [record(command("/clear", "")), record("<local-command-stdout></local-command-stdout>"), record("Add retries to the upload client")]);
-  await setup.write("ide-first", [record(opened), record("Why does the upload client hang?")]);
-  await setup.write("review", [record(command("/review", "PR 12")), record("Looks fine")]);
-  await setup.write("output-only", [record("<local-command-stdout>Added /synthetic/shared as a working directory for this session</local-command-stdout>")]);
-  await setup.write("named", [record(command("/clear", "")), record("Prompt", { customTitle: "Custom title" })]);
-  await setup.write("plain", [record("Plain prompt")]);
-  const before = await setup.open();
-  const id = (title: string) => before.queries.list(new URLSearchParams()).items.find(item => item.title === title)!.id;
-  const ids = { commandFirst: id("Add retries to the upload client"), ideFirst: id("Why does the upload client hang?"), review: id("/review PR 12"),
-    outputOnly: id("Session output-o"), named: id("Custom title"), plain: id("Plain prompt") };
-  before.queries.bookmark(ids.commandFirst, true);
-  // Indexes written before version 9 titled a recording from the first user record with any text, tags removed.
-  const retitle = before.db.query("UPDATE sessions SET title=? WHERE id=?");
-  retitle.run("/clear clear", ids.commandFirst);
-  retitle.run("The user opened the file /synthetic/project/upload.ts in the IDE. This may or may not be related to the current task.", ids.ideFirst);
-  retitle.run("/review review PR 12", ids.review);
-  retitle.run("Added /synthetic/shared as a working directory for this session", ids.outputOnly);
-  // A re-index rewrites every event of a recording, so a marked column shows which recordings were re-read: only the one
-  // already marked for re-reading, which gets its title from that read instead of in place.
-  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?").run(ids.review);
-  before.db.exec("PRAGMA user_version=8");
-  await before.close();
-  // Retitling reads stored records, so opening leaves it to the first scan, after the server binds its port.
-  const after = await setup.open({ scan: false });
-  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const titles = () => Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, after.queries.getSession(id)!.title]));
-  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(8);
-  expect(titles().commandFirst).toBe("/clear clear");
-  await after.scan();
-  expect(version()).toBe(19);
-  expect(titles()).toEqual({ commandFirst: "Add retries to the upload client", ideFirst: "Why does the upload client hang?", review: "/review PR 12",
-    outputOnly: "Session output-o", named: "Custom title", plain: "Plain prompt" });
-  for (const id of [ids.commandFirst, ids.ideFirst, ids.outputOnly, ids.named, ids.plain]) expect(cwds(id)).toEqual(["/synthetic/stale"]);
-  expect(cwds(ids.review)).toEqual(["/synthetic/project"]);
-  expect(after.queries.getSession(ids.commandFirst)?.bookmarked).toBe(true);
-});
-
 const denial = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
 const toolResult = (id: string, content: string, is_error = true) => record("", { message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error }] } });
-
-test("version 11 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
-  const setup = await fixture();
-  await setup.write("denied", [record("Clean the install"), toolResult("rm-call", denial)]);
-  await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
-  await setup.write("plain", [record("Plain prompt")]);
-  const before = await setup.open();
-  const sessions = Object.fromEntries(before.queries.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
-  // Indexes written before version 12 flagged every `is_error` result as an error.
-  before.db.query("UPDATE events SET error=1, decision=0 WHERE session_id=?").run(sessions["Clean the install"]);
-  before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions["Clean the install"]);
-  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
-  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=11");
-  await before.close();
-  const after = await setup.open({ scan: false });
-  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(11);
-  expect(after.queries.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
-  await after.scan();
-  expect(version()).toBe(19);
-  for (const title of ["Clean the install", "Run the tests"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
-  expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
-  expect(after.queries.getSession(sessions["Clean the install"])?.errorCount).toBe(0);
-  expect(after.queries.getSession(sessions["Run the tests"])?.errorCount).toBe(1);
-  expect(after.queries.events(sessions["Clean the install"], new URLSearchParams("kind=all&errors=1")).items.map(event => [event.sequence, event.error, event.decision])).toEqual([[1, false, "cancelled"]]);
-});
 
 // Claude Code 2.1.30x files a decided result's kind as `toolDenialKind` on the record that holds it.
 const kinded = (id: string, content: string, toolDenialKind: string) => record("", { toolDenialKind, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: true }] } });
@@ -838,32 +739,6 @@ test("the catalog lists the newest Claude Code versions however many the recordi
   expect(catalog.versions.slice(0, 3)).toEqual(["9.0.0", `1.0.${facetLimit + 4}`, `1.0.${facetLimit + 3}`]);
 });
 
-test("version 12 indexes re-index only the recordings that hold Claude Code's running total", async () => {
-  const setup = await fixture();
-  await setup.write("costed", [record("Price the work"), sessionState("cost-state", { totalCostUSD: 1.27, modelUsage: { "claude-opus-5[1m]": { outputTokens: 300, costUSD: 1.27 } } })]);
-  await setup.write("plain", [record("Plain prompt")]);
-  const before = await setup.open();
-  const sessions = Object.fromEntries(before.queries.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
-  before.queries.bookmark(sessions["Price the work"], true);
-  // Indexes written before version 13 kept no `session_costs` table.
-  before.db.exec("DROP TABLE session_costs");
-  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
-  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=12");
-  await before.close();
-  const after = await setup.open({ scan: false });
-  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(12);
-  expect(after.queries.getSession(sessions["Price the work"])?.recordedCost).toBeNull();
-  await after.scan();
-  expect(version()).toBe(19);
-  expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
-  expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
-  expect(after.queries.getSession(sessions["Price the work"])).toMatchObject({ bookmarked: true, recordedCost: { costUSD: 1.27, models: { "claude-opus-5": { outputTokens: 300, costUSD: 1.27 } } } });
-  expect(after.queries.getSession(sessions["Plain prompt"])?.recordedCost).toBeNull();
-});
-
 // Claude Code 2.1.27x and later end each turn with a timestamped `system` record of subtype `turn_duration`. Their sum is
 // the time Claude Code worked; the recorded span still counts the pauses between turns.
 const turnDuration = (durationMs: unknown, timestamp: string, extra: Record<string, unknown> = {}) =>
@@ -901,60 +776,40 @@ test("active time sums the turn durations Claude Code measured and ranks recordi
   expect(recorder.queries.getSession(timed.id)?.activeTime).toEqual({ durationMs: 396_000, turns: 3 });
 });
 
-test("version 13 indexes re-index only the recordings that hold turn durations or Claude Code's running total", async () => {
-  const setup = await fixture();
-  await setup.write("timed", [record("Time the work"), turnDuration(90_000, "2026-09-20T12:01:30Z")]);
-  await setup.write("costed", [record("Price the work"), sessionState("cost-state", { totalCostUSD: 1.27, totalAPIDuration: 45_000, totalToolDuration: 5_000 })]);
-  await setup.write("plain", [record("Plain prompt"), sessionState("permission-mode", { mode: "acceptEdits" })]);
-  const before = await setup.open();
-  const sessions = Object.fromEntries(before.queries.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
-  before.queries.bookmark(sessions["Time the work"], true);
-  // Indexes written before version 14 kept no turn counters and no measured time.
-  before.db.exec("ALTER TABLE sessions DROP COLUMN turns; ALTER TABLE sessions DROP COLUMN active_ms; ALTER TABLE session_costs DROP COLUMN api_ms; ALTER TABLE session_costs DROP COLUMN tool_ms");
-  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
-  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=13");
-  await before.close();
-  const after = await setup.open({ scan: false });
-  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(13);
-  expect(after.queries.getSession(sessions["Time the work"])?.activeTime).toBeNull();
-  expect(after.queries.getSession(sessions["Price the work"])?.recordedCost).toMatchObject({ costUSD: 1.27, apiDurationMs: null, toolDurationMs: null });
-  await after.scan();
-  expect(version()).toBe(19);
-  expect(cwds(sessions["Time the work"])).toEqual(["/synthetic/project"]);
-  expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
-  expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
-  expect(after.queries.getSession(sessions["Time the work"])).toMatchObject({ bookmarked: true, activeTime: { durationMs: 90_000, turns: 1 } });
-  expect(after.queries.getSession(sessions["Price the work"])?.recordedCost).toMatchObject({ costUSD: 1.27, apiDurationMs: 45_000, toolDurationMs: 5_000 });
-  expect(after.queries.getSession(sessions["Plain prompt"])).toMatchObject({ activeTime: null, recordedCost: null });
-});
-
-test("version 14 indexes re-index only the recordings that Claude Code relocated", async () => {
-  const setup = await fixture();
-  const worktree = "/synthetic/project/.claude/worktrees/feature";
-  await setup.write("moved", [record("Move to a worktree"), sessionState("relocated", { relocatedCwd: worktree }), record("Continue there", { cwd: worktree })]);
-  await setup.write("plain", [record("Plain prompt"), sessionState("permission-mode", { mode: "acceptEdits" })]);
-  const before = await setup.open();
-  const sessions = Object.fromEntries(before.queries.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
-  before.queries.bookmark(sessions["Move to a worktree"], true);
-  // Indexes written before version 15 stored no working directory for a relocated record and no facet for it.
-  before.db.exec("UPDATE events SET cwd='' WHERE type='relocated'");
-  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
-  before.db.exec("UPDATE events SET cwd='/synthetic/stale' WHERE type!='relocated'");
-  before.db.exec("PRAGMA user_version=14");
-  await before.close();
-  const after = await setup.open({ scan: false });
-  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT cwd FROM events WHERE session_id=? ORDER BY sequence").all(id).map(row => row.cwd);
-  expect(version()).toBe(14);
-  await after.scan();
-  expect(version()).toBe(19);
-  expect(cwds(sessions["Move to a worktree"])).toEqual(["/synthetic/project", worktree, worktree]);
-  expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale", "/synthetic/stale"]);
-  expect(after.queries.getSession(sessions["Move to a worktree"])).toMatchObject({ bookmarked: true, cwd: "/synthetic/project" });
-  expect(after.queries.events(sessions["Move to a worktree"], new URLSearchParams(`kind=all&cwd=${encodeURIComponent(worktree)}`)).items.map(item => item.type)).toEqual(["relocated", "user"]);
+// Versions 8 to 15 each once re-read only the recordings a predicate over the stored events selected. The one step that
+// replaced them marks every recording, so an index at any of those versions is re-read in full, and the tables and
+// columns the later versions added come back through the constructor's shape checks before the scan fills them.
+test("indexes below version 15 re-index every recording, whatever the replaced steps once selected", async () => {
+  for (const from of [8, 9, 10, 11, 12, 13, 14]) {
+    const setup = await fixture();
+    await setup.write("measured", [record("Price the work"), turnDuration(90_000, "2026-09-20T12:01:30Z"),
+      sessionState("cost-state", { totalCostUSD: 1.27, totalAPIDuration: 45_000, totalToolDuration: 5_000, modelUsage: { "claude-opus-5[1m]": { outputTokens: 300, costUSD: 1.27 } } })]);
+    await setup.write("plain", [record("Plain prompt")]);
+    const before = await setup.open();
+    const sessions = Object.fromEntries(before.queries.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
+    before.queries.bookmark(sessions["Price the work"], true);
+    // Indexes written before version 13 kept no `session_costs` table, and before version 14 no turn counters or measured time.
+    if (from < 13) before.db.exec("DROP TABLE session_costs");
+    else if (from < 14) before.db.exec("ALTER TABLE session_costs DROP COLUMN api_ms; ALTER TABLE session_costs DROP COLUMN tool_ms");
+    if (from < 14) before.db.exec("ALTER TABLE sessions DROP COLUMN turns; ALTER TABLE sessions DROP COLUMN active_ms");
+    // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+    before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+    before.db.exec(`PRAGMA user_version=${from}`);
+    await before.close();
+    const after = await setup.open({ scan: false });
+    const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+    const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+    expect(version()).toBe(from);
+    // Until the scan, the row holds what the index of that version could: no cost before 13, no durations before 14.
+    expect(after.queries.getSession(sessions["Price the work"])).toMatchObject({ activeTime: from < 14 ? null : { durationMs: 90_000, turns: 1 },
+      recordedCost: from < 13 ? null : { costUSD: 1.27, apiDurationMs: from < 14 ? null : 45_000, toolDurationMs: from < 14 ? null : 5_000 } });
+    await after.scan();
+    expect(version()).toBe(19);
+    for (const id of Object.values(sessions)) expect(cwds(id)).not.toContain("/synthetic/stale");
+    expect(after.queries.getSession(sessions["Price the work"])).toMatchObject({ bookmarked: true, activeTime: { durationMs: 90_000, turns: 1 },
+      recordedCost: { costUSD: 1.27, apiDurationMs: 45_000, toolDurationMs: 5_000, models: { "claude-opus-5": { outputTokens: 300, costUSD: 1.27 } } } });
+    expect(after.queries.getSession(sessions["Plain prompt"])).toMatchObject({ bookmarked: false, activeTime: null, recordedCost: null });
+  }
 });
 
 test("version 15 indexes fill the Claude Code version and unrecognized records in place", async () => {
@@ -1014,31 +869,6 @@ test("version 15 and 16 indexes re-read a recording holding a record SQLite's JS
     expect(after.queries.getSession(ids.deep)).toMatchObject({ version: "2.1.302", errorCount: 1, apiErrorCount: 1 });
     expect(after.queries.getSession(ids.plain)).toMatchObject({ version: "2.1.278", errorCount: 0 });
   }
-});
-
-test("version 9 indexes re-index only the recordings that hold session state records", async () => {
-  const setup = await fixture();
-  await setup.write("state", [record("Stateful prompt"), ...turnState("Stateful prompt")]);
-  await setup.write("plain", [record("Plain prompt")]);
-  const before = await setup.open();
-  const sessions = before.queries.list(new URLSearchParams()).items;
-  const stateful = sessions.find(item => item.title === "Stateful prompt")!, plain = sessions.find(item => item.title === "Plain prompt")!;
-  // Indexes written before version 10 flattened the whole record, so the prompt copy was searchable on the state record.
-  before.db.query("UPDATE events SET text='type: last-prompt\nlastPrompt: Stateful prompt' WHERE session_id=? AND type='last-prompt'").run(stateful.id);
-  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
-  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=9");
-  await before.close();
-  const after = await setup.open({ scan: false });
-  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(9);
-  expect(after.queries.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0, 1]);
-  await after.scan();
-  expect(version()).toBe(19);
-  expect(cwds(stateful.id)).not.toContain("/synthetic/stale");
-  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
-  expect(after.queries.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0]);
 });
 
 test("full-session replay filters precede pagination and context keeps original sequence", async () => {

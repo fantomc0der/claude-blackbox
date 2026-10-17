@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { recordedVersion, unrecognizedKind } from "../shared/records";
 import { isFacetValue } from "./facets";
-import { decidedResults, explicitTitle, normalize, object, promptTitle, requestMessageType, syntheticModel } from "./normalize";
+import { decidedResults, explicitTitle, normalize, object, requestMessageType } from "./normalize";
 
 /**
  * The versioned upgrade steps of the derived index that run with the first scan, in the order `Recorder.reconcile()`
@@ -19,9 +19,10 @@ import { decidedResults, explicitTitle, normalize, object, promptTitle, requestM
  * Two shapes of step exist here. A whole-index step `apply`s itself to the index at once, and `reconcile()` runs it and
  * the version advance in one transaction, so an interrupted upgrade leaves either the old version with its rows or the
  * new one with its: it marks the recordings whose stored rows an earlier build derived differently for re-reading
- * (`UPDATE sessions SET mtime=0, identity=''`, which the scan that follows acts on), or rewrites values the stored
- * records already hold. A per-recording step prepares its statements and returns the fill `Recorder.upgradeEach()` runs
- * for `each` recording not already marked for re-reading, in its own transaction, yielding to the event loop between
+ * (`UPDATE sessions SET mtime=0, identity=''`, which the scan that follows acts on), or every recording when it stands
+ * for a run of steps whose predicates were collapsed, or rewrites values the stored records already hold. A
+ * per-recording step prepares its statements and returns the fill `Recorder.upgradeEach()` runs for `each` recording
+ * not already marked for re-reading, in its own transaction, yielding to the event loop between
  * recordings so the bound server keeps answering; `reconcile()` advances the version only after the last recording,
  * and not at all when a shutdown stopped the step, so the fill's writes must be idempotent for the next scan to repeat
  * the step from the start.
@@ -41,14 +42,8 @@ export interface PerRecordingStep { readonly version: number; readonly each: (db
 
 export type Migration = WholeIndexStep | PerRecordingStep;
 
-// The record types version 10 first indexed as session state, and the ones version 16 adds to them as bookkeeping or
-// state. Each step keeps its own list, so an index upgraded across both is re-read as each version decided.
-const version10StateTypes = [
-  "last-prompt", "atis-latch", "queue-operation", "cost-state", "mode", "permission-mode", "worktree-state",
-  "isolation-latch", "dev-mods", "memory-mode", "agent-name", "agent-color", "agent-setting", "tag",
-  "attribution-snapshot", "file-history-delta", "api-request-shape", "relocated", "continued-in", "fork-context-ref",
-  "observer-ref", "history-suppression", "ended-by-model", "content-replacement",
-];
+// The record types version 16 first indexed as bookkeeping or state. Version 10 kept its own list of the session state
+// types it first indexed so, until the collapse into version 15, which re-reads every recording below it.
 const version16NoteTypes = [
   "file-history-snapshot", "frame-link", "artifact-comment-monitor", "summary", "custom-title", "ai-title", "pr-link",
   "artifact-autoreact-ledger", "bridge-session",
@@ -61,108 +56,27 @@ const version17DecisionTexts = [
   "Permission for this action ", "auto mode's safety classifier", ", so auto mode cannot determine the safety of ", " was not reviewed",
 ];
 
-/** The title `promptTitle()` gives a recording's stored user records, read in order until one titles it; empty when none does. */
-function firstPrompt(db: Database, id: string): string {
-  const page = db.query<{ raw: string; sequence: number }, [string, number]>(
-    "SELECT raw, sequence FROM events WHERE session_id=? AND role='user' AND sequence>? ORDER BY sequence LIMIT 50");
-  for (let after = -1; ;) {
-    const rows = page.all(id, after);
-    for (const row of rows) {
-      let title = "";
-      try { title = promptTitle(normalize(JSON.parse(row.raw) as Record<string, unknown>, id, 0, row.sequence)); }
-      catch { continue; }
-      if (title) return title;
-    }
-    if (rows.length < 50) return "";
-    after = rows[rows.length - 1].sequence;
-  }
-}
-
 export const migrations: readonly Migration[] = [
-  // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
-  // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-  // its port, and before the recordings are compared with what was indexed; the later steps follow it in order for the
-  // same reason.
-  {
-    version: 8,
-    apply: db => {
-      db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
-    },
-  },
-  // Version 9 titles a recording by Claude Code's own first-prompt rules, which skip the slash command, local command,
-  // hook, interruption, and IDE context records an earlier build read as the first prompt. The stored records hold every
-  // prompt, so a recording without an explicit title is retitled from them where it is instead of being re-read; one
-  // already marked for re-reading gets its title from that read.
-  {
-    version: 9,
-    apply: db => {
-      const update = db.query("UPDATE sessions SET title=? WHERE id=?");
-      for (const row of db.query<{ id: string; session_id: string; title: string }, []>("SELECT id, session_id, title FROM sessions WHERE named=0 AND mtime!=0").all()) {
-        const title = firstPrompt(db, row.id) || `Session ${row.session_id.slice(0, 8)}`;
-        if (title !== row.title) update.run(title, row.id);
-      }
-    },
-  },
-  // Version 10 re-indexes only the recordings holding Claude Code's session state records, which an earlier build read
-  // as content with their prompt copies searchable; finding them reads every event, like version 8.
-  {
-    version: 10,
-    apply: db => {
-      db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify(version10StateTypes));
-    },
-  },
-  // Version 11 re-indexes only the recordings that hold Claude Code's own stand-ins for a model turn, which earlier
-  // builds counted as replies and never as errors. Finding them reads every event, so like version 8 it runs with the
-  // first scan. The stored model column is the key: Claude Code's own API-error check requires `message.model` to be
-  // `<synthetic>` alongside `isApiErrorMessage`, so this assumes every recorded API error carries that model. A
-  // recording read afresh does not depend on it, because `normalize()` reads `isApiErrorMessage` on its own.
-  {
-    version: 11,
-    apply: db => {
-      db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='assistant' AND model=?)").run(syntheticModel);
-    },
-  },
-  // Version 12 tells the tool results that record a user's decision apart from failures. Every result an earlier build
-  // flagged is in a recording with an error, so only those recordings are re-read; finding them reads every event, like
-  // version 8. API error turns already count as errors since version 11.
-  {
-    version: 12,
-    apply: db => {
-      db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE error=1)");
-    },
-  },
-  // Version 13 keeps Claude Code's own running total from the last `cost-state` record of a recording in
-  // `session_costs`, which earlier builds never filled. Only the recordings holding such a record are re-read; finding
-  // them reads every event, like version 8.
-  {
-    version: 13,
-    apply: db => {
-      db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='cost-state')");
-    },
-  },
-  // Version 14 sums Claude Code's `turn_duration` records into `sessions.turns` and `sessions.active_ms` and keeps the
-  // API and tool time of the last `cost-state` record in `session_costs`, none of which earlier builds filled. Only
-  // the recordings holding either record are re-read; finding them reads every event, like version 8. The stored raw
-  // record is `JSON.stringify` of the parsed record, so the subtype is matched as it is serialized there.
-  {
-    version: 14,
-    apply: db => {
-      db.exec(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events
-        WHERE type='cost-state' OR (type='system' AND instr(raw,'"subtype":"turn_duration"')>0))`);
-    },
-  },
-  // Version 15 reads the `relocatedCwd` of Claude Code's `relocated` record as the record's working directory, so the
-  // replay marks the move to the worktree and back where earlier builds stored no `cwd` for it. Only the recordings
-  // holding such a record are re-read; finding them reads every event, like version 8.
+  // Version 15 marks every recording for re-reading. It stands for versions 8 to 15, which each once marked only the
+  // recordings whose stored rows an earlier build normalized differently, found by a predicate over every event: the
+  // type of an `api-request-blob` or session state record, a `<synthetic>` model, the error flag, a `cost-state` or
+  // `relocated` record, a `turn_duration` subtype matched in the serialized record, or a stored title retitled in
+  // place. Those predicates encoded how old builds parsed records, which is the fragile part, and no release wrote an
+  // index between versions 7 and 17, so every index in use below 17 is a version 7 one that ran all of them in one
+  // startup anyway.
+  // The index is derived from read-only recordings, so a full re-read is always a correct substitute for a targeted
+  // one. It reads no event, but it runs with the first scan like the steps it replaced, after the server has bound its
+  // port, so that the steps that follow it, which read every event, keep their order behind it; `docs/sqlite-schema.md`
+  // keeps what each version changed and the policy for collapsing a later run.
   {
     version: 15,
     apply: db => {
-      db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='relocated')");
+      db.exec("UPDATE sessions SET mtime=0, identity=''");
     },
   },
   // Version 16 keeps the Claude Code version a recording's records name and counts the records this build does not
   // recognize. The stored records hold both, so each recording is filled where it is instead of being re-read: one
-  // statement reads its events' `version` and another their type and subtype, which reads every event like version 8.
+  // statement reads its events' `version` and another their type and subtype, which reads every event.
   // The second also finds a record of a type version 16 first reads as a note but an earlier build read as content,
   // which kept the content in its searchable text, and marks only those recordings for re-reading. So is a recording
   // holding a record these statements need but SQLite's JSON parser rejects, which `JSON.parse` accepts, such as one
@@ -208,10 +122,10 @@ export const migrations: readonly Migration[] = [
   // cancellations apart from its denials, never counts its API retry banner as an error, counts a recording's API error
   // turns and decided records apart from its errors, and titles a recording by Claude Code's own precedence, agent name
   // first and summary before the first prompt, keeping the rank of the title's kind in `named`, where an earlier build
-  // kept 1 for any explicit title. The counts come from the records an earlier build flagged or decided, like version
-  // 12, each decided record parsed to count the results in it that record a decision, so every recording is filled
-  // where it is. A recording holding a title record, or titled explicitly by a field
-  // on another record, is retitled where it is from those stored records, like version 9. Finding a title field reads the
+  // kept 1 for any explicit title. The counts come from the records an earlier build flagged or decided, each decided
+  // record parsed to count the results in it that record a decision, so every recording is filled where it is. A
+  // recording holding a title record, or titled explicitly by a field on another record, is retitled where it is from
+  // those stored records. Finding a title field reads the
   // explicitly titled recordings' events, and finding an `agentName` reads every recording's events, because Claude Code's
   // transcript writer stamps a teammate's name on every record of its session and no earlier build read the field, so a
   // `named` of 0 does not rule it out. One already marked for re-reading gets its title from that read. A
@@ -262,7 +176,7 @@ export const migrations: readonly Migration[] = [
   // Version 18 reads Claude Code's interruption marker, the `user` record it writes itself when a turn is interrupted,
   // as a stand-in like an assistant record it writes in place of a model turn, where earlier builds read it as a prompt
   // and counted it as a message. Only the recordings holding such a record are re-read; finding them reads every
-  // event, like version 8. A user record's searchable text holds its text blocks, so the marker is matched there, on
+  // event. A user record's searchable text holds its text blocks, so the marker is matched there, on
   // the records an earlier build read as messages; a prompt that quotes the marker is re-read too and stays a prompt.
   {
     version: 18,
@@ -273,7 +187,7 @@ export const migrations: readonly Migration[] = [
   },
   // Version 19 leaves out of an `api-request-blob` copy's searchable text the text an earlier user or attachment
   // record holds, such as the prompt a copy repeats. Only the recordings holding a copy with searchable text are
-  // re-read; finding them reads every event, like version 8.
+  // re-read; finding them reads every event.
   {
     version: 19,
     apply: db => {
