@@ -1,0 +1,81 @@
+name: Recording data looks wrong
+description: Counts, costs, titles, timestamps, search results, or cards that do not match what the recording contains, including after a Claude Code update.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when the app shows something the recording does not support: a wrong count, cost, title, model, or time; a card that should not be there; a search that lands in the wrong place. Claude Code changes its transcript format between releases, so the Claude Code version is the most useful single fact.
+
+        **Keep your transcripts private.** Never paste a real recording or index content. Share record types, field names, and sanitized structure only.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you start
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: What looks wrong
+      multiple: true
+      options:
+        - Message, tool, error, or record counts
+        - Usage tokens or estimated cost
+        - Title, model, branch, or folder
+        - Timestamps, recorded span, or "Unknown time" cards
+        - Search or Find results
+        - Tool call and result pairing
+        - Files changed view
+        - Session family or subagents
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: mismatch
+    attributes:
+      label: What the app shows, and what the recording contains
+      description: Describe both sides. Numbers from the UI and the equivalent numbers from the file are ideal.
+      placeholder: |
+        The library row says 429 tool calls. Counting `"type":"tool_use"` blocks in assistant records gives 241.
+    validations:
+      required: true
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version that wrote the recording
+      description: "`claude --version`, or the `version` field on any record in the `.jsonl` file."
+      placeholder: "2.1.302"
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: claude-blackbox version
+      placeholder: "1.3.1"
+    validations:
+      required: true
+  - type: textarea
+    id: record-types
+    attributes:
+      label: Record types in the recording
+      description: |
+        Optional but very helpful. This prints only type names and counts, nothing from the content:
+        `grep -o '"type":"[a-zA-Z_-]*"' <session>.jsonl | sort | uniq -c`
+      render: text
+      placeholder: |
+        82 "type":"assistant"
+        27 "type":"atis-latch"
+        26 "type":"last-prompt"
+        64 "type":"user"
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sanitized sample record
+      description: Optional. One record that shows the problem, with prompts, paths, code, and output replaced by placeholders.
+      render: json
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
