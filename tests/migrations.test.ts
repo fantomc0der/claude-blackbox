@@ -41,14 +41,29 @@ test("the scan-time upgrade steps are listed once each, in ascending order, afte
 
 test("a whole-index step applied on its own marks only the recordings it names and leaves the version alone", async () => {
   const setup = await fixture();
-  await setup.write("costed", [record("Price the work"), { type: "cost-state", sessionId: "synthetic", totalCostUSD: 1.27 }]);
+  // A copy of a message holding text no other record holds keeps that text searchable, which version 19 re-reads.
+  await setup.write("copied", [record("Copy the context"),
+    { type: "api-request-blob", sessionId: "synthetic", hash: "hash-system", message: { role: "system", content: [{ type: "text", text: "Hook context no record holds" }] } },
+    { type: "api-request", sessionId: "synthetic", id: "request", timestamp: "2026-09-20T12:00:03Z", keep: 2, tail: ["hash-system"] }]);
   await setup.write("plain", [record("Plain prompt")]);
   const recorder = await setup.open();
   expect(markedForRereading(recorder)).toEqual([]);
-  const step = migrationTo(13);
-  if (!("apply" in step)) throw new Error("Version 13 marks recordings across the whole index.");
+  const step = migrationTo(19);
+  if (!("apply" in step)) throw new Error("Version 19 marks recordings across the whole index.");
   step.apply(recorder.db);
-  expect(markedForRereading(recorder)).toEqual(["Price the work"]);
+  expect(markedForRereading(recorder)).toEqual(["Copy the context"]);
+  expect(storedVersion(recorder)).toBe(indexVersion);
+});
+
+test("the step that stands for the collapsed versions 8 to 15 marks every recording and leaves the version alone", async () => {
+  const setup = await fixture();
+  await setup.write("costed", [record("Price the work"), { type: "cost-state", sessionId: "synthetic", totalCostUSD: 1.27 }]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const recorder = await setup.open();
+  const step = migrationTo(15);
+  if (!("apply" in step)) throw new Error("Version 15 marks recordings across the whole index.");
+  step.apply(recorder.db);
+  expect(markedForRereading(recorder)).toEqual(["Plain prompt", "Price the work"]);
   expect(storedVersion(recorder)).toBe(indexVersion);
 });
 
