@@ -10,19 +10,35 @@ import { normalizeModel, readUsage } from "../src/server/usage";
 /**
  * A read-only census of the record shapes in a Claude data directory, for noticing Claude Code format changes. It
  * reports key names, short enumerated identifiers (record type, subtype, block type, model, version, service tier),
- * and counts. It never stores or prints a value that could be recorded content: anything that does not look like an
- * identifier is counted under a placeholder, and every listed set stops at `listLimit` entries.
+ * and counts. It never prints recorded content, a path, or an id of the user, a session, or a request: a value or key
+ * that does not have the shape of an expected identifier is counted under a placeholder, an object keyed by data is
+ * counted as `(map)`, and every listed set stops at `listLimit` entries. Requests are told apart by a hash of their key,
+ * so no id is held in memory either.
  */
 
 /** The most distinct names or values listed for any one set; the rest are summed into one "+N more" entry. */
 export const listLimit = 50;
+
+/** The most distinct names any one tally holds in memory; further names are counted under `(overflow)`. */
+const distinctLimit = 10_000;
+
+/** A nested object with more keys than this is a map keyed by data, such as ids or paths, rather than a shape. */
+const mapKeyLimit = 32;
+
+/** Records carry more top-level fields than nested objects; those from Claude Code 2.1.269 to 2.1.302 have at most 27. */
+const recordKeyLimit = 64;
 
 /** Record types that carry a conversation turn and are expected to name the Claude Code version that wrote them. */
 export const transcriptTypes = ["user", "assistant", "system", "attachment", "progress"] as const;
 
 const tokenFields = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] as const;
 
+const semver = /^(\d{1,4})\.(\d{1,5})\.(\d{1,6})(?:-([0-9A-Za-z.-]{1,32}))?(?:\+[0-9A-Za-z.-]{1,32})?$/;
+
 export type Counts = Record<string, number>;
+
+/** Where the data directory came from; the path itself is never printed because it names the user. */
+export type DataDirSource = "--dir" | "CLAUDE_CONFIG_DIR" | "default";
 
 export interface TypeCensus {
   records: number;
@@ -42,13 +58,17 @@ export interface TypeCensus {
   contentBlocks?: Counts;
 }
 
+/**
+ * `usage.iterations` on the one record per request that the index keeps. Claude Code writes a record per content block
+ * of a reply, and an early record can carry a partial snapshot of the usage, so comparing every record would count
+ * differences that the index never sees.
+ */
 export interface IterationCensus {
-  /** Usage objects with an `iterations` array. */
-  records: number;
+  /** Requests whose kept record has an `iterations` array. */
+  requests: number;
   lengths: Counts;
-  /** Usage objects with more than one iteration. */
   multiple: number;
-  /** Usage objects whose iteration sum differs from the top-level count in at least one token field. */
+  /** Requests whose iteration sum differs from the top-level count in at least one token field. */
   differing: number;
   /** Per token field, how often the iteration sum is above or below the top-level count. */
   sumAbove: Counts;
@@ -60,7 +80,7 @@ export interface IterationCensus {
 export interface UsageCensus {
   /** Assistant records with a `message.usage` object; Claude Code repeats one request's usage on each of its records. */
   records: number;
-  /** Distinct requests among them, keyed the way the index deduplicates usage. */
+  /** Distinct requests among them that the index counts, keyed the way it deduplicates usage. */
   requests: number;
   keys: Counts;
   /** Key names inside each object-valued usage field, such as `cache_creation` or `output_tokens_details`. */
@@ -90,7 +110,7 @@ export interface VersionCensus {
 }
 
 export interface FormatCensus {
-  directory: string;
+  source: DataDirSource;
   files: { total: number; main: number; subagent: number; unreadable: number };
   /** Directories under `projects` that could not be listed. */
   unlistedDirectories: number;
@@ -98,44 +118,78 @@ export interface FormatCensus {
   types: Record<string, TypeCensus>;
   usage: UsageCensus;
   models: ModelCensus;
+  /** Oldest first; placeholders such as `(unlisted string)` come after every real version. */
   versions: Record<string, VersionCensus>;
   /** Records of each transcript type without a `version`. */
   withoutVersion: Counts;
 }
 
-/** The data directory `src/server/cli.ts` reads for the same `--dir` argument. */
-export function resolveDataDir(dir?: string): string {
-  return resolve(dir || process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"));
+/** The data directory `src/server/cli.ts` reads for the same `--dir` argument and environment. */
+export function resolveDataDir(dir?: string, env: Record<string, string | undefined> = process.env): { path: string; source: DataDirSource } {
+  if (dir) return { path: resolve(dir), source: "--dir" };
+  if (env.CLAUDE_CONFIG_DIR) return { path: resolve(env.CLAUDE_CONFIG_DIR), source: "CLAUDE_CONFIG_DIR" };
+  return { path: resolve(join(homedir(), ".claude")), source: "default" };
 }
 
-// Only enumerated identifiers are ever printed. A value that does not look like one, such as free text or a path with
-// spaces, is counted under a placeholder so an unexpected archive cannot leak its content through the census.
-function label(value: unknown): string {
+// The ids Claude Code, the API, and cloud providers write: long digit runs (account ids, timestamps), runs of hex that
+// mix digits and letters (uuids, hashes), and the prefixes of tool-use, message, and request ids.
+function idLike(value: string, digitRun = 6): boolean {
+  if (new RegExp(`\\d{${digitRun},}`).test(value)) return true;
+  for (const [run] of value.matchAll(/[0-9a-f]{8,}/gi)) if (/\d/.test(run) && /[a-f]/i.test(run)) return true;
+  return /^(?:srv)?toolu_|^msg_|^req_|^msgbatch_/i.test(value);
+}
+
+function placeholder(value: unknown): string {
   if (value === undefined) return "(missing)";
-  if (typeof value !== "string") return `(${value === null ? "null" : Array.isArray(value) ? "array" : typeof value})`;
-  return /^[\w.:@<>[\]/+-]{1,64}$/.test(value) ? value : "(unlisted string)";
+  if (value === null) return "(null)";
+  if (Array.isArray(value)) return "(array)";
+  return typeof value === "string" ? "(unlisted string)" : `(${typeof value})`;
+}
+
+/** A value Claude Code or the API picks from a fixed set: a record type, subtype, block type, tier, speed, or region. */
+function enumLabel(value: unknown): string {
+  return typeof value === "string" && /^[a-z][a-z0-9_.-]{0,39}$/.test(value) && !idLike(value) ? value : placeholder(value);
+}
+
+/** A model name, which users can configure, so ARNs, paths, URLs, email addresses, and ids are left out. */
+function modelLabel(value: unknown): string {
+  if (typeof value !== "string") return placeholder(value);
+  if (value.startsWith("arn:")) return "(arn)";
+  const undated = value.replace(/[-@]20\d{6}(?=$|[-:@])/g, "");
+  const named = /^[\w.:@<>[\]/+-]{1,64}$/.test(value) && !value.startsWith("/") && !value.includes("//")
+    && !/^[a-z]:\//i.test(value) && !/@[^@/]*\.[a-z]/i.test(value) && !idLike(undated, 8);
+  return named ? value : "(unlisted string)";
+}
+
+function versionLabel(value: unknown): string {
+  return typeof value === "string" && semver.test(value) ? value : placeholder(value);
 }
 
 function keyName(key: string): string {
-  return /^[A-Za-z_$][\w$-]{0,63}$/.test(key) ? key : "(unlisted key)";
+  return /^[A-Za-z_$][\w$-]{0,63}$/.test(key) && !idLike(key) ? key : "(unlisted key)";
+}
+
+function keyNames(value: unknown, limit = mapKeyLimit): string[] {
+  const keys = Object.keys(object(value));
+  return keys.length > limit ? ["(map)"] : keys.map(keyName);
 }
 
 function bump(map: Map<string, number>, key: string, by = 1): void {
-  map.set(key, (map.get(key) ?? 0) + by);
+  const name = map.has(key) || map.size < distinctLimit ? key : "(overflow)";
+  map.set(name, (map.get(name) ?? 0) + by);
 }
 
-function bumpKeys(map: Map<string, number>, value: unknown): void {
-  for (const key of Object.keys(object(value))) bump(map, keyName(key));
+function bumpKeys(map: Map<string, number>, value: unknown, limit = mapKeyLimit): void {
+  for (const name of keyNames(value, limit)) bump(map, name);
 }
 
 function bounded(map: Map<string, number>, order: "count" | "name" = "count"): Counts {
   const byCount = [...map].sort(([a, x], [b, y]) => y - x || a.localeCompare(b));
   const kept = byCount.slice(0, listLimit);
   if (order === "name") kept.sort(([a], [b]) => a.localeCompare(b));
-  const result: Counts = Object.fromEntries(kept);
   const rest = byCount.slice(listLimit);
-  if (rest.length) result[`+${rest.length} more`] = rest.reduce((sum, [, count]) => sum + count, 0);
-  return result;
+  if (rest.length) kept.push([`+${rest.length} more`, rest.reduce((sum, [, count]) => sum + count, 0)]);
+  return Object.fromEntries(kept);
 }
 
 function tokenCount(value: unknown): number {
@@ -148,6 +202,30 @@ function hasTimestamp(raw: Record<string, unknown>): boolean {
 
 function isSubagent(path: string): boolean {
   return path.includes(`${sep}subagents${sep}`) || basename(path).startsWith("agent-");
+}
+
+/** Semantic version order, prereleases before their release, and placeholders after every real version. */
+export function compareVersions(a: string, b: string): number {
+  const x = semver.exec(a), y = semver.exec(b);
+  if (!x || !y) return x ? -1 : y ? 1 : a.localeCompare(b);
+  for (let part = 1; part <= 3; part++) {
+    const difference = Number(x[part]) - Number(y[part]);
+    if (difference) return difference;
+  }
+  if (x[4] === y[4]) return a.localeCompare(b);
+  if (x[4] === undefined) return 1;
+  if (y[4] === undefined) return -1;
+  const left = x[4].split("."), right = y[4].split(".");
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const p = left[index], q = right[index];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    const pNumber = /^\d+$/.test(p), qNumber = /^\d+$/.test(q);
+    if (pNumber && qNumber && Number(p) !== Number(q)) return Number(p) - Number(q);
+    if (pNumber !== qNumber) return pNumber ? -1 : 1;
+    if (!pNumber && p !== q) return p < q ? -1 : 1;
+  }
+  return a.localeCompare(b);
 }
 
 async function discover(directory: string, files: string[], failures: { count: number }, depth = 0): Promise<void> {
@@ -192,29 +270,59 @@ class TypeTally {
   }
 }
 
+interface IterationSummary { length: number; keys: string[]; types: string[]; above: string[]; below: string[] }
+
+function summarizeIterations(usage: Record<string, unknown>): IterationSummary | null {
+  if (!Array.isArray(usage.iterations)) return null;
+  const steps = usage.iterations.map(object);
+  const summary: IterationSummary = { length: steps.length, keys: [], types: [], above: [], below: [] };
+  for (const step of steps) {
+    summary.keys.push(...keyNames(step));
+    if (step.type !== undefined) summary.types.push(enumLabel(step.type));
+  }
+  for (const field of tokenFields) {
+    if (!steps.some(step => field in step)) continue;
+    const sum = steps.reduce((total, step) => total + tokenCount(step[field]), 0);
+    const top = tokenCount(usage[field]);
+    if (sum > top) summary.above.push(field);
+    if (sum < top) summary.below.push(field);
+  }
+  return summary;
+}
+
+/** One request's record, chosen as the index chooses it: not a sidechain, then the most tokens, then a recorded cost. */
+interface RequestPick { sidechain: boolean; total: number; recorded: boolean; cost: number; iterations: IterationSummary | null }
+
+function preferred(next: RequestPick, kept: RequestPick): boolean {
+  if (next.sidechain !== kept.sidechain) return !next.sidechain;
+  if (next.total !== kept.total) return next.total > kept.total;
+  if (next.recorded !== kept.recorded) return next.recorded;
+  return next.cost > kept.cost;
+}
+
 /** Scans every `projects/**\/*.jsonl` recording under `dataDir` read-only and counts the shapes it finds. */
-export async function censusFormat(dataDir: string): Promise<FormatCensus> {
-  const directory = resolve(dataDir);
+export async function censusFormat(dataDir: string, source: DataDirSource = "--dir"): Promise<FormatCensus> {
   const files: string[] = [];
   const failures = { count: 0 };
-  await discover(join(directory, "projects"), files, failures);
+  await discover(join(resolve(dataDir), "projects"), files, failures);
   files.sort();
 
   const types = new Map<string, TypeTally>();
-  const tally = (type: string) => types.get(type) ?? types.set(type, new TypeTally()).get(type)!;
+  const tally = (type: string) => {
+    const name = types.has(type) || types.size < distinctLimit ? type : "(overflow)";
+    return types.get(name) ?? types.set(name, new TypeTally()).get(name)!;
+  };
+  const fileTypes: Set<string>[] = [];
   const versions = new Map<string, VersionCensus>();
   const fileVersions: Set<string>[] = [];
   const withoutVersion = new Map<string, number>();
   const lines = { records: 0, malformed: 0 };
   const counts = { total: files.length, main: 0, subagent: 0, unreadable: 0 };
+  const requests = new Map<number | bigint, RequestPick>();
   const usage = {
-    records: 0, requests: new Set<string>(), keys: new Map<string, number>(), nested: new Map<string, Map<string, number>>(),
+    records: 0, keys: new Map<string, number>(), nested: new Map<string, Map<string, number>>(), nestedObjects: new Map<string, number>(),
     serviceTier: new Map<string, number>(), fallbackCreditNonNull: 0, fallbackCreditKeys: new Map<string, number>(),
     speed: new Map<string, number>(), inferenceGeo: new Map<string, number>(),
-  };
-  const iterations = {
-    records: 0, lengths: new Map<string, number>(), multiple: 0, differing: 0, sumAbove: new Map<string, number>(),
-    sumBelow: new Map<string, number>(), entryKeys: new Map<string, number>(), entryTypes: new Map<string, number>(),
   };
   const models = {
     raw: new Map<string, number>(), normalized: new Map<string, number>(), requestedModel: new Map<string, number>(),
@@ -234,129 +342,147 @@ export async function censusFormat(dataDir: string): Promise<FormatCensus> {
         const raw = line.value;
         if (!raw) continue;
         lines.records++;
-        const type = label(raw.type);
+        sequence++;
+        const type = enumLabel(raw.type);
         const entry = tally(type);
         entry.records++;
         seenTypes.add(type);
         if (!hasTimestamp(raw)) entry.withoutTimestamp++;
-        bumpKeys(entry.keys, raw);
+        bumpKeys(entry.keys, raw, recordKeyLimit);
         if (raw.version === undefined) {
           entry.withoutVersion++;
           if ((transcriptTypes as readonly string[]).includes(type)) bump(withoutVersion, type);
         } else {
-          const version = label(raw.version);
+          const version = versionLabel(raw.version);
           const known = versions.get(version) ?? versions.set(version, { records: 0, recordings: 0 }).get(version)!;
           known.records++;
           seenVersions.add(version);
         }
-        if (type === "system") bump(entry.subtypes, label(raw.subtype));
+        if (type === "system") bump(entry.subtypes, enumLabel(raw.subtype));
         if (type === "attachment") {
-          bump(entry.subtypes, label(object(raw.attachment).type));
+          bump(entry.subtypes, enumLabel(object(raw.attachment).type));
           bumpKeys(entry.payloadKeys, raw.attachment);
         }
         if (type === "progress") {
-          bump(entry.subtypes, label(object(raw.data).type));
+          bump(entry.subtypes, enumLabel(object(raw.data).type));
           bumpKeys(entry.payloadKeys, raw.data);
         }
         const message = object(raw.message);
         if (type === "user" || type === "assistant") {
           bumpKeys(entry.messageKeys, raw.message);
           if (typeof message.content === "string") bump(entry.contentBlocks, "(string)");
-          else if (Array.isArray(message.content)) for (const block of message.content) bump(entry.contentBlocks, label(object(block).type));
-          else bump(entry.contentBlocks, label(message.content));
+          else if (Array.isArray(message.content)) for (const block of message.content) bump(entry.contentBlocks, enumLabel(object(block).type));
+          else bump(entry.contentBlocks, placeholder(message.content));
         }
         for (const [field, locations, values] of [["requestedModel", models.requestedModel, models.requestedModelValues], ["advisorModel", models.advisorModel, models.advisorModelValues]] as const) {
-          if (field in raw) { bump(locations, `${type}.${field}`); bump(values, label(raw[field])); }
-          if (field in message) { bump(locations, `${type}.message.${field}`); bump(values, label(message[field])); }
+          if (field in raw) { bump(locations, `${type}.${field}`); bump(values, modelLabel(raw[field])); }
+          if (field in message) { bump(locations, `${type}.message.${field}`); bump(values, modelLabel(message[field])); }
         }
-        if (type === "assistant") {
-          bump(models.raw, label(message.model));
-          if (typeof message.model === "string") bump(models.normalized, label(normalizeModel(message.model)));
-          const used = readUsage(raw, path, `${path}:${sequence}`);
-          if (used) usage.requests.add(used.key);
-        }
-        sequence++;
-        if (type !== "assistant" || !message.usage || typeof message.usage !== "object" || Array.isArray(message.usage)) continue;
+        if (type !== "assistant") continue;
+        bump(models.raw, modelLabel(message.model));
+        if (typeof message.model === "string") bump(models.normalized, modelLabel(normalizeModel(message.model)));
+        if (!message.usage || typeof message.usage !== "object" || Array.isArray(message.usage)) continue;
         const fields = object(message.usage);
         usage.records++;
-        for (const [key, value] of Object.entries(fields)) {
-          const name = keyName(key);
-          bump(usage.keys, name);
-          if (value && typeof value === "object" && !Array.isArray(value)) {
-            const nested = usage.nested.get(name) ?? usage.nested.set(name, new Map()).get(name)!;
+        const fieldNames = keyNames(fields);
+        for (const name of fieldNames) bump(usage.keys, name);
+        if (fieldNames[0] !== "(map)") {
+          for (const [key, value] of Object.entries(fields)) {
+            if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+            const name = keyName(key);
+            bump(usage.nestedObjects, name);
+            const nestedName = usage.nested.has(name) || usage.nested.size < distinctLimit ? name : "(overflow)";
+            const nested = usage.nested.get(nestedName) ?? usage.nested.set(nestedName, new Map()).get(nestedName)!;
             bumpKeys(nested, value);
           }
         }
-        bump(usage.serviceTier, label(fields.service_tier));
-        bump(usage.speed, label(fields.speed));
-        bump(usage.inferenceGeo, label(fields.inference_geo));
+        bump(usage.serviceTier, enumLabel(fields.service_tier));
+        bump(usage.speed, enumLabel(fields.speed));
+        bump(usage.inferenceGeo, enumLabel(fields.inference_geo));
         if (fields.fallback_credit !== undefined && fields.fallback_credit !== null) {
           usage.fallbackCreditNonNull++;
           // A credit may be a token, so a value that is not an object is counted by its type only.
           const credit = fields.fallback_credit;
           if (typeof credit === "object" && !Array.isArray(credit)) bumpKeys(usage.fallbackCreditKeys, credit);
-          else bump(usage.fallbackCreditKeys, `(${Array.isArray(credit) ? "array" : typeof credit})`);
+          else bump(usage.fallbackCreditKeys, typeof credit === "string" ? "(string)" : placeholder(credit));
         }
-        if (!Array.isArray(fields.iterations)) continue;
-        const steps = fields.iterations.map(object);
-        iterations.records++;
-        bump(iterations.lengths, String(steps.length));
-        if (steps.length > 1) iterations.multiple++;
-        let differs = false;
-        for (const step of steps) {
-          bumpKeys(iterations.entryKeys, step);
-          if (step.type !== undefined) bump(iterations.entryTypes, label(step.type));
-        }
-        for (const field of tokenFields) {
-          if (!steps.some(step => field in step)) continue;
-          const sum = steps.reduce((total, step) => total + tokenCount(step[field]), 0);
-          const top = tokenCount(fields[field]);
-          if (sum > top) bump(iterations.sumAbove, field);
-          if (sum < top) bump(iterations.sumBelow, field);
-          if (sum !== top) differs = true;
-        }
-        if (differs) iterations.differing++;
+        const used = readUsage(raw, path, `${path}:${sequence}`);
+        if (!used) continue;
+        const pick: RequestPick = {
+          sidechain: used.sidechain, total: used.input + used.output + used.cacheCreation + used.cacheRead,
+          recorded: used.recorded, cost: used.cost ?? -1, iterations: summarizeIterations(fields),
+        };
+        const id = Bun.hash(used.key);
+        const kept = requests.get(id);
+        if (!kept || preferred(pick, kept)) requests.set(id, pick);
       }
     } catch {
       counts.unreadable++;
     }
     for (const type of seenTypes) types.get(type)!.recordings++;
     for (const version of seenVersions) versions.get(version)!.recordings++;
+    fileTypes.push(seenTypes);
     fileVersions.push(seenVersions);
   }
 
+  const recordingsWithAny = (seen: Set<string>[], names: Set<string>) => seen.filter(set => [...set].some(name => names.has(name))).length;
+
   const sortedTypes = [...types].sort(([a, x], [b, y]) => y.records - x.records || a.localeCompare(b));
-  const typeCensus: Record<string, TypeCensus> = {};
-  for (const [type, entry] of sortedTypes.slice(0, listLimit)) typeCensus[type] = entry.result(type);
+  const typeEntries: [string, TypeCensus][] = sortedTypes.slice(0, listLimit).map(([type, entry]) => [type, entry.result(type)]);
   const restTypes = sortedTypes.slice(listLimit);
   if (restTypes.length) {
     const rest = new TypeTally();
-    for (const [, entry] of restTypes) { rest.records += entry.records; rest.recordings += entry.recordings; }
-    typeCensus[`+${restTypes.length} more`] = rest.result("");
+    for (const [, entry] of restTypes) {
+      rest.records += entry.records;
+      rest.withoutTimestamp += entry.withoutTimestamp;
+      rest.withoutVersion += entry.withoutVersion;
+    }
+    rest.recordings = recordingsWithAny(fileTypes, new Set(restTypes.map(([type]) => type)));
+    typeEntries.push([`+${restTypes.length} more`, rest.result("")]);
   }
+
   const sortedVersions = [...versions].sort(([a], [b]) => compareVersions(a, b));
-  const versionCensus: Record<string, VersionCensus> = Object.fromEntries(sortedVersions.slice(-listLimit));
-  if (sortedVersions.length > listLimit) {
-    const older = sortedVersions.slice(0, -listLimit);
-    const olderNames = new Set(older.map(([version]) => version));
-    versionCensus[`+${older.length} more`] = {
-      records: older.reduce((sum, [, entry]) => sum + entry.records, 0),
-      recordings: fileVersions.filter(seen => [...seen].some(version => olderNames.has(version))).length,
-    };
+  const versionEntries = sortedVersions.slice(-listLimit);
+  const olderVersions = sortedVersions.slice(0, -listLimit);
+  if (olderVersions.length) {
+    versionEntries.unshift([`+${olderVersions.length} more`, {
+      records: olderVersions.reduce((sum, [, entry]) => sum + entry.records, 0),
+      recordings: recordingsWithAny(fileVersions, new Set(olderVersions.map(([version]) => version))),
+    }]);
   }
-  const nestedKeys: Record<string, Counts> = {};
-  for (const [key, map] of [...usage.nested].sort(([a], [b]) => a.localeCompare(b)).slice(0, listLimit)) nestedKeys[key] = bounded(map, "name");
+
+  const nestedOrder = [...usage.nestedObjects].sort(([a, x], [b, y]) => y - x || a.localeCompare(b));
+  const nestedEntries: [string, Counts][] = nestedOrder.slice(0, listLimit).sort(([a], [b]) => a.localeCompare(b))
+    .map(([name]) => [name, bounded(usage.nested.get(name) ?? new Map(), "name")]);
+  const nestedRest = nestedOrder.slice(listLimit);
+  if (nestedRest.length) nestedEntries.push([`+${nestedRest.length} more`, { objects: nestedRest.reduce((sum, [, count]) => sum + count, 0) }]);
+
+  const iterations = {
+    requests: 0, lengths: new Map<string, number>(), multiple: 0, differing: 0, sumAbove: new Map<string, number>(),
+    sumBelow: new Map<string, number>(), entryKeys: new Map<string, number>(), entryTypes: new Map<string, number>(),
+  };
+  for (const { iterations: summary } of requests.values()) {
+    if (!summary) continue;
+    iterations.requests++;
+    bump(iterations.lengths, String(summary.length));
+    if (summary.length > 1) iterations.multiple++;
+    if (summary.above.length || summary.below.length) iterations.differing++;
+    for (const name of summary.keys) bump(iterations.entryKeys, name);
+    for (const name of summary.types) bump(iterations.entryTypes, name);
+    for (const field of summary.above) bump(iterations.sumAbove, field);
+    for (const field of summary.below) bump(iterations.sumBelow, field);
+  }
 
   return {
-    directory,
+    source,
     files: counts,
     unlistedDirectories: failures.count,
     lines,
-    types: typeCensus,
+    types: Object.fromEntries(typeEntries),
     usage: {
-      records: usage.records, requests: usage.requests.size, keys: bounded(usage.keys, "name"), nestedKeys,
+      records: usage.records, requests: requests.size, keys: bounded(usage.keys, "name"), nestedKeys: Object.fromEntries(nestedEntries),
       iterations: {
-        records: iterations.records, lengths: bounded(iterations.lengths), multiple: iterations.multiple,
+        requests: iterations.requests, lengths: bounded(iterations.lengths), multiple: iterations.multiple,
         differing: iterations.differing, sumAbove: bounded(iterations.sumAbove), sumBelow: bounded(iterations.sumBelow),
         entryKeys: bounded(iterations.entryKeys, "name"), entryTypes: bounded(iterations.entryTypes),
       },
@@ -368,23 +494,9 @@ export async function censusFormat(dataDir: string): Promise<FormatCensus> {
       advisorModel: bounded(models.advisorModel), requestedModelValues: bounded(models.requestedModelValues),
       advisorModelValues: bounded(models.advisorModelValues),
     },
-    versions: versionCensus,
+    versions: Object.fromEntries(versionEntries),
     withoutVersion: bounded(withoutVersion),
   };
-}
-
-function compareVersions(a: string, b: string): number {
-  const parts = (value: string) => value.split(/[.+-]/).map(part => /^\d+$/.test(part) ? Number(part) : part);
-  const left = parts(a), right = parts(b);
-  for (let index = 0; index < Math.max(left.length, right.length); index++) {
-    const x = left[index], y = right[index];
-    if (x === y) continue;
-    if (x === undefined) return -1;
-    if (y === undefined) return 1;
-    if (typeof x === "number" && typeof y === "number") return x - y;
-    return String(x).localeCompare(String(y));
-  }
-  return 0;
 }
 
 function list(counts: Counts, total?: number): string {
@@ -397,7 +509,7 @@ function list(counts: Counts, total?: number): string {
 export function renderCensus(census: FormatCensus): string {
   const out: string[] = [];
   const { files, lines, usage, models } = census;
-  out.push(`Claude data directory: ${census.directory}`);
+  out.push(`Claude data directory: ${census.source === "default" ? "default (~/.claude)" : `from ${census.source}`}`);
   out.push(`Files: ${files.total} (main ${files.main}, subagent ${files.subagent}, unreadable ${files.unreadable}), unlisted directories ${census.unlistedDirectories}`);
   out.push(`Records: ${lines.records}, malformed lines ${lines.malformed}`);
   out.push("", "Record types (records, recordings, without timestamp, without version):");
@@ -411,11 +523,11 @@ export function renderCensus(census: FormatCensus): string {
     if (entry.contentBlocks) out.push(`    content blocks: ${list(entry.contentBlocks)}`);
   }
   out.push("", `Transcript records without version: ${list(census.withoutVersion)}`);
-  out.push("", `Usage: ${usage.records} assistant records with message.usage, ${usage.requests} distinct requests`);
+  out.push("", `Usage: ${usage.records} assistant records with message.usage, ${usage.requests} distinct requests the index counts`);
   out.push(`  keys: ${list(usage.keys, usage.records)}`);
   for (const [key, counts] of Object.entries(usage.nestedKeys)) out.push(`  ${key} keys: ${list(counts)}`);
   const steps = usage.iterations;
-  out.push(`  iterations: ${steps.records} records, ${steps.multiple} with more than one, ${steps.differing} whose sum differs from the top-level counts`);
+  out.push(`  iterations, on each request's indexed record: ${steps.requests} requests, ${steps.multiple} with more than one, ${steps.differing} whose sum differs from the top-level counts`);
   out.push(`    lengths: ${list(steps.lengths)}`);
   out.push(`    entry keys: ${list(steps.entryKeys)}`);
   out.push(`    entry types: ${list(steps.entryTypes)}`);
@@ -447,7 +559,8 @@ Counts the record types, keys, and usage fields in a Claude data directory's rec
   -d, --dir <path>  Claude data directory (default: CLAUDE_CONFIG_DIR or ~/.claude)
   --json            Print the census as JSON`);
     } else {
-      const census = await censusFormat(resolveDataDir(values.dir));
+      const { path, source } = resolveDataDir(values.dir);
+      const census = await censusFormat(path, source);
       console.log(values.json ? JSON.stringify(census, null, 2) : renderCensus(census));
     }
   } catch (error) {

@@ -184,7 +184,7 @@ Open `http://127.0.0.1:12004` after checking that port is free. Coding agents mu
 
 Browser tests use **Bun's test runner with Playwright controlling installed Microsoft Edge**, not Playwright's Node-dependent test runner. They build the UI, preload the shared browser/server lifecycle across spec files, start an isolated fixture server on port `12003`, exercise real browser interactions, and audit accessibility with axe. Failed tests save screenshots and traces in ignored `test-results/`. No real transcripts are used by the test suite.
 
-To see which record types, keys, usage fields, models, and Claude Code versions a Claude data directory holds, run `bun scripts/inspect-format.ts` with an optional `--dir <path>` or `--json`. It reads the recordings read-only and prints only key names, short identifiers, and counts, never transcript content, so its output can be shared when a Claude Code release changes the recording format.
+To see which record types, keys, usage fields, models, and Claude Code versions a Claude data directory holds, run `bun scripts/inspect-format.ts` with an optional `--dir <path>` or `--json`. It reads the recordings read-only and prints only key names, short identifiers, and counts, never transcript content, paths, or ids, so its output can be shared when a Claude Code release changes the recording format.
 
 Solid and its web renderer are pinned to `2.0.0-rc.9`, with a matching pinned compiler plugin. The implementation uses Solid 2's split effects, renderer-owned JSX, `onSettled`, and keyed rendering. It is still prerelease software; update the runtime and compiler together, then rerun the complete checks.
 
