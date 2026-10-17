@@ -21,9 +21,11 @@ await writeFile(join(folder, "long-recording.jsonl"), Array.from({ length: 175 }
   return JSON.stringify(index === 0 ? { ...record, diagnostics: "Synthetic diagnostic output\n".repeat(100) } : record);
 }).join("\n") + "\n");
 const reasoning = (sequence: number, thinking: string) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "thinking", thinking, signature: "synthetic-signature" }], model: "claude-sonnet-4-5" } });
+// Claude Code writes the time the model spent on a reasoning step, and the API's thinking token count, on the record
+// that carries the block, so a step whose text was never returned still says how long it took.
 await writeFile(join(folder, "hidden-reasoning.jsonl"), [
   event("Hidden reasoning verification", 0),
-  reasoning(1, ""),
+  { ...reasoning(1, ""), thinkingDurationMs: 12_340, thinkingDisplay: "updates", message: { ...reasoning(1, "").message, usage: { input_tokens: 10, output_tokens: 2000, output_tokens_details: { thinking_tokens: 1840 } } } },
   reasoning(2, "Readable reasoning summary"),
   event("Answer after reasoning", 3, "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
@@ -225,18 +227,24 @@ await writeFile(join(folder, "api-errors.jsonl"), [
 // Claude Code's own running total, written at the end of each turn and filed last-wins, keyed by the requested model
 // string; it counts requests the recording never holds, so it runs above the estimate from the one recorded request.
 const sessionState = (type: string, fields: Record<string, unknown> = {}) => ({ type, sessionId: "session-state", ...fields });
-const costState = (totalCostUSD: number, modelUsage: Record<string, Record<string, number>>) => sessionState("cost-state", { totalCostUSD, startTime: Date.parse("2026-01-01T00:00:00Z"), modelUsage, hasUnknownModelCost: false });
+// The same tracker measures the time spent in API calls and in tools. Each turn also ends with a timestamped `system`
+// record of subtype `turn_duration`, whose sum is the recording's active time; the recording spans an hour but worked
+// for under six minutes.
+const costState = (totalCostUSD: number, modelUsage: Record<string, Record<string, number>>, measured: Record<string, number> = {}) => sessionState("cost-state", { totalCostUSD, startTime: Date.parse("2026-01-01T00:00:00Z"), modelUsage, hasUnknownModelCost: false, ...measured });
+const turnDuration = (sequence: number, durationMs: number, messageCount: number, timestamp: string) => ({ ...event("", sequence, "system"), message: undefined, subtype: "turn_duration", durationMs, messageCount, isMeta: false, timestamp });
 const renamed = event("The helper is renamed.", 3, "assistant");
 await writeFile(join(folder, "session-state.jsonl"), [
   sessionState("queue-operation", { operation: "enqueue", timestamp: "2026-01-01T00:00:00Z", content: "Rename the Brackenfold helper" }),
   event("Rename the Brackenfold helper", 1),
   event("Renaming the helper now.", 2, "assistant"),
+  turnDuration(10, 120_000, 2, "2026-01-01T00:02:00Z"),
   sessionState("last-prompt", { lastPrompt: "Rename the Brackenfold helper", leafUuid: "browser-2" }),
   sessionState("atis-latch", { atis: "" }),
-  costState(0.21, { "claude-sonnet-4-5[1m]": { inputTokens: 6, outputTokens: 1200, cacheReadInputTokens: 140_000, cacheCreationInputTokens: 11_000, costUSD: 0.21 } }),
+  costState(0.21, { "claude-sonnet-4-5[1m]": { inputTokens: 6, outputTokens: 1200, cacheReadInputTokens: 140_000, cacheCreationInputTokens: 11_000, costUSD: 0.21 } }, { totalAPIDuration: 90_000, totalToolDuration: 12_000, totalDuration: 120_000 }),
   sessionState("permission-mode", { mode: "acceptEdits" }),
-  { ...renamed, message: { ...renamed.message, id: "session-state-reply", usage: { input_tokens: 12, output_tokens: 412, cache_read_input_tokens: 52_916, cache_creation_input_tokens: 45 } } },
-  costState(0.42, { "claude-sonnet-4-5[1m]": { inputTokens: 12, outputTokens: 2512, cacheReadInputTokens: 284_747, cacheCreationInputTokens: 22_494, costUSD: 0.4 }, "claude-haiku-4-5-20251001": { inputTokens: 1000, outputTokens: 20, costUSD: 0.02 } }),
+  { ...renamed, timestamp: "2026-01-01T00:56:24Z", message: { ...renamed.message, id: "session-state-reply", usage: { input_tokens: 12, output_tokens: 412, cache_read_input_tokens: 52_916, cache_creation_input_tokens: 45 } } },
+  turnDuration(11, 216_000, 4, "2026-01-01T01:00:00Z"),
+  costState(0.42, { "claude-sonnet-4-5[1m]": { inputTokens: 12, outputTokens: 2512, cacheReadInputTokens: 284_747, cacheCreationInputTokens: 22_494, costUSD: 0.4 }, "claude-haiku-4-5-20251001": { inputTokens: 1000, outputTokens: 20, costUSD: 0.02 } }, { totalAPIDuration: 450_000, totalToolDuration: 132_000, totalDuration: 3_600_000 }),
   sessionState("last-prompt", { lastPrompt: "Rename the Brackenfold helper", leafUuid: "browser-3" }),
   sessionState("atis-latch", { atis: "" }),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
