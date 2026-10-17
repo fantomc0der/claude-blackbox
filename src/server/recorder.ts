@@ -241,7 +241,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 14) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 15) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -368,10 +368,44 @@ export class Recorder {
     } finally { await file.close(); }
   }
 
+  /**
+   * A recording's path inside its project folder, `<session id>.jsonl` or `<session id>/subagents/agent-<id>.jsonl`,
+   * which is what a relocation to another project folder keeps; empty for a file outside any project folder.
+   */
+  private projectPath(path: string): string {
+    const parts = relative(join(this.dataDir, "projects"), path).split(sep);
+    return parts.length > 1 ? parts.slice(1).join(sep) : "";
+  }
+
+  /**
+   * The row of a known recording whose file is gone and whose path inside its project folder is this new file's, moved
+   * to the new path, or undefined when no such row exists. A candidate's file is confirmed gone with `stat()`, so a walk
+   * that could not read every directory still tells a move from a file it did not reach. With several, the one whose
+   * prefix checkpoint the new file still passes is taken, so two copies of one session id in cloned folders cannot claim
+   * each other's row. The new `identity` is stored with the path because a move across volumes changes it without
+   * changing a byte.
+   */
+  private async relocated(path: string, size: number, identity: string, displaced: Map<string, SourceRow[]>, known: Map<string, SourceRow>): Promise<SourceRow | undefined> {
+    const candidates: SourceRow[] = [];
+    for (const candidate of displaced.get(this.projectPath(path)) ?? []) {
+      if (known.has(candidate.source) && await stat(candidate.source).then(() => false, error => object(error).code === "ENOENT")) candidates.push(candidate);
+    }
+    if (!candidates.length) return undefined;
+    let row = candidates[0];
+    if (candidates.length > 1) for (const candidate of candidates) {
+      if (candidate.size <= size && candidate.fingerprint === await this.fingerprint(path, candidate.size)) { row = candidate; break; }
+    }
+    known.delete(row.source);
+    // An empty identity marks the row for re-reading and must stay empty.
+    const stored = row.identity ? identity : row.identity;
+    this.db.query("UPDATE sessions SET source=?, identity=? WHERE id=?").run(path, stored, row.id);
+    return { ...row, source: path, identity: stored };
+  }
+
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9 to 14 steps below follow it
+    // its port, and before the recordings are compared with what was indexed; the version 9 to 15 steps below follow it
     // in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
@@ -428,6 +462,13 @@ export class Recorder {
         WHERE type='cost-state' OR (type='system' AND instr(raw,'"subtype":"turn_duration"')>0))`);
       this.db.exec("PRAGMA user_version=14");
     })();
+    // Version 15 reads the `relocatedCwd` of Claude Code's `relocated` record as the record's working directory, so the
+    // replay marks the move to the worktree and back where earlier builds stored no `cwd` for it. Only the recordings
+    // holding such a record are re-read; finding them reads every event, like version 8.
+    if (version < 15) this.db.transaction(() => {
+      this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='relocated')");
+      this.db.exec("PRAGMA user_version=15");
+    })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -435,6 +476,17 @@ export class Recorder {
     this.reportProgress({ phase: "indexing", checked: 0, total: files.length });
     let progressAt = performance.now();
     const known = new Map(this.db.query<SourceRow, []>("SELECT * FROM sessions").all().map(row => [row.source, row]));
+    // Claude Code 2.1.30x moves a session's recording, with its subagent directory, to the project folder of a new
+    // working directory (EnterWorktree and ExitWorktree do this) and appends a `relocated` record. The path inside the
+    // project folder is unchanged, so a known recording whose file the walk did not find and a new file at that path in
+    // another project folder are one recording, which keeps its row: its id, and with it its bookmark and replay URLs,
+    // and its cursor, so only the records appended since are read.
+    const present = new Set(files);
+    const displaced = new Map<string, SourceRow[]>();
+    for (const row of known.values()) {
+      const key = this.projectPath(row.source);
+      if (key && !present.has(row.source)) displaced.set(key, [...displaced.get(key) ?? [], row]);
+    }
     const changed: string[] = [];
     let published = 0;
     let publishedAt = performance.now();
@@ -443,14 +495,18 @@ export class Recorder {
       // A shutdown must not wait for a long first index to finish; the rows an
       // aborted file leaves behind are detected and re-indexed on the next open.
       if (this.stopped) { interrupted = true; break; }
-      const previous = known.get(path);
+      const indexed = known.get(path);
       known.delete(path);
       try {
         const info = await stat(path);
         const identity = `${info.dev}:${info.ino}`;
+        const moved = indexed ? undefined : await this.relocated(path, info.size, identity, displaced, known);
+        const previous = indexed ?? moved;
         if (previous && previous.size === info.size && previous.mtime === info.mtimeMs && previous.identity === identity) continue;
         const id = previous?.id || createHash("sha256").update(relative(this.dataDir, path)).digest("hex").slice(0, 24);
-        const reset = previous && (info.size <= previous.size || previous.identity !== identity ||
+        // A move keeps the file's bytes, so a moved recording of the same size is intact where a rewrite is suspected
+        // otherwise; its checkpoints still decide.
+        const reset = previous && ((moved ? info.size < previous.size : info.size <= previous.size) || previous.identity !== identity ||
           previous.fingerprint !== await this.fingerprint(path, previous.size) || previous.tailprint !== await this.fingerprint(path, previous.size, true));
         if (!previous) this.db.query("INSERT INTO sessions(id, session_id, source, agent) VALUES (?, ?, ?, ?)")
           .run(id, basename(path, ".jsonl"), path, Number(path.includes(`${sep}subagents${sep}`) || basename(path).startsWith("agent-")));

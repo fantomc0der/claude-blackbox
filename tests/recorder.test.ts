@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile, appendFile, rm, utimes } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, appendFile, rename, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
@@ -453,6 +453,83 @@ describe("recording index", () => {
     await rm(fixtureData.file);
     await recorder.scan();
     expect(recorder.list(new URLSearchParams()).total).toBe(0);
+  });
+
+  test("keeps a recording's id, bookmark, and cursor when Claude Code moves it to another project folder", async () => {
+    const fixtureData = await fixture();
+    const worktreeCwd = "C:\\work\\orbit\\.claude\\worktrees\\feature";
+    const relocated = (cwd: string) => JSON.stringify({ type: "relocated", sessionId: "session-a", relocatedCwd: cwd });
+    await writeFile(fixtureData.file, fixtureData.record("Start in the repository") + "\n" + fixtureData.record("Reply", { type: "assistant", message: { role: "assistant", content: "Working" } }) + "\n");
+    await mkdir(join(fixtureData.project, "session-a", "subagents"), { recursive: true });
+    await writeFile(join(fixtureData.project, "session-a", "subagents", "agent-a1.jsonl"), fixtureData.record("Agent task", { agentId: "a1" }) + "\n");
+    const recorder = await fixtureData.open();
+    const session = recorder.list(new URLSearchParams()).items[0];
+    const agent = recorder.subagents(session.id)[0];
+    recorder.bookmark(session.id, true);
+    // A re-index rewrites every event of a recording, so a marked column shows whether the stored records survived.
+    recorder.db.query("UPDATE events SET cwd='/synthetic/kept' WHERE session_id=?").run(session.id);
+    const kept = () => recorder.db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM events WHERE session_id=? AND cwd='/synthetic/kept'").get(session.id)!.n;
+    const rows = () => recorder.db.query<{ n: number }, []>("SELECT count(*) AS n FROM sessions").get()!.n;
+    const worktree = join(fixtureData.data, "projects", "test-project--claude-worktrees-feature");
+    await mkdir(worktree);
+    await rename(fixtureData.file, join(worktree, "session-a.jsonl"));
+    await rename(join(fixtureData.project, "session-a"), join(worktree, "session-a"));
+    await appendFile(join(worktree, "session-a.jsonl"), relocated(worktreeCwd) + "\n" + fixtureData.record("Continue in the worktree", { cwd: worktreeCwd }) + "\n");
+    await recorder.scan();
+    expect(rows()).toBe(2);
+    expect(recorder.list(new URLSearchParams()).items.map(item => item.id)).toEqual([session.id]);
+    expect(recorder.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 4, source: join("projects", "test-project--claude-worktrees-feature", "session-a.jsonl") });
+    expect(kept()).toBe(2);
+    const events = recorder.events(session.id, new URLSearchParams("kind=all")).items;
+    expect(events.map(event => event.cwd)).toEqual(["C:\\work\\orbit", "C:\\work\\orbit", worktreeCwd, worktreeCwd]);
+    expect(events[2].type).toBe("relocated");
+    expect(recorder.subagents(session.id).map(item => item.id)).toEqual([agent.id]);
+    expect((await recorder.catalog()).bookmarked).toBe(1);
+    await rename(join(worktree, "session-a.jsonl"), fixtureData.file);
+    await rename(join(worktree, "session-a"), join(fixtureData.project, "session-a"));
+    await appendFile(fixtureData.file, relocated("C:\\work\\orbit") + "\n");
+    await recorder.scan();
+    expect(rows()).toBe(2);
+    expect(recorder.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 5, source: join("projects", "test-project", "session-a.jsonl") });
+    expect(kept()).toBe(2);
+    expect(recorder.subagents(session.id).map(item => item.id)).toEqual([agent.id]);
+    // A walk that could not read every directory deletes nothing, but still follows a move once the old path is
+    // confirmed gone, so a locked folder elsewhere does not split a worktree session in two.
+    await writeFile(join(fixtureData.project, "session-b.jsonl"), fixtureData.record("Another session", { sessionId: "session-b" }) + "\n");
+    await mkdir(join(fixtureData.data, "projects", "test-locked"));
+    await recorder.scan();
+    expect(rows()).toBe(3);
+    await rm(join(fixtureData.project, "session-b.jsonl"));
+    await rename(fixtureData.file, join(worktree, "session-a.jsonl"));
+    await rename(join(fixtureData.project, "session-a"), join(worktree, "session-a"));
+    const fs = await import("node:fs/promises");
+    const readDirectory = fs.readdir;
+    const failing = spyOn(fs, "readdir").mockImplementation(((path: string, options: unknown) => path.endsWith("test-locked")
+      ? Promise.reject(Object.assign(new Error("locked"), { code: "EACCES" })) : readDirectory(path, options as never)) as typeof fs.readdir);
+    try { await recorder.scan(); } finally { failing.mockRestore(); }
+    expect(rows()).toBe(3);
+    expect(recorder.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 5, source: join("projects", "test-project--claude-worktrees-feature", "session-a.jsonl") });
+    expect(kept()).toBe(2);
+    await recorder.scan();
+    expect(rows()).toBe(2);
+  });
+
+  test("gives a moved recording the row whose prefix it still matches when two deleted copies shared its path", async () => {
+    const fixtureData = await fixture();
+    const second = join(fixtureData.data, "projects", "test-clone");
+    await mkdir(second);
+    await writeFile(fixtureData.file, fixtureData.record("Main session with a prefix long enough to fingerprint " + "a".repeat(300)) + "\n");
+    await writeFile(join(second, "session-a.jsonl"), fixtureData.record("Clone session with a prefix long enough to fingerprint " + "b".repeat(300)) + "\n");
+    const recorder = await fixtureData.open();
+    const clone = recorder.list(new URLSearchParams({ q: "Clone" })).items[0];
+    recorder.bookmark(clone.id, true);
+    const third = join(fixtureData.data, "projects", "test-moved");
+    await mkdir(third);
+    await rename(join(second, "session-a.jsonl"), join(third, "session-a.jsonl"));
+    await rm(fixtureData.file);
+    await recorder.scan();
+    expect(recorder.list(new URLSearchParams()).items.map(item => item.id)).toEqual([clone.id]);
+    expect(recorder.getSession(clone.id)).toMatchObject({ bookmarked: true, title: expect.stringContaining("Clone session") });
   });
 
   test("groups cloned folders reversibly, retaining cwd and distinct identical session IDs", async () => {
