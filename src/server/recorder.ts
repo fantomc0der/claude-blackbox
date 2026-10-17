@@ -4,6 +4,7 @@ import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
+import { sessionStateTypes } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -215,7 +216,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 9) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 10) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -340,8 +341,10 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed.
-    if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 8) this.db.transaction(() => {
+    // its port, and before the recordings are compared with what was indexed; the version 9 and 10 steps below follow it
+    // in order for the same reason.
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+    if (version < 8) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
       this.db.exec("PRAGMA user_version=8");
     })();
@@ -349,13 +352,19 @@ export class Recorder {
     // hook, interruption, and IDE context records an earlier build read as the first prompt. The stored records hold every
     // prompt, so a recording without an explicit title is retitled from them where it is instead of being re-read; one
     // already marked for re-reading gets its title from that read.
-    if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 9) this.db.transaction(() => {
+    if (version < 9) this.db.transaction(() => {
       const update = this.db.query("UPDATE sessions SET title=? WHERE id=?");
       for (const row of this.db.query<{ id: string; session_id: string; title: string }, []>("SELECT id, session_id, title FROM sessions WHERE named=0 AND mtime!=0").all()) {
         const title = this.firstPrompt(row.id) || `Session ${row.session_id.slice(0, 8)}`;
         if (title !== row.title) update.run(title, row.id);
       }
       this.db.exec("PRAGMA user_version=9");
+    })();
+    // Version 10 re-indexes only the recordings holding Claude Code's session state records, which an earlier build read
+    // as content with their prompt copies searchable; finding them reads every event, like version 8.
+    if (version < 10) this.db.transaction(() => {
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify([...sessionStateTypes]));
+      this.db.exec("PRAGMA user_version=10");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });

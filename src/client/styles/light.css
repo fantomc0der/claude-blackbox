@@ -98,7 +98,7 @@
   .replay-event-header { color: var(--muted); border-color: var(--line); }
   .replay-role, .replay-copy, .replay-text-button, .tool-checklist span,
   .tool-thinking summary, .md-content a, .replay-event-link:hover { color: var(--accent); }
-  .replay-event-system .replay-role, .replay-muted, .tool-preview, .tool-disclosure,
+  .replay-event-system .replay-role, .replay-event-state .replay-role, .replay-muted, .tool-preview, .tool-disclosure,
   .tool-code header, .tool-checklist [data-status="completed"], .tool-questions li, .tool-unknown, .tool-hidden { color: var(--muted); }
   .replay-error-label { color: var(--danger); }
   .replay-copy:focus-visible, .replay-text-button:focus-visible, .tool-summary:focus-visible, details:focus-visible { outline-color: var(--accent); }
