@@ -11,7 +11,7 @@ async function openRecording(page: Page, term: string, title: string, view: stri
   expect(listing.items.map((session: { title: string }) => session.title)).toEqual([title]);
   await page.goto(`/?session=${listing.items[0].id}&${view}`);
   await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
-  return listing.items[0] as { id: string; errorCount: number };
+  return listing.items[0] as { id: string; errorCount: number; messageCount: number };
 }
 
 test("the Errors tab labels each tool the user stopped and counts only the failure as an error", async ({ page }) => {
@@ -32,7 +32,7 @@ test("the Errors tab labels each tool the user stopped and counts only the failu
   await expect(results.nth(2).locator(".tool-status")).toHaveAttribute("aria-label", "Tool interrupted");
   await expect(results.nth(4).locator(".tool-status")).toHaveAttribute("aria-label", "Tool error");
   await expect(results.nth(4).locator(".tool-content .tool-code header")).toContainText("Recorded tool error");
-  await expect(page.locator(".replay-find > .replay-count")).toHaveText(/^5 of 12 records$/);
+  await expect(page.locator(".replay-find > .replay-count")).toHaveText(/^5 of 13 records$/);
   const rail = page.getByRole("complementary", { name: "Recording overview" });
   await expect(rail.locator(".inspector-stats")).toContainText("1errors");
   // The stopped tools never count as errors, but the count says how many there were.
@@ -42,6 +42,25 @@ test("the Errors tab labels each tool the user stopped and counts only the failu
   const details = page.getByRole("region", { name: "Session details" });
   await expect(details.locator("dt", { hasText: /^Errors$/ }).locator("+ dd")).toHaveText("1 error · 4 tools stopped");
 }, wide);
+
+test("the interruption marker Claude Code writes reads as its own card, never as a prompt", async ({ page }) => {
+  const session = await openRecording(page, "Thornquill", stoppedTitle, "replayKind=conversation");
+  // The prompt and the reply are the messages; the marker, the calls, and the results are not.
+  expect(session.messageCount).toBe(2);
+  const marker = page.locator(".replay-event-stand-in");
+  await expect(marker).toHaveCount(1);
+  await expect(marker.locator(".replay-role")).toHaveText("Claude Code");
+  await expect(marker.locator(".replay-role")).toHaveAttribute("title", "Claude Code wrote this record itself when the turn was interrupted; the user did not type it.");
+  await expect(marker).toContainText("[Request interrupted by user for tool use]");
+  await expect(page.locator(".replay-event-user")).toHaveCount(1);
+  await page.locator(".replay-filters > summary").click();
+  await page.locator("#replay-focused-view").selectOption("prompts");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
+  await expect(page.locator(".replay-event")).toHaveCount(1);
+  await expect(page.locator(".replay-event")).toContainText(stoppedTitle);
+  await expect(page.locator(".replay-event-stand-in")).toHaveCount(0);
+});
 
 test("the Tools tab tints a stopped call apart from a failed one and names what stopped it", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

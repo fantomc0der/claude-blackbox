@@ -56,6 +56,16 @@ export function isStandIn(raw: Record<string, unknown>): boolean {
   return raw.type === "assistant" && (object(raw.message).model === syntheticModel || isApiError(raw));
 }
 
+// When the user interrupts a turn, Claude Code writes a `user` record itself whose only content is one of its two
+// interruption markers, so the model sees where the turn stopped; the user typed neither. Such a record is the user-side
+// counterpart of an assistant stand-in: Claude Code's own card, never a message or a prompt, which is also why
+// `promptTitle()` below skips it. Only a record holding exactly a marker is one; a prompt that quotes it stays a prompt.
+export const interruptionMarkers = ["[Request interrupted by user]", "[Request interrupted by user for tool use]"];
+
+export function isInterruptionMarker(raw: Record<string, unknown>, blocks: ContentBlock[]): boolean {
+  return raw.type === "user" && blocks.length === 1 && blocks[0].type === "text" && interruptionMarkers.includes(string(blocks[0].text).trim());
+}
+
 function requestMessageText(message: Record<string, unknown>): string {
   if (message.role === "assistant") return "";
   if (typeof message.content === "string") return message.content;
@@ -120,7 +130,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     timestamp: Number.isFinite(stamp) ? new Date(stamp).toISOString() : "",
     blocks,
     text,
-    category: role === "system" ? "system" : isStandIn(raw) ? "synthetic" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
+    category: role === "system" ? "system" : isStandIn(raw) || isInterruptionMarker(raw, blocks) ? "synthetic" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
     toolNames: tools.map(block => block.name || "Unknown tool"),
     error: blocks.some((block, index) => block.is_error === true && !decisions[index]) || raw.is_error === true || (raw.level === "error" && !apiRetry(raw)) || isApiError(raw),
     decision: decisions.find(decision => decision !== null) ?? null,
