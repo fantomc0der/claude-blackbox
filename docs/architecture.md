@@ -23,7 +23,7 @@ Separate `indexing` events carry the latest phase and recording-file counts. The
 
 Full-text queries are parameterized. Indexing is independent of `history.jsonl`; session identity includes its source file so duplicate IDs across copied directories do not collide. Unknown event types remain available through the activity filter and raw record disclosure. An `api-request-blob` record holds a message Claude Code sent to the API. It indexes as a system record with no blocks, so it never takes a tool link or tool count from the record it copies, and its searchable text keeps only the context composed for the request, leaving out the assistant turns, tool blocks, and reasoning that repeat other records. Index version 8 re-indexes the recordings an earlier build read differently; finding them reads every event, so that runs with the first scan rather than on open.
 
-The index tracks filesystem identity and prefix/tail checkpoints, maintains separate tool-result and tool-call lookups, and repairs interrupted imports at startup. Schema versioning invalidates derived records when normalization changes. Both the source and state paths are resolved through existing directory links before enforcing their separation.
+The index tracks filesystem identity and prefix/tail checkpoints, maintains separate tool-result and tool-call lookups, and repairs interrupted imports at startup. Schema versioning invalidates derived records when normalization changes. Both the source and state paths are resolved through existing directory links before enforcing their separation. See [SQLite index schema](sqlite-schema.md) for the tables, columns, and schema versions.
 
 ## UI runtime
 

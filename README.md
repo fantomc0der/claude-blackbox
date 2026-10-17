@@ -217,4 +217,4 @@ Linux x64 releases include AppImage, DEB, and RPM packages. Linux ARM64 releases
 
 Large libraries use bounded result pages and on-demand tool bodies instead of mounting the entire archive. Files are tracked by source identity, size, modification time, and byte checkpoints; truncated/replaced files and interrupted indexing are reconciled. Malformed complete records are counted as warnings; incomplete trailing writes wait for completion. Export retains parsed record values but normalizes JSON whitespace and line endings.
 
-See `docs/architecture.md` for the module boundaries and data flow.
+See `docs/architecture.md` for the module boundaries and data flow, and `docs/sqlite-schema.md` for the index's tables and schema versions.
