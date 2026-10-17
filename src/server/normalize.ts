@@ -123,11 +123,29 @@ export function displaySnippet(raw: string, term: string, words = 28): string {
   return `${lead < before.length ? "… " : ""}${[...before.slice(before.length - lead), ...tail].join(" ")}${tail.length < after.length ? " …" : ""}`;
 }
 
+// Claude Code's own first-prompt picker, which titles its `--resume` listing, skips the records that slash commands, local
+// commands, hooks, interruptions, and the IDE integration write ahead of the user's first prompt, shows a slash command
+// with its arguments as `/name args`, and shows a shell command as `! command`. The same rules keep a recording's title in
+// agreement with it; a record the rules skip gives no title, so the next user record is tried.
+const skippedPrompt = /^(<local-command-stdout>|<local-command-caveat>|<session-start-hook>|\[Request interrupted by user)/;
+const attachedContext = /<(system-reminder|ide_opened_file|ide_selection)>[\s\S]*?<\/\1>/g;
+
+function titleText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
 export function promptTitle(event: ReplayEvent): string {
   if (event.role !== "user") return "";
-  return stripAnsi(event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" "))
-    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, " ")
-    .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+  const text = stripAnsi(event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" ")).trim();
+  if (skippedPrompt.test(text)) return "";
+  const command = /^<command-name>([\s\S]*?)<\/command-name>/.exec(text);
+  if (command) {
+    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "";
+    return args.trim() ? titleText(`${command[1].trim()} ${args}`) : "";
+  }
+  const shell = /^<bash-input>([\s\S]*?)<\/bash-input>/.exec(text);
+  if (shell) return shell[1].trim() ? titleText(`! ${shell[1]}`) : "";
+  return titleText(text.replace(attachedContext, " ").replace(/<[^>]+>/g, " "));
 }
 
 export function pathName(path: string): string {

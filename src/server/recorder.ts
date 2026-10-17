@@ -215,7 +215,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 8) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 9) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -344,6 +344,18 @@ export class Recorder {
     if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 8) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
       this.db.exec("PRAGMA user_version=8");
+    })();
+    // Version 9 titles a recording by Claude Code's own first-prompt rules, which skip the slash command, local command,
+    // hook, interruption, and IDE context records an earlier build read as the first prompt. The stored records hold every
+    // prompt, so a recording without an explicit title is retitled from them where it is instead of being re-read; one
+    // already marked for re-reading gets its title from that read.
+    if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 9) this.db.transaction(() => {
+      const update = this.db.query("UPDATE sessions SET title=? WHERE id=?");
+      for (const row of this.db.query<{ id: string; session_id: string; title: string }, []>("SELECT id, session_id, title FROM sessions WHERE named=0 AND mtime!=0").all()) {
+        const title = this.firstPrompt(row.id) || `Session ${row.session_id.slice(0, 8)}`;
+        if (title !== row.title) update.run(title, row.id);
+      }
+      this.db.exec("PRAGMA user_version=9");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
@@ -480,6 +492,23 @@ export class Recorder {
     if (changed.length > published) this.publish(changed.slice(published));
     else if (!interrupted && (firstIndex || changed.length)) this.emit();
     return changed;
+  }
+
+  /** The title `promptTitle()` gives a recording's stored user records, read in order until one titles it; empty when none does. */
+  private firstPrompt(id: string): string {
+    const page = this.db.query<{ raw: string; sequence: number }, [string, number]>(
+      "SELECT raw, sequence FROM events WHERE session_id=? AND role='user' AND sequence>? ORDER BY sequence LIMIT 50");
+    for (let after = -1; ;) {
+      const rows = page.all(id, after);
+      for (const row of rows) {
+        let title = "";
+        try { title = promptTitle(normalize(JSON.parse(row.raw) as Record<string, unknown>, id, 0, row.sequence)); }
+        catch { continue; }
+        if (title) return title;
+      }
+      if (rows.length < 50) return "";
+      after = rows[rows.length - 1].sequence;
+    }
   }
 
   private publish(ids: string[]): void {
