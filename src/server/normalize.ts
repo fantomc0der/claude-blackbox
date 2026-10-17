@@ -40,6 +40,20 @@ export function isHiddenReasoning(blocks: ContentBlock[]): boolean {
 export const requestMessageType = "api-request-blob";
 const copiedBlocks = new Set(["tool_use", "tool_result", "thinking", "redacted_thinking"]);
 
+// When an API request fails for good, or a turn ends without a reply, Claude Code writes an `assistant` record itself:
+// `message.model` is `<synthetic>`, an API error also carries `isApiErrorMessage: true` with the error kind and HTTP
+// status, and its text is the error or a stand-in such as `No response requested.`. None of it is model output, so such
+// a record is never a message, and an API error is an error.
+export const syntheticModel = "<synthetic>";
+
+export function isApiError(raw: Record<string, unknown>): boolean {
+  return raw.isApiErrorMessage === true;
+}
+
+export function isStandIn(raw: Record<string, unknown>): boolean {
+  return raw.type === "assistant" && (object(raw.message).model === syntheticModel || isApiError(raw));
+}
+
 function requestMessageText(message: Record<string, unknown>): string {
   if (message.role === "assistant") return "";
   if (typeof message.content === "string") return message.content;
@@ -84,9 +98,9 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     timestamp: Number.isFinite(stamp) ? new Date(stamp).toISOString() : "",
     blocks,
     text,
-    category: role === "system" ? "system" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
+    category: role === "system" ? "system" : isStandIn(raw) ? "synthetic" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
     toolNames: tools.map(block => block.name || "Unknown tool"),
-    error: blocks.some(block => block.is_error === true) || raw.is_error === true || raw.level === "error",
+    error: blocks.some(block => block.is_error === true) || raw.is_error === true || raw.level === "error" || isApiError(raw),
     parentId: string(raw.parentUuid) || undefined,
     uuid: string(raw.uuid) || undefined,
     cwd: string(raw.cwd) || undefined,

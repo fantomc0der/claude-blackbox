@@ -21,7 +21,8 @@ export interface ReplayEvent {
   timestamp: string;
   blocks: ContentBlock[];
   text: string;
-  category: "message" | "tool" | "thinking" | "hidden" | "system";
+  /** `synthetic` marks a record Claude Code wrote itself in place of a model turn, such as an API error. */
+  category: "message" | "tool" | "thinking" | "hidden" | "system" | "synthetic";
   toolNames: string[];
   error: boolean;
   parentId?: string;

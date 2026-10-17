@@ -36,10 +36,11 @@ export function replayFilters(params: URLSearchParams): ReplayFilterValues {
 }
 
 // The anchor offset is counted inside the opening view, so a search hit must open on a view that shows its record.
-// Conversation leaves out system and hidden-reasoning records and folds a tool result into its call's card; those
-// hits, and any hit of unknown kind, open on All events.
+// Conversation shows messages, reasoning, and Claude Code's stand-ins such as API errors; it leaves out system and
+// hidden-reasoning records and folds a tool result into its call's card, so those hits, and any hit of unknown kind,
+// open on All events.
 export function matchReplayKind(match: Pick<Session, "matchCategory" | "matchRole">): "conversation" | "all" {
-  if (match.matchCategory === "message" || match.matchCategory === "thinking") return "conversation";
+  if (match.matchCategory === "message" || match.matchCategory === "thinking" || match.matchCategory === "synthetic") return "conversation";
   return match.matchCategory === "tool" && match.matchRole === "assistant" ? "conversation" : "all";
 }
 
