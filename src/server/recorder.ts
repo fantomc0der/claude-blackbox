@@ -7,7 +7,7 @@ import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
 import { compareVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
+import { displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, rateStamp, readCostState, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -530,20 +530,35 @@ export class Recorder {
       this.db.exec("PRAGMA user_version=16");
     })();
     // Version 17 reads Claude Code's `toolDenialKind` before a result's message, tells its interruptions and
-    // cancellations apart from its denials, never counts its API retry banner as an error, and counts a recording's API
-    // error turns and decided results apart from its errors. The counts come from the stored flags, so every recording
-    // is filled where it is. A decision an earlier build recognized stays a decision, and its label is read from the
-    // stored record whenever it is shown, so only three groups of recordings are re-read: those holding a flagged or
-    // decided record with a `toolDenialKind`, whose stored results lack the kind `normalize()` now copies onto them;
-    // those holding a failure whose record carries part of a message version 17 first reads as a decision; and those
-    // holding a flagged `system` record of subtype `api_error`, which no 2.1.302 recording holds. Both read only the
-    // records an earlier build flagged or decided, like version 12.
+    // cancellations apart from its denials, never counts its API retry banner as an error, counts a recording's API error
+    // turns and decided records apart from its errors, and titles a recording by Claude Code's own precedence, agent name
+    // first and summary before the first prompt, keeping the rank of the title's kind in `named`, where an earlier build
+    // kept 1 for any explicit title. The counts come from the records an earlier build flagged or decided, like version
+    // 12, so every recording is filled where it is. A recording holding a title record, or titled explicitly by a field
+    // on another record, is retitled where it is from those stored records, like version 9; finding the fields reads the
+    // explicitly titled recordings' events, and one already marked for re-reading gets its title from that read. A
+    // decision an earlier build recognized stays a decision, and its label is read from the stored record whenever it is
+    // shown, so only three groups of recordings are re-read: those holding a flagged or decided record with a
+    // `toolDenialKind`, whose stored results lack the kind `normalize()` now copies onto them; those holding a failure
+    // whose record carries part of a message version 17 first reads as a decision; and those holding a flagged `system`
+    // record of subtype `api_error`, which no 2.1.302 recording holds.
     if (version < 17) this.db.transaction(() => {
       const counts = new Map(this.db.query<{ id: string; apiErrors: number; decisions: number }, []>(`SELECT session_id AS id,
         sum(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 THEN json_type(raw,'$.isApiErrorMessage')='true' ELSE 0 END) AS apiErrors,
         sum(decision) AS decisions FROM events WHERE error=1 OR decision=1 GROUP BY id`).all().map(row => [row.id, row]));
       const fill = this.db.query("UPDATE sessions SET api_errors=?, decisions=? WHERE id=?");
       for (const { id } of this.db.query<{ id: string }, []>("SELECT id FROM sessions").all()) fill.run(counts.get(id)?.apiErrors ?? 0, counts.get(id)?.decisions ?? 0, id);
+      const titles = new Map<string, { title: string; rank: number }>();
+      for (const row of this.db.query<{ id: string; type: string; raw: string }, []>(`SELECT e.session_id AS id, e.type, e.raw FROM events e
+        JOIN sessions s ON s.id=e.session_id WHERE s.mtime!=0 AND (e.type IN ('agent-name','custom-title','ai-title','summary')
+          OR (s.named>0 AND (instr(e.raw,'"agentName":')>0 OR instr(e.raw,'"customTitle":')>0 OR instr(e.raw,'"aiTitle":')>0)))
+        ORDER BY e.session_id, e.sequence`).iterate()) {
+        let explicit: ReturnType<typeof explicitTitle> = null;
+        try { explicit = explicitTitle(row.type, object(JSON.parse(row.raw))); } catch { continue; }
+        if (explicit && explicit.rank >= (titles.get(row.id)?.rank ?? 0)) titles.set(row.id, explicit);
+      }
+      const retitle = this.db.query("UPDATE sessions SET title=?, named=? WHERE id=?");
+      for (const [id, { title, rank }] of titles) retitle.run(title, rank, id);
       this.db.query(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE (error=1 OR decision=1)
         AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(events.raw,value)>0))
           OR (error=1 AND type='system' AND instr(raw,'"subtype":"api_error"')>0)))`)
@@ -672,8 +687,10 @@ export class Recorder {
           if (model && model !== syntheticModel) row.model = model;
           row.version = recordedVersion(line.value.version) || row.version;
           row.unrecognized += Number(unrecognizedKind(event.type, recordSubtype(event.type, line.value)) !== null);
-          const explicit = string(line.value.customTitle) || string(line.value.aiTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
-          if (explicit) { row.title = explicit.slice(0, 240); row.named = 1; }
+          // `named` keeps the rank of the explicit title the row holds, so the latest title of a kind replaces it and a
+          // title of a lower kind never does.
+          const explicit = explicitTitle(event.type, line.value);
+          if (explicit && explicit.rank >= row.named) { row.title = explicit.title; row.named = explicit.rank; }
           else if (!row.title || (!row.named && row.title.startsWith("Session "))) row.title = promptTitle(event) || row.title;
           if (event.timestamp) {
             if (!row.started || event.timestamp < row.started) row.started = event.timestamp;

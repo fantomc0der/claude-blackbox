@@ -195,6 +195,28 @@ export function promptTitle(event: ReplayEvent): string {
   return titleText(text.replace(attachedContext, " ").replace(/<[^>]+>/g, " "));
 }
 
+/**
+ * The explicit title a record gives its recording, as one line cut to 240 characters, with the rank of its kind; null
+ * when it gives none. Claude Code's `--resume` picker titles a session by its agent name (4), else its custom title
+ * from `/rename` (3), else its AI title (2), else its summary (1), else its first prompt, each the latest record of its
+ * kind; 2.1.302 writes no `summary` records but still honors the ones older versions wrote. The name fields are read
+ * from any record that carries them, a `title` from a `custom-title` or `ai-title` record, and a summary only from a
+ * `summary` record.
+ */
+export function explicitTitle(type: string, raw: Record<string, unknown>): { title: string; rank: number } | null {
+  const candidates: ReadonlyArray<readonly [number, string]> = [
+    [4, string(raw.agentName)],
+    [3, string(raw.customTitle) || (type === "custom-title" ? string(raw.title) : "")],
+    [2, string(raw.aiTitle) || (type === "ai-title" ? string(raw.title) : "")],
+    [1, type === "summary" ? string(raw.summary) : ""],
+  ];
+  for (const [rank, value] of candidates) {
+    const title = stripAnsi(value).replace(/\s+/g, " ").trim().slice(0, 240);
+    if (title) return { title, rank };
+  }
+  return null;
+}
+
 export function pathName(path: string): string {
   return path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || "Unknown workspace";
 }

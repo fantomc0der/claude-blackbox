@@ -185,10 +185,11 @@ test("version 6 indexes clean terminal styling out of stored titles without resc
   await setup.write("named", [record("Prompt", { customTitle: "Custom  title" })]);
   const before = await setup.open();
   const sessions = before.list(new URLSearchParams()).items;
-  const session = sessions.find(item => item.title.startsWith("Added"))!, named = sessions.find(item => item.title === "Custom  title")!;
+  const session = sessions.find(item => item.title.startsWith("Added"))!, named = sessions.find(item => item.title === "Custom title")!;
   expect(session.title).toBe("Added C:\\code\\app as a working directory · /permissions");
-  // Indexes written before version 7 stored the escape bytes the terminal recorded.
+  // Indexes written before version 7 stored the escape bytes the terminal recorded, and an explicit title as recorded.
   before.db.query("UPDATE sessions SET title=? WHERE id=?").run(styled, session.id);
+  before.db.query("UPDATE sessions SET title=? WHERE id=?").run("Custom  title", named.id);
   before.db.exec("PRAGMA user_version=6");
   await before.close();
   const after = await setup.open({ scan: false });
@@ -497,6 +498,46 @@ test("an API request's copies of an /add-dir command and its output add no folde
 // first two copy the prompt a user record holds.
 const sessionState = (type: string, fields: Record<string, unknown> = {}) => ({ type, sessionId: "synthetic", ...fields });
 const turnState = (prompt: string) => [sessionState("last-prompt", { lastPrompt: prompt, leafUuid: "leaf" }), sessionState("atis-latch", { atis: "" })];
+
+test("version 16 indexes retitle recordings by Claude Code's title precedence without rescanning them", async () => {
+  const setup = await fixture();
+  await setup.write("summarized", [sessionState("summary", { summary: "Earlier work on the Larkspur parser", leafUuid: "leaf" }), record("Summarized prompt")]);
+  await setup.write("agent", [record("Review the release"), sessionState("custom-title", { customTitle: "Release" }), sessionState("agent-name", { agentName: "Release reviewer" })]);
+  await setup.write("renamed", [record("Fix it"), sessionState("custom-title", { customTitle: "Custom" }), sessionState("ai-title", { aiTitle: "Generated" })]);
+  await setup.write("legacy", [record("Prompt", { customTitle: "Custom on a prompt" })]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const before = await setup.open();
+  const ids: Record<string, string> = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.source.replace(/\.jsonl$/, "").split(/[\\/]/).at(-1), session.id]));
+  before.bookmark(ids.agent, true);
+  // Indexes written before version 17 ignored agent names and summaries, let the latest custom or AI title win, and kept 1
+  // for any explicit title.
+  const stored = before.db.query("UPDATE sessions SET title=?, named=? WHERE id=?");
+  stored.run("Summarized prompt", 0, ids.summarized);
+  stored.run("Release", 1, ids.agent);
+  stored.run("Generated", 1, ids.renamed);
+  stored.run("Custom on a prompt", 1, ids.legacy);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=16");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const titles = () => Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, after.getSession(id)!.title]));
+  const named = () => Object.fromEntries(after.db.query<{ id: string; named: number }, []>("SELECT id, named FROM sessions").all().map(row => [Object.keys(ids).find(key => ids[key] === row.id), row.named]));
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(16);
+  expect(titles().agent).toBe("Release");
+  await after.scan();
+  expect(version()).toBe(17);
+  expect(titles()).toEqual({ summarized: "Earlier work on the Larkspur parser", agent: "Release reviewer", renamed: "Custom", legacy: "Custom on a prompt", plain: "Plain prompt" });
+  expect(named()).toEqual({ summarized: 1, agent: 4, renamed: 3, legacy: 3, plain: 0 });
+  for (const id of Object.values(ids)) expect(cwds(id)).toEqual(["/synthetic/stale"]);
+  expect(after.getSession(ids.agent)?.bookmarked).toBe(true);
+  // The stored rank keeps a later AI title from replacing a custom title an earlier build kept as 1.
+  await appendFile(join(setup.folder, "legacy.jsonl"), JSON.stringify(sessionState("ai-title", { aiTitle: "Generated later" })) + "\n");
+  await after.scan();
+  expect(titles().legacy).toBe("Custom on a prompt");
+});
 
 test("session state records index as notes without blocks or their copies of the prompt", async () => {
   const setup = await fixture();
