@@ -304,6 +304,11 @@ export function explicitTitle(type: string, raw: Record<string, unknown>): { tit
   return null;
 }
 
+/** The tool results among a record's blocks that record a decision, each of which `sessions.decisions` counts. */
+export function decidedResults(blocks: ContentBlock[]): number {
+  return blocks.filter(block => resultDecision(block) !== null).length;
+}
+
 export function pathName(path: string): string {
   return path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || "Unknown workspace";
 }
