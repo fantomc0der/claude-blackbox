@@ -7,7 +7,7 @@ import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
 import { newestVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
+import { displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel, TranscriptTexts } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, currentRates, emptyUsage, hasRates, normalizeModel, readCostState, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -260,6 +260,7 @@ export class Recorder {
   private workspaceUsage: Map<string, UsageSummary> | null = null;
   private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "versions" | "unrecognizedKinds" | "facetsLimited"> | null = null;
   private replayFacets = new Map<string, EventPage["facets"]>();
+  private transcripts = new Map<string, { cursor: number; texts: TranscriptTexts }>();
   private replayTimelines = new Map<string, { total: number; rows: TimelineRow[] }>();
   private replaySummaries = new Map<string, { total: number; summary: SessionSummary }>();
 
@@ -268,7 +269,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 17) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 18) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -466,7 +467,7 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9 to 17 steps below follow it
+    // its port, and before the recordings are compared with what was indexed; the version 9 to 18 steps below follow it
     // in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
@@ -627,6 +628,13 @@ export class Recorder {
       if (!filled) return [];
       this.db.exec("PRAGMA user_version=17");
     }
+    // Version 18 leaves out of an `api-request-blob` copy's searchable text the text an earlier user or attachment
+    // record holds, such as the prompt a copy repeats. Only the recordings holding a copy with searchable text are
+    // re-read; finding them reads every event, like version 8.
+    if (version < 18) this.db.transaction(() => {
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=? AND text!='')").run(requestMessageType);
+      this.db.exec("PRAGMA user_version=18");
+    })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -681,6 +689,12 @@ export class Recorder {
         // Claude Code files `cost-state` as last-wins, so the last one read replaces the stored total; a read that
         // appends no new one keeps the total already stored.
         let recordedCost: RecordedCost | null = null;
+        // A read that resumes at the cursor continues the transcript text the previous read of this recording collected,
+        // or else reads the text already indexed once a message copy asks.
+        const cached = this.transcripts.get(id);
+        this.transcripts.delete(id);
+        const transcript = row.cursor && cached?.cursor === row.cursor ? cached.texts : new TranscriptTexts(row.cursor ? () => this.db.query<{ raw: string }, [string]>(
+          "SELECT raw FROM events WHERE session_id=? AND ((type='user' AND has_tools=0) OR type='attachment')").all(id).map(stored => object(JSON.parse(stored.raw))) : undefined);
         let batch: ReplayEvent[] = [];
         const write = this.db.transaction((events: ReplayEvent[]) => {
           const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text,role,timestamp,model,cwd,has_thinking,has_tools,decision)
@@ -734,7 +748,8 @@ export class Recorder {
         for await (const line of readJsonLines(path, row.cursor, info.size)) {
           row.cursor = line.nextOffset;
           if (!line.value) { row.warnings += Number(line.malformed); continue; }
-          const event = normalize(line.value, id, line.offset, row.events);
+          const event = normalize(line.value, id, line.offset, row.events, transcript);
+          transcript.note(line.value);
           recordedCost = readCostState(line.value) ?? recordedCost;
           const turn = turnDuration(line.value);
           if (turn !== null) { row.turns++; row.active_ms += turn; }
@@ -775,6 +790,9 @@ export class Recorder {
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
           await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true),
           row.turns, row.active_ms, row.version, row.unrecognized, row.api_errors, row.decisions, id);
+        // The recordings read most recently are the ones a live session keeps appending to.
+        if (this.transcripts.size >= 32) this.transcripts.delete(this.transcripts.keys().next().value!);
+        this.transcripts.set(id, { cursor: row.cursor, texts: transcript });
         changed.push(id);
         // Let live clients see a long first index fill in instead of an empty library.
         if (performance.now() - publishedAt >= 1000) {
@@ -1213,7 +1231,12 @@ export class Recorder {
     }
     offset = Math.min(offset, Math.max(0, total - 1));
     const items = this.db.query<StoredEvent, SQLQueryBindings[]>(`SELECT e.raw,e.event_id,e.sequence,e.offset,e.text FROM events e WHERE ${filter} ORDER BY e.sequence LIMIT ? OFFSET ?`)
-      .all(...bindings, limit, offset).map(row => normalize(JSON.parse(row.raw), id, row.offset, row.sequence));
+      .all(...bindings, limit, offset).map(row => {
+        const event = normalize(JSON.parse(row.raw), id, row.offset, row.sequence);
+        // A message copy's searchable text depends on the records before it, so the page carries the stored text that
+        // Find and the `q` filter test.
+        return event.type === requestMessageType ? { ...event, text: row.text } : event;
+      });
     const unfilteredTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=?").get(id)!.total;
     const hiddenTotal = this.db.query<{ total: number }, [string]>("SELECT count(*) AS total FROM events WHERE session_id=? AND category='hidden'").get(id)!.total;
     let facets = this.replayFacets.get(id);
