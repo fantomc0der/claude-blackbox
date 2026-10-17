@@ -72,7 +72,7 @@ describe("session titles", () => {
     await writeFile(join(folder, "s4.jsonl"), record("s4", "d1", null, "<bash-input>bun test</bash-input>") + record("s4", "d2", "d1", "<bash-stdout>186 pass</bash-stdout><bash-stderr></bash-stderr>") + record("s4", "d3", "d2", "Why did one test skip?"));
     await writeFile(join(folder, "s5.jsonl"), record("s5", "e1", null, command("/model", "")));
     recorder = await Recorder.open(data, join(root, "state"));
-    const titles = () => new Map(recorder!.list(new URLSearchParams()).items.map(session => [session.sessionId, session.title]));
+    const titles = () => new Map(recorder!.queries.list(new URLSearchParams()).items.map(session => [session.sessionId, session.title]));
     expect(titles()).toEqual(new Map([["s2", "Add retries to the upload client"], ["s3", "Why does the upload client hang?"], ["s4", "! bun test"], ["s5", "Session s5"]]));
     // The fallback stays open, so the prompt that arrives later takes over the title on the next scan.
     await appendFile(join(folder, "s5.jsonl"), record("s5", "e2", "e1", stdout("Set model to sonnet")) + record("s5", "e3", "e2", "Switch the upload client to streaming"));
@@ -110,7 +110,7 @@ describe("session titles", () => {
     await writeFile(join(folder, "s3.jsonl"), lines(prompt("s3", "Review the release"), state("s3", "custom-title", { customTitle: "Release" }), state("s3", "agent-name", { agentName: "Release reviewer" }), state("s3", "ai-title", { aiTitle: "Review the release notes" })));
     await writeFile(join(folder, "s4.jsonl"), lines(prompt("s4", "Tidy the docs"), state("s4", "summary", { summary: "First pass", leafUuid: "a" }), state("s4", "summary", { summary: "Second pass", leafUuid: "b" })));
     recorder = await Recorder.open(data, join(root, "state"));
-    const titles = () => new Map(recorder!.list(new URLSearchParams()).items.map(session => [session.sessionId, session.title]));
+    const titles = () => new Map(recorder!.queries.list(new URLSearchParams()).items.map(session => [session.sessionId, session.title]));
     expect(titles()).toEqual(new Map([["s1", "Upload client retry work"], ["s2", "Upload retries"], ["s3", "Release reviewer"], ["s4", "Second pass"]]));
     // A later title of a lower kind never replaces one of a higher kind, and the latest of the same kind does, across reads.
     await appendFile(join(folder, "s2.jsonl"), lines(state("s2", "ai-title", { aiTitle: "Generated upload title" }), state("s2", "summary", { summary: "Later summary", leafUuid: "leaf-2" })));

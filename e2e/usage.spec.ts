@@ -5,7 +5,7 @@ import { DEMO_HERO_TITLE } from "../tests/fixtures";
 import AxeBuilder from "@axe-core/playwright";
 
 test("usage totals cover every matching page and expose a keyboard accessible breakdown", async ({ page }) => {
-  const listing = recorder.list(new URLSearchParams());
+  const listing = recorder.queries.list(new URLSearchParams());
   await page.goto("/");
   const summary = page.getByLabel("Usage and estimated cost");
   await expect(summary).toContainText(usageCost(listing.usage));
@@ -26,8 +26,8 @@ test("usage totals cover every matching page and expose a keyboard accessible br
 });
 
 test("usage totals keep hidden subagents, state their share and match the sidebar", async ({ page }) => {
-  const hidden = recorder.list(new URLSearchParams());
-  const shown = recorder.list(new URLSearchParams({ agents: "1" }));
+  const hidden = recorder.queries.list(new URLSearchParams());
+  const shown = recorder.queries.list(new URLSearchParams({ agents: "1" }));
   expect(hidden.hiddenAgents).toBeGreaterThan(0);
   expect(hidden.hiddenAgentUsage.costUSD).toBeGreaterThan(0);
   expect(hidden.usage).toEqual(shown.usage);
@@ -44,9 +44,9 @@ test("usage totals keep hidden subagents, state their share and match the sideba
   await expect(scope).toContainText(`All ${shown.total} matching recordings, across every page. ${shown.sessionsWithUsage} report usage.`);
   await expect(scope).not.toContainText("hidden from the list");
   await expect(summary.locator(".usage-total-cost")).not.toHaveAttribute("title", /./);
-  const catalog = await recorder.catalog();
+  const catalog = await recorder.queries.catalog();
   const worktree = catalog.workspaces.find(workspace => workspace.name === "delegated-worktree")!;
-  expect(worktree.usage).toEqual(recorder.list(new URLSearchParams({ workspace: worktree.id })).usage);
+  expect(worktree.usage).toEqual(recorder.queries.list(new URLSearchParams({ workspace: worktree.id })).usage);
   await page.goto(`/?workspace=${encodeURIComponent(worktree.id)}`);
   await expect(page.locator(".breadcrumbs")).toContainText("delegated-worktree");
   await expect(summary).toContainText(usageCost(worktree.usage));
@@ -59,11 +59,11 @@ test("usage totals keep hidden subagents, state their share and match the sideba
 });
 
 test("group expense matrix switches between folders and per-request model effort totals", async ({ page }) => {
-  const catalog = await recorder.catalog();
+  const catalog = await recorder.queries.catalog();
   const paths = ["atlas-api", "blackbox"].map(name => catalog.workspaces.find(workspace => workspace.name === name)!.paths[0]);
-  const group = recorder.saveGroup({ name: "Model expense verification", paths });
+  const group = recorder.queries.saveGroup({ name: "Model expense verification", paths });
   try {
-    const listing = recorder.list(new URLSearchParams({ workspace: group.id }));
+    const listing = recorder.queries.list(new URLSearchParams({ workspace: group.id }));
     await page.goto(`/?workspace=${group.id}`);
     await page.getByLabel("Usage and estimated cost").click();
     const toggle = page.getByRole("button", { name: "Model & effort", exact: true });
@@ -81,14 +81,14 @@ test("group expense matrix switches between folders and per-request model effort
     await expect(matrix).toHaveCount(0);
     await page.locator(".usage-directories").getByRole("button", { name: paths[0], exact: true }).click();
     await expect.poll(() => new URL(page.url()).searchParams.get("cwd")).toBe(paths[0]);
-    const folder = recorder.list(new URLSearchParams({ workspace: group.id, cwd: paths[0] }));
+    const folder = recorder.queries.list(new URLSearchParams({ workspace: group.id, cwd: paths[0] }));
     await expect(page.locator(".usage-matrix tfoot")).toContainText(usageCost(folder.usage));
     await expect(page.getByRole("group", { name: "Expense breakdown" })).toHaveCount(0);
-  } finally { recorder.deleteGroup(group.id); }
+  } finally { recorder.queries.deleteGroup(group.id); }
 });
 
 test("model matrix preserves unknown prices and missing effort instead of presenting them as free", async ({ page }) => {
-  const listing = recorder.list(new URLSearchParams({ q: DEMO_HERO_TITLE }));
+  const listing = recorder.queries.list(new URLSearchParams({ q: DEMO_HERO_TITLE }));
   const usage = { ...listing.usage, costUSD: 0, unpricedRequests: listing.usage.requests, unratedRequests: listing.usage.requests };
   await page.route(/\/api\/sessions(?:\?|$)/, route => route.fulfill({ json: {
     ...listing, usage, modelUsage: [{ model: "future-claude-model-with-a-long-unfamiliar-identifier", effort: null, usage }],
@@ -108,7 +108,7 @@ test("model matrix preserves unknown prices and missing effort instead of presen
 });
 
 test("the usage note states why requests on another service tier or with a fallback credit have no estimate", async ({ page }) => {
-  const listing = recorder.list(new URLSearchParams({ q: DEMO_HERO_TITLE }));
+  const listing = recorder.queries.list(new URLSearchParams({ q: DEMO_HERO_TITLE }));
   const usage = { ...listing.usage, requests: listing.usage.requests + 3, unpricedRequests: 3, unratedRequests: 0, unratedIterationRequests: 0, unnamedRequests: 0, fastRequests: 0, tierRequests: 2, creditRequests: 1 };
   await page.route(/\/api\/sessions(?:\?|$)/, route => route.fulfill({ json: { ...listing, usage } }));
   await page.goto(`/?q=${encodeURIComponent(DEMO_HERO_TITLE)}`);
@@ -146,11 +146,11 @@ test("model expense matrix stays accessible and fits narrow screens in both them
 });
 
 test("workspace groups aggregate usage and folder drilldown narrows the same filters", async ({ page }) => {
-  const catalog = await recorder.catalog();
+  const catalog = await recorder.queries.catalog();
   const paths = [catalog.workspaces.find(workspace => workspace.name === "orbit")!.paths[0], catalog.workspaces.find(workspace => workspace.name === "orbit-auth")!.paths[0]];
-  const group = recorder.saveGroup({ name: "Usage verification group", paths });
+  const group = recorder.queries.saveGroup({ name: "Usage verification group", paths });
   try {
-    const listing = recorder.list(new URLSearchParams({ workspace: group.id }));
+    const listing = recorder.queries.list(new URLSearchParams({ workspace: group.id }));
     await page.goto(`/?workspace=${group.id}`);
     await expect(page.getByLabel("Usage and estimated cost")).toContainText(usageCost(listing.usage));
     await page.getByLabel("Usage and estimated cost").click();
@@ -158,14 +158,14 @@ test("workspace groups aggregate usage and folder drilldown narrows the same fil
     await page.locator(".usage-directories").getByRole("button", { name: paths[0], exact: true }).click();
     await expect.poll(() => new URL(page.url()).searchParams.get("cwd")).toBe(paths[0]);
     expect(new URL(page.url()).searchParams.get("workspace")).toBe(group.id);
-    const folder = recorder.list(new URLSearchParams({ workspace: group.id, cwd: paths[0] }));
+    const folder = recorder.queries.list(new URLSearchParams({ workspace: group.id, cwd: paths[0] }));
     await expect(page.getByLabel("Usage and estimated cost")).toContainText(usageCost(folder.usage));
     await expect(page.locator(".session-row")).toHaveCount(folder.total);
-  } finally { recorder.deleteGroup(group.id); }
+  } finally { recorder.queries.deleteGroup(group.id); }
 });
 
 test("session replay shows its own tokens and cost with full cache details", async ({ page }) => {
-  const session = recorder.list(new URLSearchParams({ q: DEMO_HERO_TITLE })).items[0];
+  const session = recorder.queries.list(new URLSearchParams({ q: DEMO_HERO_TITLE })).items[0];
   await page.goto(`/?session=${session.id}`);
   await expect(page.getByLabel("Session usage")).toContainText(usageCost(session.usage));
   await expect(page.getByLabel("Session usage")).toContainText(compact(session.usage.totalTokens));

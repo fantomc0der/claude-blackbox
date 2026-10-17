@@ -68,13 +68,13 @@ describe("recording index", () => {
     await writeFile(fixtureData.file, fixtureData.record("Hello") + "\n");
     const recorder = await Recorder.open(fixtureData.data, join(fixtureData.root, "state"), { scan: false });
     cleanup.push(() => recorder.close());
-    expect((await recorder.catalog()).sessions).toBe(0);
-    expect((await recorder.catalog()).indexedAt).toBe("");
+    expect((await recorder.queries.catalog()).sessions).toBe(0);
+    expect((await recorder.queries.catalog()).indexedAt).toBe("");
     const seen: string[][] = [];
     recorder.listeners.add(ids => seen.push(ids));
     await recorder.scan();
-    expect((await recorder.catalog()).sessions).toBe(1);
-    expect((await recorder.catalog()).indexedAt).not.toBe("");
+    expect((await recorder.queries.catalog()).sessions).toBe(1);
+    expect((await recorder.queries.catalog()).indexedAt).not.toBe("");
     expect(seen.flat()).toHaveLength(1);
   });
 
@@ -83,7 +83,7 @@ describe("recording index", () => {
     await writeFile(fixtureData.file, fixtureData.record("First") + "\n");
     await writeFile(join(fixtureData.project, "session-b.jsonl"), fixtureData.record("Second", { sessionId: "session-b" }) + "\n");
     const first = await fixtureData.open();
-    expect(first.list(new URLSearchParams()).total).toBe(2);
+    expect(first.queries.list(new URLSearchParams()).total).toBe(2);
     await first.close();
     const state = join(fixtureData.root, "state");
     const interrupted = await Recorder.open(fixtureData.data, state, { scan: false });
@@ -92,8 +92,8 @@ describe("recording index", () => {
     expect(await scanning).toEqual([]);
     const reopened = await Recorder.open(fixtureData.data, state, { scan: false });
     cleanup.push(() => reopened.close());
-    expect(reopened.list(new URLSearchParams()).total).toBe(2);
-    expect((await reopened.catalog()).indexedAt).toBe("");
+    expect(reopened.queries.list(new URLSearchParams()).total).toBe(2);
+    expect((await reopened.queries.catalog()).indexedAt).toBe("");
   });
 
   test("closing after partial progress keeps the indexed recordings and leaves the rest for the next scan", async () => {
@@ -112,30 +112,30 @@ describe("recording index", () => {
     expect(changed).toHaveLength(1);
     const reopened = await Recorder.open(fixtureData.data, state, { scan: false });
     cleanup.push(() => reopened.close());
-    const partial = reopened.list(new URLSearchParams());
+    const partial = reopened.queries.list(new URLSearchParams());
     expect(partial.total).toBe(1);
     expect(partial.items[0].id).toBe(changed[0]);
-    expect(reopened.events(changed[0], new URLSearchParams()).total).toBe(1);
-    expect((await reopened.catalog()).indexedAt).toBe("");
+    expect(reopened.queries.events(changed[0], new URLSearchParams()).total).toBe(1);
+    expect((await reopened.queries.catalog()).indexedAt).toBe("");
     await reopened.scan();
-    expect(reopened.list(new URLSearchParams()).total).toBe(2);
-    expect((await reopened.catalog()).indexedAt).not.toBe("");
+    expect(reopened.queries.list(new URLSearchParams()).total).toBe(2);
+    expect((await reopened.queries.catalog()).indexedAt).not.toBe("");
   });
 
   test("discovers sessions without history, handles CRLF, Unicode, unknown events and no final newline", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, [fixtureData.record("Fix café 🚀"), "malformed", fixtureData.record("recorded", { type: "future-event" })].join("\r\n"));
     const recorder = await fixtureData.open();
-    const page = recorder.list(new URLSearchParams());
+    const page = recorder.queries.list(new URLSearchParams());
     expect(page.total).toBe(1);
     expect(page.items[0].title).toBe("Fix café 🚀");
     expect(page.items[0].workspace).toBe("orbit");
-    const events = recorder.events(page.items[0].id, new URLSearchParams());
+    const events = recorder.queries.events(page.items[0].id, new URLSearchParams());
     expect(events.total).toBe(2);
     expect(events.items[1].type).toBe("future-event");
-    expect((await recorder.catalog()).warnings).toBe(1);
+    expect((await recorder.queries.catalog()).warnings).toBe(1);
     await recorder.scan();
-    expect(recorder.events(page.items[0].id, new URLSearchParams()).total).toBe(2);
+    expect(recorder.queries.events(page.items[0].id, new URLSearchParams()).total).toBe(2);
   });
 
   test("retries incomplete UTF-8 tails without skipping or duplicating records", async () => {
@@ -144,15 +144,15 @@ describe("recording index", () => {
     const split = tail.indexOf(Buffer.from("🚀")) + 2;
     await writeFile(fixtureData.file, Buffer.concat([Buffer.from(fixtureData.record("Start") + "\n"), tail.subarray(0, split)]));
     const recorder = await fixtureData.open();
-    const id = recorder.list(new URLSearchParams()).items[0].id;
-    expect(recorder.events(id, new URLSearchParams()).total).toBe(1);
+    const id = recorder.queries.list(new URLSearchParams()).items[0].id;
+    expect(recorder.queries.events(id, new URLSearchParams()).total).toBe(1);
     await appendFile(fixtureData.file, tail.subarray(split));
     await recorder.scan();
-    const page = recorder.events(id, new URLSearchParams());
+    const page = recorder.queries.events(id, new URLSearchParams());
     expect(page.total).toBe(2);
     expect(page.items[1].blocks[0].text).toBe("Résultat 🚀");
     await recorder.scan();
-    expect(recorder.events(id, new URLSearchParams()).total).toBe(2);
+    expect(recorder.queries.events(id, new URLSearchParams()).total).toBe(2);
   });
 
   test("timeline buckets map filtered records to page offsets on a whole-recording time axis", async () => {
@@ -168,8 +168,8 @@ describe("recording index", () => {
       fixtureData.record("Follow up retry", at("2026-09-20T09:00:00Z")),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const id = recorder.list(new URLSearchParams()).items[0].id;
-    const all = recorder.timeline(id, new URLSearchParams({ kind: "all" }));
+    const id = recorder.queries.list(new URLSearchParams()).items[0].id;
+    const all = recorder.queries.timeline(id, new URLSearchParams({ kind: "all" }));
     expect(all).toEqual({ total: 7, unfilteredTotal: 7, bucketMs: 60_000, buckets: [
       { at: null, all: 1, count: 1, first: 0, last: 0, errors: 0 },
       { at: "2026-09-19T12:00:00.000Z", all: 3, count: 3, first: 1, last: 3, errors: 1 },
@@ -177,11 +177,11 @@ describe("recording index", () => {
       { at: "2026-09-20T09:00:00.000Z", all: 1, count: 1, first: 6, last: 6, errors: 0 },
     ] });
     const params = new URLSearchParams({ kind: "all", q: "retry" });
-    const matches = recorder.timeline(id, params);
-    expect(matches.total).toBe(recorder.events(id, params).total);
+    const matches = recorder.queries.timeline(id, params);
+    expect(matches.total).toBe(recorder.queries.events(id, params).total);
     expect(matches.buckets.map(bucket => [bucket.all, bucket.count, bucket.first])).toEqual([[1, 0, null], [3, 1, 0], [2, 1, 1], [1, 1, 2]]);
     for (const bucket of matches.buckets.filter(bucket => bucket.first !== null)) {
-      const page = recorder.events(id, new URLSearchParams({ kind: "all", q: "retry", offset: String(bucket.first), limit: "1" }));
+      const page = recorder.queries.events(id, new URLSearchParams({ kind: "all", q: "retry", offset: String(bucket.first), limit: "1" }));
       expect(page.items[0].timestamp.slice(0, 16)).toBe(bucket.at!.slice(0, 16));
     }
   });
@@ -196,8 +196,8 @@ describe("recording index", () => {
       fixtureData.record("needle from a clock that stepped back", { timestamp: "2026-09-19T10:30:00Z" }),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const id = recorder.list(new URLSearchParams()).items[0].id;
-    const timeline = recorder.timeline(id, new URLSearchParams({ kind: "all", q: "needle" }));
+    const id = recorder.queries.list(new URLSearchParams()).items[0].id;
+    const timeline = recorder.queries.timeline(id, new URLSearchParams({ kind: "all", q: "needle" }));
     expect(timeline.buckets).toEqual([
       { at: "2026-09-19T10:00:00.000Z", all: 2, count: 1, first: 0, last: 0, errors: 0 },
       { at: "2026-09-19T11:00:00.000Z", all: 3, count: 2, first: 1, last: 2, errors: 0 },
@@ -215,22 +215,22 @@ describe("recording index", () => {
       fixtureData.record("another NEEDLE"),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const id = recorder.list(new URLSearchParams()).items[0].id;
-    const positions = (values: Record<string, string>) => recorder.matches(id, new URLSearchParams(values)).items.map(item => [item.position, item.sequence]);
+    const id = recorder.queries.list(new URLSearchParams()).items[0].id;
+    const positions = (values: Record<string, string>) => recorder.queries.matches(id, new URLSearchParams(values)).items.map(item => [item.position, item.sequence]);
     // Conversation leaves out the system record, so later matches sit one position earlier than their sequence.
     expect(positions({ kind: "conversation", find: "needle" })).toEqual([[1, 2], [3, 4], [4, 5]]);
     expect(positions({ kind: "all", find: "needle" })).toEqual([[1, 1], [2, 2], [4, 4], [5, 5]]);
     expect(positions({ kind: "all", errors: "1", find: "needle" })).toEqual([[0, 4]]);
     // With the find term also narrowing the records, the matches are the whole filtered set.
     expect(positions({ kind: "conversation", q: "needle", find: "needle" })).toEqual([[0, 2], [1, 4], [2, 5]]);
-    for (const item of recorder.matches(id, new URLSearchParams({ kind: "conversation", find: "needle" })).items) {
-      const page = recorder.events(id, new URLSearchParams({ kind: "conversation", offset: String(item.position), limit: "1" }));
+    for (const item of recorder.queries.matches(id, new URLSearchParams({ kind: "conversation", find: "needle" })).items) {
+      const page = recorder.queries.events(id, new URLSearchParams({ kind: "conversation", offset: String(item.position), limit: "1" }));
       expect(page.items[0].id).toBe(item.id);
     }
-    expect(recorder.matches(id, new URLSearchParams({ kind: "all", find: "needle", limit: "2" }))).toMatchObject({ total: 4, limited: true, items: [{ position: 1 }, { position: 2 }] });
-    expect(recorder.matches(id, new URLSearchParams({ kind: "all", find: "needle" }))).toMatchObject({ total: 4, limited: false });
-    expect(recorder.matches(id, new URLSearchParams({ kind: "all", find: "absent" }))).toEqual({ total: 0, limited: false, items: [] });
-    expect(recorder.matches(id, new URLSearchParams({ kind: "all" }))).toEqual({ total: 0, limited: false, items: [] });
+    expect(recorder.queries.matches(id, new URLSearchParams({ kind: "all", find: "needle", limit: "2" }))).toMatchObject({ total: 4, limited: true, items: [{ position: 1 }, { position: 2 }] });
+    expect(recorder.queries.matches(id, new URLSearchParams({ kind: "all", find: "needle" }))).toMatchObject({ total: 4, limited: false });
+    expect(recorder.queries.matches(id, new URLSearchParams({ kind: "all", find: "absent" }))).toEqual({ total: 0, limited: false, items: [] });
+    expect(recorder.queries.matches(id, new URLSearchParams({ kind: "all" }))).toEqual({ total: 0, limited: false, items: [] });
   });
 
   test("summarizes changed and read files under the folders a recording worked in", async () => {
@@ -253,9 +253,9 @@ describe("recording index", () => {
       fixtureData.record([result("edit-2")], { cwd: "C:\\work\\shared" }),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const id = recorder.list(new URLSearchParams()).items[0].id;
-    const sequence = new Map(recorder.events(id, new URLSearchParams({ kind: "all", limit: "200" })).items.map(event => [event.id, event.sequence]));
-    const summary = recorder.summary(id, new URLSearchParams({ kind: "all" }));
+    const id = recorder.queries.list(new URLSearchParams()).items[0].id;
+    const sequence = new Map(recorder.queries.events(id, new URLSearchParams({ kind: "all", limit: "200" })).items.map(event => [event.id, event.sequence]));
+    const summary = recorder.queries.summary(id, new URLSearchParams({ kind: "all" }));
     expect(summary.folders.map(folder => [folder.path, folder.working && sequence.get(folder.working.id), folder.added && sequence.get(folder.added.id),
       folder.files.map(file => [file.display, file.changes.map(change => [change.tool, change.error, sequence.get(change.id), change.position])])])).toEqual([
       ["C:\\work\\orbit", 0, null, [["src\\app.ts", [["Edit", false, 1, 1]]], ["src\\new.ts", [["Write", true, 3, 3]]]]],
@@ -265,18 +265,18 @@ describe("recording index", () => {
     expect(summary).toMatchObject({ other: [], changedFiles: 3, readFiles: 1, limited: false });
 
     // Prompts leave out the tool calls, so their changes have no position; the commands keep theirs among the prompts.
-    const prompts = recorder.summary(id, new URLSearchParams({ kind: "prompts" }));
+    const prompts = recorder.queries.summary(id, new URLSearchParams({ kind: "prompts" }));
     expect(prompts.folders[0].files[0].changes[0].position).toBeNull();
     expect(prompts.folders[1].added!.position).toBe(1);
-    for (const change of recorder.summary(id, new URLSearchParams({ kind: "conversation" })).folders.flatMap(folder => folder.files.flatMap(file => file.changes))) {
-      const page = recorder.events(id, new URLSearchParams({ kind: "conversation", offset: String(change.position), limit: "1" }));
+    for (const change of recorder.queries.summary(id, new URLSearchParams({ kind: "conversation" })).folders.flatMap(folder => folder.files.flatMap(file => file.changes))) {
+      const page = recorder.queries.events(id, new URLSearchParams({ kind: "conversation", offset: String(change.position), limit: "1" }));
       expect(page.items[0].id).toBe(change.id);
     }
 
     // A growing recording refreshes the cached grouping.
     await appendFile(fixtureData.file, assistant([use("edit-3", "Edit", { file_path: "src/app.ts", old_string: "b", new_string: "c" })]) + "\n");
     await recorder.scan();
-    expect(recorder.summary(id, new URLSearchParams({ kind: "all" })).folders[0].files[0].changes.map(change => sequence.get(change.id) ?? "new")).toEqual([1, "new"]);
+    expect(recorder.queries.summary(id, new URLSearchParams({ kind: "all" })).folders[0].files[0].changes.map(change => sequence.get(change.id) ?? "new")).toEqual([1, "new"]);
   });
 
   test("adds folders only for /add-dir commands Claude Code recorded as added", async () => {
@@ -297,8 +297,8 @@ describe("recording index", () => {
       fixtureData.record(stdout("Added C:\\work\\answered as a working directory for this session")),
     ].map(entry => typeof entry === "string" ? entry : JSON.stringify(entry)).join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const id = recorder.list(new URLSearchParams()).items[0].id;
-    const summary = recorder.summary(id, new URLSearchParams({ kind: "conversation" }));
+    const id = recorder.queries.list(new URLSearchParams()).items[0].id;
+    const summary = recorder.queries.summary(id, new URLSearchParams({ kind: "conversation" }));
     expect(summary.folders.map(folder => [folder.path, Boolean(folder.working), Boolean(folder.added)])).toEqual([
       ["C:\\work\\orbit", true, false],
       ["C:\\work\\system", false, true],
@@ -306,7 +306,7 @@ describe("recording index", () => {
     ]);
     // Conversation leaves out system records, so the system command opens in All events.
     expect(summary.folders[1].added!.position).toBeNull();
-    const sequence = new Map(recorder.events(id, new URLSearchParams({ kind: "all", limit: "200" })).items.map(event => [event.id, event.sequence]));
+    const sequence = new Map(recorder.queries.events(id, new URLSearchParams({ kind: "all", limit: "200" })).items.map(event => [event.id, event.sequence]));
     expect(sequence.get(summary.folders[2].added!.id)).toBe(6);
   });
 
@@ -315,7 +315,7 @@ describe("recording index", () => {
     const start = Date.parse("2026-09-19T00:00:00Z");
     await writeFile(fixtureData.file, Array.from({ length: 1600 }, (_, index) => fixtureData.record(`Minute ${index}`, { timestamp: new Date(start + index * 60_000).toISOString() })).join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const timeline = recorder.timeline(recorder.list(new URLSearchParams()).items[0].id, new URLSearchParams({ kind: "all" }));
+    const timeline = recorder.queries.timeline(recorder.queries.list(new URLSearchParams()).items[0].id, new URLSearchParams({ kind: "all" }));
     expect(timeline.bucketMs).toBe(600_000);
     expect(timeline.buckets).toHaveLength(160);
     expect(timeline.buckets.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(1600);
@@ -343,26 +343,26 @@ describe("recording index", () => {
       result("toolu_5", denial, "2026-10-17T11:00:00Z", { sessionId: "session-b" }),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const sessions = recorder.list(new URLSearchParams()).items;
+    const sessions = recorder.queries.list(new URLSearchParams()).items;
     const mixed = sessions.find(session => session.title === "clean the install")!, denied = sessions.find(session => session.title === "just a denial")!;
     // Only the failing test counts; the cancellation, the hook stop, and the interruption are not failures.
     expect([mixed.errorCount, denied.errorCount]).toEqual([1, 0]);
     // They are counted apart, and so are the API errors among the errors, of which there are none here.
     expect([mixed.decisionCount, denied.decisionCount, mixed.apiErrorCount]).toEqual([3, 1, 0]);
-    expect(recorder.list(new URLSearchParams({ errors: "1" })).items.map(session => session.title)).toEqual(["clean the install"]);
-    expect(recorder.list(new URLSearchParams({ sort: "errors" })).items.map(session => session.title)).toEqual(["clean the install", "just a denial"]);
-    expect((await recorder.catalog()).errors).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ errors: "1" })).items.map(session => session.title)).toEqual(["clean the install"]);
+    expect(recorder.queries.list(new URLSearchParams({ sort: "errors" })).items.map(session => session.title)).toEqual(["clean the install", "just a denial"]);
+    expect((await recorder.queries.catalog()).errors).toBe(1);
     // The Errors view keeps every stopped tool beside the failure, each knowing which it is; the error constraint on
     // another view does the same.
-    const errors = recorder.events(mixed.id, new URLSearchParams({ kind: "all", errors: "1" }));
+    const errors = recorder.queries.events(mixed.id, new URLSearchParams({ kind: "all", errors: "1" }));
     expect(errors.items.map(event => [event.sequence, event.error, event.decision])).toEqual([[2, false, "cancelled"], [4, false, "blocked"], [6, false, "interrupted"], [8, true, null]]);
-    expect(recorder.events(mixed.id, new URLSearchParams({ kind: "tool", errors: "1" })).total).toBe(4);
-    expect(recorder.events(denied.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.decision)).toEqual(["cancelled"]);
-    expect(recorder.matches(mixed.id, new URLSearchParams({ kind: "all", errors: "1", find: "user" })).items.map(item => item.sequence)).toEqual([2, 6]);
+    expect(recorder.queries.events(mixed.id, new URLSearchParams({ kind: "tool", errors: "1" })).total).toBe(4);
+    expect(recorder.queries.events(denied.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.decision)).toEqual(["cancelled"]);
+    expect(recorder.queries.matches(mixed.id, new URLSearchParams({ kind: "all", errors: "1", find: "user" })).items.map(item => item.sequence)).toEqual([2, 6]);
     // The activity strip's error share counts failures only.
-    const timeline = recorder.timeline(mixed.id, new URLSearchParams({ kind: "all" }));
+    const timeline = recorder.queries.timeline(mixed.id, new URLSearchParams({ kind: "all" }));
     expect(timeline.buckets.map(bucket => [bucket.count, bucket.errors])).toEqual([[9, 1]]);
-    expect(recorder.timeline(mixed.id, new URLSearchParams({ kind: "all", errors: "1" })).buckets.map(bucket => [bucket.count, bucket.errors])).toEqual([[4, 1]]);
+    expect(recorder.queries.timeline(mixed.id, new URLSearchParams({ kind: "all", errors: "1" })).buckets.map(bucket => [bucket.count, bucket.errors])).toEqual([[4, 1]]);
     expect(recorder.db.query<{ error: number; decision: number }, [string]>("SELECT sum(error) AS error, sum(decision) AS decision FROM events WHERE session_id=?").get(mixed.id)).toEqual({ error: 1, decision: 3 });
   });
 
@@ -382,7 +382,7 @@ describe("recording index", () => {
       results("2026-10-17T10:00:03Z", {}, "1 fail"),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const counts = () => { const session = recorder.list(new URLSearchParams()).items[0]; return [session.errorCount, session.apiErrorCount, session.decisionCount]; };
+    const counts = () => { const session = recorder.queries.list(new URLSearchParams()).items[0]; return [session.errorCount, session.apiErrorCount, session.decisionCount]; };
     expect(counts()).toEqual([2, 1, 2]);
     const firstRow = () => recorder.db.query<{ rowid: number }, []>("SELECT rowid FROM events ORDER BY sequence LIMIT 1").get()!.rowid;
     const before = firstRow();
@@ -404,13 +404,13 @@ describe("recording index", () => {
       { type: "tool_use", id: "call-1", name: "Edit", input: { file_path: "src/retry.ts", old_string: "1", new_string: "3" } },
     ], { type: "assistant" }), fixtureData.record([{ type: "tool_result", tool_use_id: "call-1", content: "retryBudget exceeded the default limit", is_error: true }])].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const result = recorder.list(new URLSearchParams({ q: '"default limit" retryBudget', errors: "1", edits: "1", tool: "Edit" }));
+    const result = recorder.queries.list(new URLSearchParams({ q: '"default limit" retryBudget', errors: "1", edits: "1", tool: "Edit" }));
     expect(result.total).toBe(1);
     expect(result.items[0].matchEventId).toBeTruthy();
-    expect(recorder.list(new URLSearchParams({ q: "retryBudget -exceeded" })).total).toBe(0);
-    expect(recorder.list(new URLSearchParams({ q: "-missing" })).total).toBe(1);
-    expect(recorder.list(new URLSearchParams({ q: '" OR * "; DROP TABLE sessions;' })).total).toBe(0);
-    expect(recorder.list(new URLSearchParams()).total).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ q: "retryBudget -exceeded" })).total).toBe(0);
+    expect(recorder.queries.list(new URLSearchParams({ q: "-missing" })).total).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ q: '" OR * "; DROP TABLE sessions;' })).total).toBe(0);
+    expect(recorder.queries.list(new URLSearchParams()).total).toBe(1);
   });
 
   test("builds search snippets from recorded content instead of the index serialization", async () => {
@@ -421,7 +421,7 @@ describe("recording index", () => {
       fixtureData.record([{ type: "tool_result", tool_use_id: "call-7", content: "12 checks passed and retryBudget stayed inside the configured ceiling" }]),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const snippet = recorder.list(new URLSearchParams({ q: "retryBudget" })).items[0].snippet!;
+    const snippet = recorder.queries.list(new URLSearchParams({ q: "retryBudget" })).items[0].snippet!;
     expect(snippet.startsWith("type:")).toBe(false);
     expect(snippet).not.toContain("tool_use_id");
     expect(snippet).toContain("retryBudget");
@@ -436,7 +436,7 @@ describe("recording index", () => {
       fixtureData.record([{ type: "tool_result", tool_use_id: "call-3", content: "The sign in screen still asks for the workspace twice" }]),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const snippet = recorder.list(new URLSearchParams({ q: "sign-in" })).items[0].snippet!;
+    const snippet = recorder.queries.list(new URLSearchParams({ q: "sign-in" })).items[0].snippet!;
     expect(snippet.startsWith("type:")).toBe(false);
     expect(snippet).not.toContain("tool_use_id");
     expect(snippet).toContain("The sign in screen still asks for the workspace twice");
@@ -461,32 +461,32 @@ describe("recording index", () => {
       marrowbell: ["system", "system", "all"],
     } as const;
     for (const [term, [category, role, kind]] of Object.entries(expected)) {
-      const hit = recorder.list(new URLSearchParams({ q: term })).items[0];
+      const hit = recorder.queries.list(new URLSearchParams({ q: term })).items[0];
       expect(hit.matchCategory).toBe(category);
       expect(hit.matchRole).toBe(role);
       expect(matchReplayKind(hit)).toBe(kind);
-      const page = recorder.events(hit.id, new URLSearchParams({ kind, anchor: hit.matchEventId!, context: "1" }));
+      const page = recorder.queries.events(hit.id, new URLSearchParams({ kind, anchor: hit.matchEventId!, context: "1" }));
       expect(page.items.map(event => event.id)).toContain(hit.matchEventId!);
     }
-    expect(recorder.list(new URLSearchParams()).items[0].matchCategory).toBeUndefined();
+    expect(recorder.queries.list(new URLSearchParams()).items[0].matchCategory).toBeUndefined();
   });
 
   test("reconciles truncation, same-size replacements and deletion", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("old") + "\n");
     const recorder = await fixtureData.open();
-    const id = recorder.list(new URLSearchParams()).items[0].id;
+    const id = recorder.queries.list(new URLSearchParams()).items[0].id;
     await writeFile(fixtureData.file, fixtureData.record("new") + "\n");
     await utimes(fixtureData.file, new Date(), new Date(Date.now() + 1000));
     await recorder.scan();
-    expect(recorder.getSession(id)?.title).toBe("new");
-    expect(recorder.list(new URLSearchParams({ q: "old" })).total).toBe(0);
+    expect(recorder.queries.getSession(id)?.title).toBe("new");
+    expect(recorder.queries.list(new URLSearchParams({ q: "old" })).total).toBe(0);
     await writeFile(fixtureData.file, "");
     await recorder.scan();
-    expect(recorder.events(id, new URLSearchParams()).total).toBe(0);
+    expect(recorder.queries.events(id, new URLSearchParams()).total).toBe(0);
     await rm(fixtureData.file);
     await recorder.scan();
-    expect(recorder.list(new URLSearchParams()).total).toBe(0);
+    expect(recorder.queries.list(new URLSearchParams()).total).toBe(0);
   });
 
   test("keeps a recording's id, bookmark, and cursor when Claude Code moves it to another project folder", async () => {
@@ -497,9 +497,9 @@ describe("recording index", () => {
     await mkdir(join(fixtureData.project, "session-a", "subagents"), { recursive: true });
     await writeFile(join(fixtureData.project, "session-a", "subagents", "agent-a1.jsonl"), fixtureData.record("Agent task", { agentId: "a1" }) + "\n");
     const recorder = await fixtureData.open();
-    const session = recorder.list(new URLSearchParams()).items[0];
-    const agent = recorder.subagents(session.id)[0];
-    recorder.bookmark(session.id, true);
+    const session = recorder.queries.list(new URLSearchParams()).items[0];
+    const agent = recorder.queries.subagents(session.id)[0];
+    recorder.queries.bookmark(session.id, true);
     // A re-index rewrites every event of a recording, so a marked column shows whether the stored records survived.
     recorder.db.query("UPDATE events SET cwd='/synthetic/kept' WHERE session_id=?").run(session.id);
     const kept = () => recorder.db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM events WHERE session_id=? AND cwd='/synthetic/kept'").get(session.id)!.n;
@@ -511,22 +511,22 @@ describe("recording index", () => {
     await appendFile(join(worktree, "session-a.jsonl"), relocated(worktreeCwd) + "\n" + fixtureData.record("Continue in the worktree", { cwd: worktreeCwd }) + "\n");
     await recorder.scan();
     expect(rows()).toBe(2);
-    expect(recorder.list(new URLSearchParams()).items.map(item => item.id)).toEqual([session.id]);
-    expect(recorder.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 4, source: join("projects", "test-project--claude-worktrees-feature", "session-a.jsonl") });
+    expect(recorder.queries.list(new URLSearchParams()).items.map(item => item.id)).toEqual([session.id]);
+    expect(recorder.queries.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 4, source: join("projects", "test-project--claude-worktrees-feature", "session-a.jsonl") });
     expect(kept()).toBe(2);
-    const events = recorder.events(session.id, new URLSearchParams("kind=all")).items;
+    const events = recorder.queries.events(session.id, new URLSearchParams("kind=all")).items;
     expect(events.map(event => event.cwd)).toEqual(["C:\\work\\orbit", "C:\\work\\orbit", worktreeCwd, worktreeCwd]);
     expect(events[2].type).toBe("relocated");
-    expect(recorder.subagents(session.id).map(item => item.id)).toEqual([agent.id]);
-    expect((await recorder.catalog()).bookmarked).toBe(1);
+    expect(recorder.queries.subagents(session.id).map(item => item.id)).toEqual([agent.id]);
+    expect((await recorder.queries.catalog()).bookmarked).toBe(1);
     await rename(join(worktree, "session-a.jsonl"), fixtureData.file);
     await rename(join(worktree, "session-a"), join(fixtureData.project, "session-a"));
     await appendFile(fixtureData.file, relocated("C:\\work\\orbit") + "\n");
     await recorder.scan();
     expect(rows()).toBe(2);
-    expect(recorder.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 5, source: join("projects", "test-project", "session-a.jsonl") });
+    expect(recorder.queries.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 5, source: join("projects", "test-project", "session-a.jsonl") });
     expect(kept()).toBe(2);
-    expect(recorder.subagents(session.id).map(item => item.id)).toEqual([agent.id]);
+    expect(recorder.queries.subagents(session.id).map(item => item.id)).toEqual([agent.id]);
     // A walk that could not read every directory deletes nothing, but still follows a move once the old path is
     // confirmed gone, so a locked folder elsewhere does not split a worktree session in two.
     await writeFile(join(fixtureData.project, "session-b.jsonl"), fixtureData.record("Another session", { sessionId: "session-b" }) + "\n");
@@ -542,7 +542,7 @@ describe("recording index", () => {
       ? Promise.reject(Object.assign(new Error("locked"), { code: "EACCES" })) : readDirectory(path, options as never)) as typeof fs.readdir);
     try { await recorder.scan(); } finally { failing.mockRestore(); }
     expect(rows()).toBe(3);
-    expect(recorder.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 5, source: join("projects", "test-project--claude-worktrees-feature", "session-a.jsonl") });
+    expect(recorder.queries.getSession(session.id)).toMatchObject({ bookmarked: true, eventCount: 5, source: join("projects", "test-project--claude-worktrees-feature", "session-a.jsonl") });
     expect(kept()).toBe(2);
     await recorder.scan();
     expect(rows()).toBe(2);
@@ -555,15 +555,15 @@ describe("recording index", () => {
     await writeFile(fixtureData.file, fixtureData.record("Main session with a prefix long enough to fingerprint " + "a".repeat(300)) + "\n");
     await writeFile(join(second, "session-a.jsonl"), fixtureData.record("Clone session with a prefix long enough to fingerprint " + "b".repeat(300)) + "\n");
     const recorder = await fixtureData.open();
-    const clone = recorder.list(new URLSearchParams({ q: "Clone" })).items[0];
-    recorder.bookmark(clone.id, true);
+    const clone = recorder.queries.list(new URLSearchParams({ q: "Clone" })).items[0];
+    recorder.queries.bookmark(clone.id, true);
     const third = join(fixtureData.data, "projects", "test-moved");
     await mkdir(third);
     await rename(join(second, "session-a.jsonl"), join(third, "session-a.jsonl"));
     await rm(fixtureData.file);
     await recorder.scan();
-    expect(recorder.list(new URLSearchParams()).items.map(item => item.id)).toEqual([clone.id]);
-    expect(recorder.getSession(clone.id)).toMatchObject({ bookmarked: true, title: expect.stringContaining("Clone session") });
+    expect(recorder.queries.list(new URLSearchParams()).items.map(item => item.id)).toEqual([clone.id]);
+    expect(recorder.queries.getSession(clone.id)).toMatchObject({ bookmarked: true, title: expect.stringContaining("Clone session") });
   });
 
   test("indexes a file afresh when the deleted copies that shared its path match none of its content", async () => {
@@ -573,20 +573,20 @@ describe("recording index", () => {
     await writeFile(fixtureData.file, fixtureData.record("Main session with a prefix long enough to fingerprint " + "a".repeat(300)) + "\n");
     await writeFile(join(second, "session-a.jsonl"), fixtureData.record("Clone session with a prefix long enough to fingerprint " + "b".repeat(300)) + "\n");
     const recorder = await fixtureData.open();
-    const copies = recorder.list(new URLSearchParams()).items.map(item => item.id);
+    const copies = recorder.queries.list(new URLSearchParams()).items.map(item => item.id);
     expect(copies).toHaveLength(2);
-    for (const id of copies) recorder.bookmark(id, true);
+    for (const id of copies) recorder.queries.bookmark(id, true);
     const third = join(fixtureData.data, "projects", "test-other");
     await mkdir(third);
     await writeFile(join(third, "session-a.jsonl"), fixtureData.record("Unrelated session with a prefix long enough to fingerprint " + "c".repeat(300)) + "\n");
     await rm(fixtureData.file);
     await rm(join(second, "session-a.jsonl"));
     await recorder.scan();
-    const [session, ...rest] = recorder.list(new URLSearchParams()).items;
+    const [session, ...rest] = recorder.queries.list(new URLSearchParams()).items;
     expect(rest).toHaveLength(0);
     expect(copies).not.toContain(session.id);
     expect(session).toMatchObject({ bookmarked: false, title: expect.stringContaining("Unrelated session") });
-    expect((await recorder.catalog()).bookmarked).toBe(0);
+    expect((await recorder.queries.catalog()).bookmarked).toBe(0);
   });
 
   test("groups cloned folders reversibly, retaining cwd and distinct identical session IDs", async () => {
@@ -596,17 +596,17 @@ describe("recording index", () => {
     await mkdir(second);
     await writeFile(join(second, "session-a.jsonl"), fixtureData.record("Worktree session", { cwd: "C:\\work\\orbit-feature" }) + "\n");
     const recorder = await fixtureData.open();
-    const sessions = recorder.list(new URLSearchParams()).items;
+    const sessions = recorder.queries.list(new URLSearchParams()).items;
     expect(sessions[0].id).not.toBe(sessions[1].id);
-    const group = recorder.saveGroup({ name: "Orbit together", paths: sessions.map(session => session.cwd) });
-    expect(recorder.list(new URLSearchParams({ workspace: group.id })).total).toBe(2);
-    expect(recorder.list(new URLSearchParams({ workspace: group.id, cwd: sessions[0].cwd })).total).toBe(1);
-    recorder.bookmark(sessions[0].id, true);
-    expect(recorder.list(new URLSearchParams({ bookmarked: "1" })).total).toBe(1);
-    expect(() => recorder.saveGroup({ name: "Conflict", paths: sessions.map(session => session.cwd) })).toThrow();
-    recorder.deleteGroup(group.id);
-    expect((await recorder.catalog()).workspaces.length).toBe(2);
-    expect(recorder.getSession(sessions[0].id)?.cwd).toBe(sessions[0].cwd);
+    const group = recorder.queries.saveGroup({ name: "Orbit together", paths: sessions.map(session => session.cwd) });
+    expect(recorder.queries.list(new URLSearchParams({ workspace: group.id })).total).toBe(2);
+    expect(recorder.queries.list(new URLSearchParams({ workspace: group.id, cwd: sessions[0].cwd })).total).toBe(1);
+    recorder.queries.bookmark(sessions[0].id, true);
+    expect(recorder.queries.list(new URLSearchParams({ bookmarked: "1" })).total).toBe(1);
+    expect(() => recorder.queries.saveGroup({ name: "Conflict", paths: sessions.map(session => session.cwd) })).toThrow();
+    recorder.queries.deleteGroup(group.id);
+    expect((await recorder.queries.catalog()).workspaces.length).toBe(2);
+    expect(recorder.queries.getSession(sessions[0].id)?.cwd).toBe(sessions[0].cwd);
   });
 
   test("re-creates an ungrouped group under its original id, as Undo does", async () => {
@@ -616,16 +616,16 @@ describe("recording index", () => {
     await mkdir(second);
     await writeFile(join(second, "session-a.jsonl"), fixtureData.record("Worktree session", { cwd: "C:\\work\\orbit-feature" }) + "\n");
     const recorder = await fixtureData.open();
-    const paths = recorder.list(new URLSearchParams()).items.map(session => session.cwd);
-    const group = recorder.saveGroup({ name: "Orbit together", paths });
-    recorder.deleteGroup(group.id);
-    expect(recorder.groups()).toEqual([]);
-    expect(recorder.saveGroup({ id: group.id, name: group.name, paths: group.paths })).toEqual(group);
-    expect(recorder.groups()).toEqual([{ ...group, paths: [...group.paths].sort() }]);
-    expect(recorder.list(new URLSearchParams({ workspace: group.id })).total).toBe(2);
-    recorder.deleteGroup(group.id);
-    recorder.saveGroup({ name: "Taken", paths });
-    expect(() => recorder.saveGroup({ id: group.id, name: group.name, paths: group.paths })).toThrow("already belongs to another group");
+    const paths = recorder.queries.list(new URLSearchParams()).items.map(session => session.cwd);
+    const group = recorder.queries.saveGroup({ name: "Orbit together", paths });
+    recorder.queries.deleteGroup(group.id);
+    expect(recorder.queries.groups()).toEqual([]);
+    expect(recorder.queries.saveGroup({ id: group.id, name: group.name, paths: group.paths })).toEqual(group);
+    expect(recorder.queries.groups()).toEqual([{ ...group, paths: [...group.paths].sort() }]);
+    expect(recorder.queries.list(new URLSearchParams({ workspace: group.id })).total).toBe(2);
+    recorder.queries.deleteGroup(group.id);
+    recorder.queries.saveGroup({ name: "Taken", paths });
+    expect(() => recorder.queries.saveGroup({ id: group.id, name: group.name, paths: group.paths })).toThrow("already belongs to another group");
   });
 
   test("refuses state inside the source directory", async () => {
@@ -643,12 +643,12 @@ describe("recording index", () => {
     await writeFile(fixtureData.file, fixtureData.record("Main recording") + "\n");
     await writeFile(join(fixtureData.project, "agent-worker.jsonl"), fixtureData.record("Delegated work") + "\n");
     const recorder = await fixtureData.open();
-    expect(recorder.list(new URLSearchParams()).total).toBe(1);
-    expect(recorder.list(new URLSearchParams({ agents: "1" })).total).toBe(2);
-    expect(recorder.list(new URLSearchParams({ agents: "only" })).total).toBe(1);
-    expect(recorder.list(new URLSearchParams({ agents: "0" })).total).toBe(1);
-    expect(recorder.list(new URLSearchParams({ q: "Delegated" })).total).toBe(0);
-    expect(recorder.list(new URLSearchParams({ q: "Delegated", agents: "1" })).items[0].isAgent).toBe(true);
+    expect(recorder.queries.list(new URLSearchParams()).total).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ agents: "1" })).total).toBe(2);
+    expect(recorder.queries.list(new URLSearchParams({ agents: "only" })).total).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ agents: "0" })).total).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ q: "Delegated" })).total).toBe(0);
+    expect(recorder.queries.list(new URLSearchParams({ q: "Delegated", agents: "1" })).items[0].isAgent).toBe(true);
   });
 
   test("links nested and legacy subagents without matching unrelated projects or parents", async () => {
@@ -663,21 +663,21 @@ describe("recording index", () => {
     await writeFile(join(unrelated, "agent-unrelated.jsonl"), setup.record("Different parent") + "\n");
     await writeFile(join(otherProject, "agent-copy.jsonl"), setup.record("Different project") + "\n");
     const recorder = await setup.open();
-    const parent = recorder.list(new URLSearchParams()).items[0];
-    const children = recorder.subagents(parent.id);
+    const parent = recorder.queries.list(new URLSearchParams()).items[0];
+    const children = recorder.queries.subagents(parent.id);
     expect(children.map(agent => agent.title).sort()).toEqual(["Legacy task", "Nested task"]);
-    expect(recorder.subagents(children[0].id)).toEqual([]);
-    expect(recorder.subagents("missing")).toEqual([]);
-    expect(recorder.getSession(children[0].id)?.isAgent).toBe(true);
-    recorder.bookmark(children[0].id, true);
-    const catalog = await recorder.catalog();
+    expect(recorder.queries.subagents(children[0].id)).toEqual([]);
+    expect(recorder.queries.subagents("missing")).toEqual([]);
+    expect(recorder.queries.getSession(children[0].id)?.isAgent).toBe(true);
+    recorder.queries.bookmark(children[0].id, true);
+    const catalog = await recorder.queries.catalog();
     expect(catalog.mainSessions).toBe(1);
     expect(catalog.mainBookmarked).toBe(0);
     expect(catalog.workspaces.find(workspace => workspace.id === "C:\\work\\isolated-agent")?.mainCount).toBe(0);
-    const group = recorder.saveGroup({ name: "With agent worktree", paths: [parent.cwd, "C:\\work\\isolated-agent"] });
-    expect((await recorder.catalog()).workspaces.find(workspace => workspace.id === group.id)).toMatchObject({ count: 5, mainCount: 1 });
-    expect(recorder.list(new URLSearchParams({ workspace: group.id })).total).toBe(1);
-    expect(recorder.list(new URLSearchParams({ workspace: group.id, agents: "1" })).total).toBe(5);
+    const group = recorder.queries.saveGroup({ name: "With agent worktree", paths: [parent.cwd, "C:\\work\\isolated-agent"] });
+    expect((await recorder.queries.catalog()).workspaces.find(workspace => workspace.id === group.id)).toMatchObject({ count: 5, mainCount: 1 });
+    expect(recorder.queries.list(new URLSearchParams({ workspace: group.id })).total).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ workspace: group.id, agents: "1" })).total).toBe(5);
   });
 
   test("uses recorded session IDs and generated titles, not injected context", async () => {
@@ -689,12 +689,12 @@ describe("recording index", () => {
       "", "",
     ].join("\n"));
     const recorder = await fixtureData.open();
-    const session = recorder.list(new URLSearchParams()).items[0];
+    const session = recorder.queries.list(new URLSearchParams()).items[0];
     expect(session.title).toBe("Generated session title");
     expect(session.sessionId).toBe("actual-session-id");
     expect(session.messageCount).toBe(1);
-    expect((await recorder.catalog()).warnings).toBe(0);
-    expect(recorder.events(session.id, new URLSearchParams({ kind: "conversation" })).total).toBe(1);
+    expect((await recorder.queries.catalog()).warnings).toBe(0);
+    expect(recorder.queries.events(session.id, new URLSearchParams({ kind: "conversation" })).total).toBe(1);
   });
 
   test("indexes legitimate data fields and pairs results outside the visible page", async () => {
@@ -705,10 +705,10 @@ describe("recording index", () => {
       fixtureData.record([{ type: "tool_result", tool_use_id: "call", content: "Finished" }]),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const session = recorder.list(new URLSearchParams({ q: "payloadNeedle" })).items[0];
+    const session = recorder.queries.list(new URLSearchParams({ q: "payloadNeedle" })).items[0];
     expect(session).toBeDefined();
-    expect(recorder.events(session.id, new URLSearchParams({ limit: "1" })).items).toHaveLength(1);
-    expect(recorder.results(session.id, ["call"]).call.content).toBe("Finished");
+    expect(recorder.queries.events(session.id, new URLSearchParams({ limit: "1" })).items).toHaveLength(1);
+    expect(recorder.queries.results(session.id, ["call"]).call.content).toBe("Finished");
     const plan = recorder.db.query<{ detail: string }, []>("EXPLAIN QUERY PLAN SELECT rowid FROM tool_results WHERE event_row=1").all();
     expect(plan.some(row => row.detail.includes("tool_results_event"))).toBe(true);
   });
@@ -731,9 +731,9 @@ describe("recording index", () => {
       fixtureData.record([{ type: "tool_result", tool_use_id: "unrecorded", content: "Orphaned output" }]),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const session = recorder.list(new URLSearchParams()).items[0];
-    expect(recorder.events(session.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.sequence)).toEqual([1]);
-    const calls = recorder.calls(session.id, ["probe", "write", "wide", "unrecorded", "probe"]);
+    const session = recorder.queries.list(new URLSearchParams()).items[0];
+    expect(recorder.queries.events(session.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.sequence)).toEqual([1]);
+    const calls = recorder.queries.calls(session.id, ["probe", "write", "wide", "unrecorded", "probe"]);
     expect(Object.keys(calls).sort()).toEqual(["probe", "wide", "write"]);
     expect(Object.keys(calls.wide.input!)).toEqual(Array.from({ length: 32 }, (_, index) => `field${index}`));
     expect(calls.probe).toEqual({ type: "tool_use", id: "probe", name: "Bash", input: { command: "bun run probe --synthetic" } });
@@ -742,19 +742,19 @@ describe("recording index", () => {
     expect((calls.write.input!.content as string).length).toBe(2000);
     expect((calls.write.input!.content as string).endsWith("…")).toBe(true);
     expect(calls.write.input!.options).toBeUndefined();
-    expect(recorder.calls(session.id, [])).toEqual({});
+    expect(recorder.queries.calls(session.id, [])).toEqual({});
   });
 
   test("recovers an interrupted import from stored records without duplicates", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("Recorded once") + "\n");
     const first = await fixtureData.open();
-    const session = first.list(new URLSearchParams()).items[0];
+    const session = first.queries.list(new URLSearchParams()).items[0];
     first.db.query("UPDATE sessions SET events=0, cursor=0 WHERE id=?").run(session.id);
     await first.close();
     const recovered = await fixtureData.open();
-    expect(recovered.getSession(session.id)?.eventCount).toBe(1);
-    expect(recovered.events(session.id, new URLSearchParams()).total).toBe(1);
+    expect(recovered.queries.getSession(session.id)?.eventCount).toBe(1);
+    expect(recovered.queries.events(session.id, new URLSearchParams()).total).toBe(1);
   });
 
   test("reindexes a larger replacement that shares the old prefix", async () => {
@@ -764,9 +764,9 @@ describe("recording index", () => {
     const recorder = await fixtureData.open();
     await writeFile(fixtureData.file, beginning + fixtureData.record("Replacement record with a significantly longer body") + "\n");
     await recorder.scan();
-    expect(recorder.list(new URLSearchParams({ q: "RemoveThisRecord" })).total).toBe(0);
-    expect(recorder.list(new URLSearchParams({ q: "Replacement" })).total).toBe(1);
-    expect(recorder.list(new URLSearchParams()).items[0].eventCount).toBe(2);
+    expect(recorder.queries.list(new URLSearchParams({ q: "RemoveThisRecord" })).total).toBe(0);
+    expect(recorder.queries.list(new URLSearchParams({ q: "Replacement" })).total).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams()).items[0].eventCount).toBe(2);
   });
 
   test("resolves evidence-backed nested session families without crossing projects", async () => {
@@ -796,9 +796,9 @@ describe("recording index", () => {
     await writeFile(join(otherAgents, "agent-cross.jsonl"), event("cross", "Cross project", { type: "user" }) + "\n");
     await writeFile(join(orphanAgents, "agent-orphan.jsonl"), event("orphan", "Orphan title", { type: "user" }) + "\n");
     const recorder = await fixtureData.open();
-    const sessions = recorder.list(new URLSearchParams({ agents: "1", limit: "50" })).items;
+    const sessions = recorder.queries.list(new URLSearchParams({ agents: "1", limit: "50" })).items;
     const byTitle = new Map(sessions.map(session => [session.title, session]));
-    const family = recorder.family(recorder.list(new URLSearchParams()).items.find(session => session.title.startsWith("Session root"))!.id);
+    const family = recorder.queries.family(recorder.queries.list(new URLSearchParams()).items.find(session => session.title.startsWith("Session root"))!.id);
     const child = byTitle.get("Child title")!, grandchild = byTitle.get("Grandchild title")!, legacy = byTitle.get("Legacy title")!, unlinked = byTitle.get("Unlinked title")!;
     expect(family.rootId).toBe(family.members[0].session.id);
     expect(family.launches).toEqual({ "launch-child": child.id });
@@ -811,9 +811,9 @@ describe("recording index", () => {
     expect(family.members.find(member => member.session.id === grandchild.id)).toMatchObject({ parentId: child.id, spawnToolId: "launch-grandchild", label: "Validate nested work", depth: 2 });
     expect(family.members.find(member => member.session.id === legacy.id)).toMatchObject({ parentId: null, spawnToolId: null, depth: null });
     expect(family.members.find(member => member.session.id === unlinked.id)).toMatchObject({ parentId: null, spawnToolId: null, depth: null });
-    expect(recorder.family(child.id).launches).toEqual({ "launch-grandchild": grandchild.id });
+    expect(recorder.queries.family(child.id).launches).toEqual({ "launch-grandchild": grandchild.id });
     const orphan = byTitle.get("Orphan title")!;
-    expect(recorder.family(orphan.id)).toMatchObject({ rootId: null, launches: {}, members: [{ session: { id: orphan.id }, parentId: null, spawnEventId: null, spawnToolId: null, depth: null }] });
+    expect(recorder.queries.family(orphan.id)).toMatchObject({ rootId: null, launches: {}, members: [{ session: { id: orphan.id }, parentId: null, spawnEventId: null, spawnToolId: null, depth: null }] });
   });
 
   test("refreshes family launches from newly indexed exact tool results", async () => {
@@ -824,12 +824,12 @@ describe("recording index", () => {
     await writeFile(fixtureData.file, event([{ type: "tool_use", id: "launch", name: "Agent", input: { description: "Refresh child" } }]) + "\n");
     await writeFile(join(agents, "agent-refresh.jsonl"), fixtureData.record("Refresh child", { type: "user", sessionId: "refresh" }) + "\n");
     const recorder = await fixtureData.open();
-    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
-    expect(recorder.family(root.id).launches).toEqual({});
+    const root = recorder.queries.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    expect(recorder.queries.family(root.id).launches).toEqual({});
     await appendFile(fixtureData.file, event([{ type: "tool_result", tool_use_id: "launch", content: "agentId: refresh" }]) + "\n");
     await recorder.scan();
-    const child = recorder.list(new URLSearchParams({ agents: "1" })).items[0];
-    expect(recorder.family(root.id).launches).toEqual({ launch: child.id });
+    const child = recorder.queries.list(new URLSearchParams({ agents: "1" })).items[0];
+    expect(recorder.queries.family(root.id).launches).toEqual({ launch: child.id });
   });
 
   test("requires a single exact launch identifier before linking or exposing navigation", async () => {
@@ -851,8 +851,8 @@ describe("recording index", () => {
       await writeFile(join(agents, `agent-${name}.jsonl`), fixtureData.record(name, { type: "user", sessionId: name }) + "\n");
     }
     const recorder = await fixtureData.open();
-    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
-    const family = recorder.family(root.id);
+    const root = recorder.queries.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    const family = recorder.queries.family(root.id);
     expect(family.launches).toEqual({});
     for (const member of family.members.filter(member => member.session.isAgent)) {
       expect(member).toMatchObject({ parentId: null, spawnEventId: null, spawnToolId: null, depth: null });
@@ -863,7 +863,7 @@ describe("recording index", () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("Root") + "\n");
     const recorder = await fixtureData.open();
-    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    const root = recorder.queries.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
     const agents = join(fixtureData.project, "session-a", "subagents");
     let requestedId = "";
     for (let index = 0; index <= 500; index++) {
@@ -872,7 +872,7 @@ describe("recording index", () => {
         .run(id, `limit-${index}`, join(agents, `agent-limit-${index}.jsonl`), "C:\\work\\orbit", `Limited ${index}`, "2026-09-19T12:00:00Z", "2026-09-19T12:00:00Z");
       if (index === 500) requestedId = id;
     }
-    const family = recorder.family(requestedId);
+    const family = recorder.queries.family(requestedId);
     expect(family).toMatchObject({ rootId: root.id, limited: true });
     expect(family.members).toHaveLength(501);
     expect(family.launches).toEqual({});
@@ -898,8 +898,8 @@ describe("recording index", () => {
       await writeFile(join(agents, `agent-${name}.jsonl`), fixtureData.record(name, { sessionId: name }) + "\n");
     }
     const recorder = await fixtureData.open();
-    const root = recorder.list(new URLSearchParams()).items[0];
-    const family = recorder.family(root.id);
+    const root = recorder.queries.list(new URLSearchParams()).items[0];
+    const family = recorder.queries.family(root.id);
     const childId = (title: string) => family.members.find(member => member.session.title === title)!.session.id;
     expect(family.launches).toEqual({ structured: childId("structured-child"), "text-fallback": childId("text-child") });
     for (const title of ["owner-child", "conflict-child", "other-child", "prose-child"]) {
@@ -920,7 +920,7 @@ describe("recording index", () => {
       ...launch("missing", "missing-child"),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const root = recorder.list(new URLSearchParams()).items[0];
+    const root = recorder.queries.list(new URLSearchParams()).items[0];
     const agents = join(fixtureData.project, "session-a", "subagents");
     const insert = recorder.db.query("INSERT INTO sessions(id,session_id,source,cwd,title,started,updated,agent) VALUES (?,?,?,?,?,?,?,1)");
     for (let index = 0; index <= 500; index++) {
@@ -930,7 +930,7 @@ describe("recording index", () => {
     insert.run(lateId, "late-child", join(agents, "agent-late-child.jsonl"), "C:\\work\\orbit", "Later child", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
     insert.run("e".repeat(24), "duplicate", join(agents, "nested", "subagents", "agent-limit-2.jsonl"), "C:\\work\\orbit", "Duplicate outside window", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
     insert.run("d".repeat(24), "foreign-child", join(fixtureData.data, "projects", "other", "session-a", "subagents", "agent-foreign-child.jsonl"), "C:\\work\\other", "Other project", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
-    const family = recorder.family(root.id);
+    const family = recorder.queries.family(root.id);
     expect(family.limited).toBe(true);
     expect(family.members).toHaveLength(501);
     expect(family.launches).toEqual({ inside: (1000).toString(16).padStart(24, "0"), outside: lateId });
@@ -951,14 +951,14 @@ describe("recording index", () => {
       fixtureData.record([{ type: "tool_result", tool_use_id: "self", content: "agentId: viewed" }], { sessionId: "viewed" }),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const viewed = recorder.list(new URLSearchParams({ agents: "only" })).items[0];
+    const viewed = recorder.queries.list(new URLSearchParams({ agents: "only" })).items[0];
     const insert = recorder.db.query("INSERT INTO sessions(id,session_id,source,title,started,updated,agent) VALUES (?,?,?,?,?,?,1)");
     for (let index = 0; index <= 500; index++) {
       insert.run((1000 + index).toString(16).padStart(24, "0"), `filler-${index}`, join(agents, `agent-filler-${index}.jsonl`), "Filler", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
     }
     const targetId = "f".repeat(24);
     insert.run(targetId, "direct-child", join(agents, "agent-direct-child.jsonl"), "Direct target", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z");
-    const family = recorder.family(viewed.id);
+    const family = recorder.queries.family(viewed.id);
     expect(family.limited).toBe(true);
     expect(family.members).toHaveLength(501);
     expect(family.launches).toEqual({ direct: targetId });
@@ -981,8 +981,8 @@ describe("recording index", () => {
       event("two", [{ type: "tool_result", tool_use_id: "to-one", content: "agent_id: one" }]),
     ].join("\n") + "\n");
     const recorder = await fixtureData.open();
-    const root = recorder.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
-    const family = recorder.family(root.id);
+    const root = recorder.queries.list(new URLSearchParams()).items.find(session => !session.isAgent)!;
+    const family = recorder.queries.family(root.id);
     expect(family.members.filter(member => member.session.isAgent)).toEqual(expect.arrayContaining([
       expect.objectContaining({ parentId: null, spawnEventId: null, spawnToolId: null, depth: null }),
       expect.objectContaining({ parentId: null, spawnEventId: null, spawnToolId: null, depth: null }),

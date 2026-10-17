@@ -23,6 +23,7 @@ function localHostname(hostname: string): boolean {
 
 export function createHandler(options: HttpOptions): (request: Request) => Promise<Response> {
   const { recorder } = options;
+  const { queries } = recorder;
   const webDir = resolve(options.webDir || join(import.meta.dir, "../../dist"));
   let revision = 0;
 
@@ -47,11 +48,11 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
       return object(JSON.parse(text));
     };
     try {
-      if (request.method === "GET" && url.pathname === "/api/catalog") return json(await recorder.catalog());
-      if (request.method === "GET" && url.pathname === "/api/sessions") return json(recorder.list(url.searchParams));
+      if (request.method === "GET" && url.pathname === "/api/catalog") return json(await queries.catalog());
+      if (request.method === "GET" && url.pathname === "/api/sessions") return json(queries.list(url.searchParams));
       if (request.method === "POST" && url.pathname === "/api/refresh") {
         await recorder.scan();
-        return json(await recorder.catalog());
+        return json(await queries.catalog());
       }
       if (request.method === "GET" && url.pathname === "/api/live") {
         let release = () => {};
@@ -106,30 +107,30 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
         });
         return new Response(stream, { headers: { ...security, "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no" } });
       }
-      if (request.method === "POST" && url.pathname === "/api/groups") return json(recorder.saveGroup(await body()), 201);
+      if (request.method === "POST" && url.pathname === "/api/groups") return json(queries.saveGroup(await body()), 201);
       const groupRoute = url.pathname.match(/^\/api\/groups\/([\w-]+)$/);
-      if (groupRoute && request.method === "DELETE") { recorder.deleteGroup(groupRoute[1]); return json({ ok: true }); }
+      if (groupRoute && request.method === "DELETE") { queries.deleteGroup(groupRoute[1]); return json({ ok: true }); }
       const route = url.pathname.match(/^\/api\/sessions\/([a-f0-9]{24})(?:\/(events|matches|timeline|summary|bookmark|export|subagents|family))?$/);
       if (route) {
-        const session = recorder.getSession(route[1]);
+        const session = queries.getSession(route[1]);
         if (!session) return json({ error: "This recording is no longer available." }, 404);
         if (request.method === "GET" && !route[2]) return json(session);
-        if (request.method === "GET" && route[2] === "subagents") return json(recorder.subagents(session.id));
-        if (request.method === "GET" && route[2] === "family") return json(recorder.family(session.id));
-        if (request.method === "GET" && route[2] === "timeline") return json(recorder.timeline(session.id, url.searchParams));
-        if (request.method === "GET" && route[2] === "matches") return json(recorder.matches(session.id, url.searchParams));
-        if (request.method === "GET" && route[2] === "summary") return json(recorder.summary(session.id, url.searchParams));
+        if (request.method === "GET" && route[2] === "subagents") return json(queries.subagents(session.id));
+        if (request.method === "GET" && route[2] === "family") return json(queries.family(session.id));
+        if (request.method === "GET" && route[2] === "timeline") return json(queries.timeline(session.id, url.searchParams));
+        if (request.method === "GET" && route[2] === "matches") return json(queries.matches(session.id, url.searchParams));
+        if (request.method === "GET" && route[2] === "summary") return json(queries.summary(session.id, url.searchParams));
         if (request.method === "GET" && route[2] === "events") {
-          const page = recorder.events(session.id, url.searchParams);
+          const page = queries.events(session.id, url.searchParams);
           const toolIds = page.items.flatMap(event => event.blocks.filter(block => block.type === "tool_use").map(block => block.id || ""));
           const resultIds = page.items.flatMap(event => event.blocks.filter(block => block.type === "tool_result").map(block => block.tool_use_id || ""));
-          return json({ ...page, results: recorder.results(session.id, toolIds), calls: recorder.calls(session.id, resultIds) });
+          return json({ ...page, results: queries.results(session.id, toolIds), calls: queries.calls(session.id, resultIds) });
         }
         if (request.method === "PUT" && route[2] === "bookmark") {
           const value = await body();
           if (typeof value.bookmarked !== "boolean") return json({ error: "bookmarked must be a boolean" }, 400);
-          recorder.bookmark(session.id, value.bookmarked);
-          return json(recorder.getSession(session.id));
+          queries.bookmark(session.id, value.bookmarked);
+          return json(queries.getSession(session.id));
         }
         if (request.method === "GET" && route[2] === "export") {
           const rows = recorder.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? ORDER BY sequence").iterate(session.id);

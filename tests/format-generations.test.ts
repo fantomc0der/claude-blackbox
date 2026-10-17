@@ -28,17 +28,17 @@ async function fixture() {
 
 /** What the index shows of one generation's recording. */
 function inspect(recorder: Recorder, fixture: FormatFixture) {
-  const session = recorder.list(new URLSearchParams()).items.find(item => item.sessionId === fixture.sessionId)!;
-  const events = (query: Record<string, string>) => recorder.events(session.id, new URLSearchParams({ limit: "200", ...query }));
+  const session = recorder.queries.list(new URLSearchParams()).items.find(item => item.sessionId === fixture.sessionId)!;
+  const events = (query: Record<string, string>) => recorder.queries.events(session.id, new URLSearchParams({ limit: "200", ...query }));
   const all = events({ kind: "all" });
   const find = (term: string, kind = "all") => {
-    const found = recorder.matches(session.id, new URLSearchParams({ kind, find: term }));
+    const found = recorder.queries.matches(session.id, new URLSearchParams({ kind, find: term }));
     return { total: found.total, sequences: found.items.map(item => item.sequence) };
   };
   const facets = (kind: string) => recorder.db.query<{ value: string }, [string, string]>("SELECT value FROM session_facets WHERE session_id=? AND kind=? ORDER BY value")
     .all(session.id, kind).map(row => row.value);
   const named = recorder.db.query<{ named: number }, [string]>("SELECT named FROM sessions WHERE id=?").get(session.id)!.named;
-  const landing = recorder.list(new URLSearchParams({ q: fixture.term })).items.find(item => item.id === session.id);
+  const landing = recorder.queries.list(new URLSearchParams({ q: fixture.term })).items.find(item => item.id === session.id);
   return { session, all, events, find, facets, named, landing };
 }
 
@@ -218,11 +218,11 @@ describe("Claude Code recording generations", () => {
     expect(comparable(future).landing).toBe(1);
     expect(categories(future.all.items).system).toBe(categories(current.all.items).system + 4);
     // The library lists every version newest first, and filters by any of them.
-    const catalog = await recorder.catalog();
+    const catalog = await recorder.queries.catalog();
     expect([catalog.versions, catalog.unrecognizedRecords, catalog.unrecognizedKinds]).toEqual([
       ["2.2.0", "2.1.302", "2.1.278", "2.0.14"], 3, ["attachment:context_digest", "system:plan_checkpoint", "type:session-insight"],
     ]);
-    const versioned = (version: string) => recorder.list(new URLSearchParams({ version })).items.map(item => item.sessionId);
+    const versioned = (version: string) => recorder.queries.list(new URLSearchParams({ version })).items.map(item => item.sessionId);
     expect(["2.0.14", "2.1.278", "2.1.302", "2.2.0"].map(versioned)).toEqual(setup.fixtures.map(fixture => [fixture.sessionId]));
   });
 

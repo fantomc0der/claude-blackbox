@@ -65,7 +65,7 @@ if (values["exit-with-parent"]) {
 }
 try {
   await indexing;
-  console.log(`  ${(await recorder.catalog()).sessions} recordings · indexed in ${Math.round(performance.now() - started)}ms`);
+  console.log(`  ${(await recorder.queries.catalog()).sessions} recordings · indexed in ${Math.round(performance.now() - started)}ms`);
 } catch (error) {
   if (!stopping) {
     console.error(`Could not index the recordings: ${error instanceof Error ? error.message : error}`);
