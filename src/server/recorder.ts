@@ -7,7 +7,7 @@ import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
 import { compareVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
+import { displaySnippet, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, rateStamp, readCostState, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -44,7 +44,7 @@ interface SourceRow {
   started: string; updated: string; events: number; messages: number; tools: number; errors: number;
   edits: number; agent: number; size: number; mtime: number; cursor: number; fingerprint: string;
   warnings: number; named: number; identity: string; tailprint: string; turns: number; active_ms: number;
-  version: string; unrecognized: number;
+  version: string; unrecognized: number; api_errors: number; decisions: number;
   group_id?: string; group_name?: string; bookmarked?: number;
   recorded_cost?: number | null; recorded_started?: string | null; recorded_unknown?: number | null; recorded_models?: string | null;
   recorded_api_ms?: number | null; recorded_tool_ms?: number | null;
@@ -83,7 +83,8 @@ const schema = `
     fingerprint TEXT NOT NULL DEFAULT '', warnings INTEGER NOT NULL DEFAULT 0, named INTEGER NOT NULL DEFAULT 0,
     identity TEXT NOT NULL DEFAULT '', tailprint TEXT NOT NULL DEFAULT '',
     turns INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0,
-    version TEXT NOT NULL DEFAULT '', unrecognized INTEGER NOT NULL DEFAULT 0
+    version TEXT NOT NULL DEFAULT '', unrecognized INTEGER NOT NULL DEFAULT 0,
+    api_errors INTEGER NOT NULL DEFAULT 0, decisions INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS events (
     rowid INTEGER PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -273,6 +274,8 @@ export class Recorder {
     if (!fields.has("active_ms")) db.exec("ALTER TABLE sessions ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0");
     if (!fields.has("version")) db.exec("ALTER TABLE sessions ADD COLUMN version TEXT NOT NULL DEFAULT ''");
     if (!fields.has("unrecognized")) db.exec("ALTER TABLE sessions ADD COLUMN unrecognized INTEGER NOT NULL DEFAULT 0");
+    if (!fields.has("api_errors")) db.exec("ALTER TABLE sessions ADD COLUMN api_errors INTEGER NOT NULL DEFAULT 0");
+    if (!fields.has("decisions")) db.exec("ALTER TABLE sessions ADD COLUMN decisions INTEGER NOT NULL DEFAULT 0");
     const costFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(session_costs)").all().map(row => row.name));
     if (!costFields.has("api_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN api_ms REAL");
     if (!costFields.has("tool_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN tool_ms REAL");
@@ -527,14 +530,20 @@ export class Recorder {
       this.db.exec("PRAGMA user_version=16");
     })();
     // Version 17 reads Claude Code's `toolDenialKind` before a result's message, tells its interruptions and
-    // cancellations apart from its denials, and never counts its API retry banner as an error. A decision an earlier
-    // build recognized stays a decision, and its label is read from the stored record whenever it is shown, so only
-    // three groups of recordings are re-read: those holding a flagged or decided record with a `toolDenialKind`, whose
-    // stored results lack the kind `normalize()` now copies onto them; those holding a failure whose record carries part
-    // of a message version 17 first reads as a decision; and those holding a flagged `system` record of subtype
-    // `api_error`, which no 2.1.302 recording holds. Finding them reads the records an earlier build flagged or decided,
-    // like version 12.
+    // cancellations apart from its denials, never counts its API retry banner as an error, and counts a recording's API
+    // error turns and decided results apart from its errors. The counts come from the stored flags, so every recording
+    // is filled where it is. A decision an earlier build recognized stays a decision, and its label is read from the
+    // stored record whenever it is shown, so only three groups of recordings are re-read: those holding a flagged or
+    // decided record with a `toolDenialKind`, whose stored results lack the kind `normalize()` now copies onto them;
+    // those holding a failure whose record carries part of a message version 17 first reads as a decision; and those
+    // holding a flagged `system` record of subtype `api_error`, which no 2.1.302 recording holds. Both read only the
+    // records an earlier build flagged or decided, like version 12.
     if (version < 17) this.db.transaction(() => {
+      const counts = new Map(this.db.query<{ id: string; apiErrors: number; decisions: number }, []>(`SELECT session_id AS id,
+        sum(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 THEN json_type(raw,'$.isApiErrorMessage')='true' ELSE 0 END) AS apiErrors,
+        sum(decision) AS decisions FROM events WHERE error=1 OR decision=1 GROUP BY id`).all().map(row => [row.id, row]));
+      const fill = this.db.query("UPDATE sessions SET api_errors=?, decisions=? WHERE id=?");
+      for (const { id } of this.db.query<{ id: string }, []>("SELECT id FROM sessions").all()) fill.run(counts.get(id)?.apiErrors ?? 0, counts.get(id)?.decisions ?? 0, id);
       this.db.query(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE (error=1 OR decision=1)
         AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(events.raw,value)>0))
           OR (error=1 AND type='system' AND instr(raw,'"subtype":"api_error"')>0)))`)
@@ -588,7 +597,8 @@ export class Recorder {
           this.db.query("DELETE FROM session_costs WHERE session_id = ?").run(id);
           this.db.query("DELETE FROM session_facets WHERE session_id = ?").run(id);
           this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
-            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0,turns=0,active_ms=0,version='',unrecognized=0 WHERE id=?`).run(id);
+            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0,turns=0,active_ms=0,version='',unrecognized=0,
+            api_errors=0,decisions=0 WHERE id=?`).run(id);
         })();
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id)!;
         // Claude Code files `cost-state` as last-wins, so the last one read replaces the stored total; a read that
@@ -652,7 +662,9 @@ export class Recorder {
           row.messages += Number(event.category === "message");
           row.tools += event.toolNames.length;
           row.errors += Number(event.error);
-          row.edits ||= Number(event.toolNames.some(name => /^(edit|write|multiedit|notebookedit)$/i.test(name)));
+          row.api_errors += Number(isApiError(line.value));
+          row.decisions += Number(event.decision !== null);
+          row.edits ||=Number(event.toolNames.some(name => /^(edit|write|multiedit|notebookedit)$/i.test(name)));
           row.cwd ||= event.cwd || "";
           row.session_id = string(line.value.sessionId) || string(line.value.session_id) || row.session_id;
           row.branch = string(line.value.gitBranch) || row.branch;
@@ -676,11 +688,11 @@ export class Recorder {
         const stamp = new Date(info.mtimeMs).toISOString();
         this.db.query(`UPDATE sessions SET cwd=?,title=?,branch=?,model=?,started=?,updated=?,events=?,messages=?,tools=?,errors=?,
           edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=?,turns=?,active_ms=?,
-          version=?,unrecognized=? WHERE id=?`).run(
+          version=?,unrecognized=?,api_errors=?,decisions=? WHERE id=?`).run(
           row.cwd, row.title || `Session ${row.session_id.slice(0, 8)}`, row.branch, row.model, row.started || stamp, row.updated || stamp,
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
           await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true),
-          row.turns, row.active_ms, row.version, row.unrecognized, id);
+          row.turns, row.active_ms, row.version, row.unrecognized, row.api_errors, row.decisions, id);
         changed.push(id);
         // Let live clients see a long first index fill in instead of an empty library.
         if (performance.now() - publishedAt >= 1000) {
@@ -744,6 +756,7 @@ export class Recorder {
       workspace: row.group_name || pathName(row.cwd), groupId: row.group_id || null,
       branch: row.branch, model: row.model, startedAt: row.started, updatedAt: row.updated,
       eventCount: row.events, messageCount: row.messages, toolCount: row.tools, errorCount: row.errors,
+      apiErrorCount: row.api_errors, decisionCount: row.decisions,
       hasEdits: Boolean(row.edits), bookmarked: Boolean(row.bookmarked), isAgent: Boolean(row.agent),
       active: Date.now() - Date.parse(row.updated) < 120_000 && Date.now() - row.mtime < 120_000,
       source: relative(this.dataDir, row.source),
@@ -1347,8 +1360,9 @@ export class Recorder {
         facetsLimited: models.limited || tools.limited || efforts.length > facetLimit || versions.limited,
       };
     }
-    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number; unrecognizedRecords: number }, []>(
-      "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings,coalesce(sum(unrecognized),0) AS unrecognizedRecords FROM sessions").get()!;
+    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; apiErrors: number; decisions: number; warnings: number; unrecognizedRecords: number }, []>(
+      `SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,
+        coalesce(sum(api_errors),0) AS apiErrors,coalesce(sum(decisions),0) AS decisions,coalesce(sum(warnings),0) AS warnings,coalesce(sum(unrecognized),0) AS unrecognizedRecords FROM sessions`).get()!;
     const sources = this.db.query<{ cwd: string; count: number; mainCount: number }, []>("SELECT cwd,count(*) AS count,sum(CASE WHEN agent=0 THEN 1 ELSE 0 END) AS mainCount FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
     const groups = this.groups();
     if (!this.workspaceUsage) {

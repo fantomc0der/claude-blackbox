@@ -26,6 +26,26 @@ export function measuredTime(recorded: RecordedCost): string {
 
 export const measuredTimeNote = "The tracker behind Claude Code's running total also measures the time its API requests took, retries included, and the time its tools ran, over the same requests the total counts.";
 
+const counted = (count: number, one: string, many: string) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
+
+/** A recording's errors with the API errors among them named, as `3 errors (1 API error)` or `2 API errors`; empty when it has none. */
+export function errorBreakdown(session: Pick<Session, "errorCount" | "apiErrorCount">): string {
+  const { errorCount: errors, apiErrorCount: apiErrors } = session;
+  if (!errors) return "";
+  if (apiErrors === errors) return counted(apiErrors, "API error", "API errors");
+  return apiErrors ? `${counted(errors, "error", "errors")} (${counted(apiErrors, "API error", "API errors")})` : counted(errors, "error", "errors");
+}
+
+/** The tools a decision stopped, which never count as errors, as `2 tools stopped`; empty when none was. */
+export function stoppedTools(session: Pick<Session, "decisionCount">): string {
+  return session.decisionCount ? counted(session.decisionCount, "tool stopped", "tools stopped") : "";
+}
+
+/** A recording's errors and stopped tools together, as `3 errors (1 API error) · 2 tools stopped`; empty when it has neither. */
+export function errorSummary(session: Pick<Session, "errorCount" | "apiErrorCount" | "decisionCount">): string {
+  return [errorBreakdown(session), stoppedTools(session)].filter(Boolean).join(" · ");
+}
+
 /** How long the model thought on a reasoning step, with the thinking tokens the API reported for it when it did. */
 export function thinkingSummary(measure: { durationMs: number; tokens: number | null }): string {
   return `thought for ${duration(measure.durationMs)}${measure.tokens !== null ? ` (${tokenCount(measure.tokens)} thinking tokens)` : ""}`;

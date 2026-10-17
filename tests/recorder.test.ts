@@ -347,9 +347,12 @@ describe("recording index", () => {
     const mixed = sessions.find(session => session.title === "clean the install")!, denied = sessions.find(session => session.title === "just a denial")!;
     // Only the failing test counts; the cancellation, the hook stop, and the interruption are not failures.
     expect([mixed.errorCount, denied.errorCount]).toEqual([1, 0]);
+    // They are counted apart, and so are the API errors among the errors, of which there are none here.
+    expect([mixed.decisionCount, denied.decisionCount, mixed.apiErrorCount]).toEqual([3, 1, 0]);
     expect(recorder.list(new URLSearchParams({ errors: "1" })).items.map(session => session.title)).toEqual(["clean the install"]);
     expect(recorder.list(new URLSearchParams({ sort: "errors" })).items.map(session => session.title)).toEqual(["clean the install", "just a denial"]);
-    expect((await recorder.catalog()).errors).toBe(1);
+    const catalog = await recorder.catalog();
+    expect([catalog.errors, catalog.apiErrors, catalog.decisions]).toEqual([1, 0, 4]);
     // The Errors view keeps every stopped tool beside the failure, each knowing which it is; the error constraint on
     // another view does the same.
     const errors = recorder.events(mixed.id, new URLSearchParams({ kind: "all", errors: "1" }));

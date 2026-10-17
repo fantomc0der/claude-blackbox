@@ -35,7 +35,12 @@ test("the Errors tab labels each tool the user stopped and counts only the failu
   await expect(page.locator(".replay-find > .replay-count")).toHaveText(/^5 of 12 records$/);
   const rail = page.getByRole("complementary", { name: "Recording overview" });
   await expect(rail.locator(".inspector-stats")).toContainText("1errors");
+  // The stopped tools never count as errors, but the count says how many there were.
+  await expect(rail.locator(".inspector-stats > div").nth(2)).toHaveAttribute("title", "1 error · 4 tools stopped");
   await expect(rail.getByRole("navigation", { name: "Events on this page" }).getByRole("button")).toHaveText([/^Permission denied/, /^Stopped by hook/, /^Interrupted/, /^Permission denied/, /^Error/]);
+  await page.locator(".session-details > summary").click();
+  const details = page.getByRole("region", { name: "Session details" });
+  await expect(details.locator("dt", { hasText: /^Errors$/ }).locator("+ dd")).toHaveText("1 error · 4 tools stopped");
 }, wide);
 
 test("the Tools tab tints a stopped call apart from a failed one and names what stopped it", async ({ page }) => {
@@ -71,7 +76,7 @@ test("a recording whose only error flag is a cancellation is not a recording wit
   const row = page.locator(".session-row");
   await expect(row).toHaveCount(1);
   await expect(row.locator(".session-symbol")).not.toHaveClass(/has-error/);
-  await expect(row.locator(".session-symbol")).toHaveAttribute("title", "Conversation");
+  await expect(row.locator(".session-symbol")).toHaveAttribute("title", "Conversation · 1 tool stopped");
   await row.click();
   await page.getByRole("button", { name: "Errors", exact: true }).click();
   await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");

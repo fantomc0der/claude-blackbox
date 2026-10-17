@@ -129,7 +129,12 @@ export interface Session {
   eventCount: number;
   messageCount: number;
   toolCount: number;
+  /** Records with a failure: tool failures, API error turns, and other flagged records. */
   errorCount: number;
+  /** The API error turns among `errorCount`. */
+  apiErrorCount: number;
+  /** Records whose tool results record a decision, which never count as errors. */
+  decisionCount: number;
   hasEdits: boolean;
   bookmarked: boolean;
   active: boolean;
@@ -177,6 +182,10 @@ export interface Catalog {
   messages: number;
   tools: number;
   errors: number;
+  /** The API error turns among `errors`. */
+  apiErrors: number;
+  /** Records whose tool results record a decision, across every recording. */
+  decisions: number;
   bookmarked: number;
   workspaces: Workspace[];
   models: string[];

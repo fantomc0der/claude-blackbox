@@ -302,6 +302,7 @@ test("API error turns and other Claude Code stand-ins count as errors, never as 
   const session = recorder.list(new URLSearchParams()).items[0];
   const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
   expect([session.messageCount, session.errorCount, session.usage.requests, session.model]).toEqual([2, 1, 1, "model-a"]);
+  expect([session.apiErrorCount, session.decisionCount]).toEqual([1, 0]);
   const all = events("kind=all");
   expect(all.items.map(event => [event.role, event.category, event.error])).toEqual([
     ["user", "message", false], ["assistant", "synthetic", true], ["assistant", "synthetic", false], ["assistant", "message", false],
@@ -317,7 +318,7 @@ test("API error turns and other Claude Code stand-ins count as errors, never as 
   // The `<synthetic>` model is no model, so neither the replay's nor the library's model filter offers it.
   expect(all.facets.models).toEqual(["model-a"]);
   const catalog = await recorder.catalog();
-  expect([catalog.messages, catalog.errors, catalog.models]).toEqual([2, 1, ["model-a"]]);
+  expect([catalog.messages, catalog.errors, catalog.apiErrors, catalog.models]).toEqual([2, 1, 1, ["model-a"]]);
 });
 
 test("version 10 indexes re-index only the recordings that hold Claude Code's stand-ins", async () => {
@@ -430,13 +431,14 @@ test("version 11 indexes re-index only the recordings whose errors need telling 
 const kinded = (id: string, content: string, toolDenialKind: string) => record("", { toolDenialKind, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: true }] } });
 const skipped = "[Tool call skipped: the turn ended to deliver the message that follows before this call ran. Nothing refused it; re-run it if still needed.]";
 
-test("version 16 indexes re-index only the recordings whose results Claude Code filed by kind or version 17 first reads as decisions", async () => {
+test("version 16 indexes count API errors and decisions in place and re-index only the recordings whose results Claude Code filed by kind or version 17 first reads as decisions", async () => {
   const setup = await fixture();
   await setup.write("kinded", [record("Deploy the release"), kinded("deploy-call", "Deploys are frozen until Monday.", "permission-rule")]);
   await setup.write("skipped", [record("Run the batch"), toolResult("batch-call", skipped)]);
   await setup.write("retried", [record("Retry the request"), apiRetry("r1", "2026-09-20T12:00:05Z")]);
   await setup.write("cancelled", [record("Clean the install"), toolResult("rm-call", denial)]);
   await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
+  await setup.write("overloaded", [record("Fix the login test"), apiError("a1", "u1", "2026-09-20T12:00:05Z"), toolResult("rm-call", denial), toolResult("test-call", "1 fail")]);
   const before = await setup.open();
   const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
   before.bookmark(sessions["Deploy the release"], true);
@@ -447,6 +449,8 @@ test("version 16 indexes re-index only the recordings whose results Claude Code 
     before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions[title]);
   }
   before.db.exec("UPDATE tool_results SET raw=json_remove(raw,'$.toolDenialKind')");
+  // Nor did they count API errors or decisions apart.
+  before.db.exec("ALTER TABLE sessions DROP COLUMN api_errors; ALTER TABLE sessions DROP COLUMN decisions");
   // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
   before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
   before.db.exec("PRAGMA user_version=16");
@@ -462,8 +466,13 @@ test("version 16 indexes re-index only the recordings whose results Claude Code 
   for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(after.getSession(sessions["Retry the request"])?.errorCount).toBe(0);
   // A decision an earlier build recognized keeps its flag and takes its new label from the stored record, unread.
-  for (const title of ["Clean the install", "Run the tests"]) expect(cwds(sessions[title])).toEqual(["/synthetic/stale"]);
+  for (const title of ["Clean the install", "Run the tests", "Fix the login test"]) expect(cwds(sessions[title])).toEqual(["/synthetic/stale"]);
   expect(["Deploy the release", "Run the batch", "Clean the install", "Run the tests"].map(title => after.getSession(sessions[title])?.errorCount)).toEqual([0, 0, 0, 1]);
+  // The counts are filled from the stored flags, read or not.
+  const counts = (title: string) => { const session = after.getSession(sessions[title])!; return [session.errorCount, session.apiErrorCount, session.decisionCount]; };
+  expect(["Deploy the release", "Clean the install", "Run the tests", "Fix the login test"].map(counts)).toEqual([[0, 0, 1], [0, 0, 1], [1, 0, 0], [2, 1, 1]]);
+  const catalog = await after.catalog();
+  expect([catalog.errors, catalog.apiErrors, catalog.decisions]).toEqual([3, 1, 4]);
   expect(["Deploy the release", "Run the batch", "Clean the install", "Run the tests"].map(decided)).toEqual([[[false, "denied"]], [[false, "cancelled"]], [[false, "cancelled"]], [[true, null]]]);
   expect(after.results(sessions["Deploy the release"], ["deploy-call"])["deploy-call"]).toMatchObject({ is_error: true, toolDenialKind: "permission-rule" });
   expect(after.getSession(sessions["Deploy the release"])?.bookmarked).toBe(true);

@@ -4,7 +4,7 @@ import { stripAnsi } from "../../shared/ansi";
 import { isAbort, request } from "../lib/api";
 import { contentToText, getToolInput, isApiError, isRecord, isToolResultEvent, requestMessageRuns, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
-import { activeTimeNote, activeTimeSummary, compact, dateTime, dollars, duration, folderName, measuredTime, measuredTimeNote, modelName, recordedCostNote, recordedCostSummary, recordedModelCosts, recordedRange, resumeCommand, searchHighlight, tokenCount, usageCost, withLocalDays } from "../lib/format";
+import { activeTimeNote, activeTimeSummary, compact, dateTime, dollars, duration, errorBreakdown, errorSummary, folderName, measuredTime, measuredTimeNote, modelName, recordedCostNote, recordedCostSummary, recordedModelCosts, recordedRange, resumeCommand, searchHighlight, stoppedTools, tokenCount, usageCost, withLocalDays } from "../lib/format";
 import { TokenBreakdown, UsageNote } from "./usage-panel";
 import { anchoredMenu } from "../lib/anchor";
 import type { Navigate } from "../lib/location";
@@ -665,6 +665,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
                 <dt>Model</dt><dd>{modelName(session().model)}</dd>
                 <dt>Claude Code version</dt><dd>{session().version || "Not recorded"}</dd>
                 <dt>Activity</dt><dd>{session().messageCount} messages · {session().toolCount} tools</dd>
+                <dt>Errors</dt><dd>{errorBreakdown(session()) || "None"}<Show when={stoppedTools(session())}>{stopped => <> · {stopped()}</>}</Show></dd>
                 <dt>Active time</dt><dd title={activeTimeNote}><Show when={session().activeTime} fallback="Not recorded">{active => activeTimeSummary(active())}</Show></dd>
                 <Show when={session().recordedCost && measuredTime(session().recordedCost!)}>{measured => <><dt>Claude Code measured</dt><dd title={measuredTimeNote}>{measured()}</dd></>}</Show>
                 <dt>Est. API cost (this recording)</dt><dd>{usageCost(session().usage)}</dd>
@@ -734,7 +735,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview" ref={setRail}>
       <p class="eyebrow">AT A GLANCE</p>
-      <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
+      <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div title={props.session ? errorSummary(props.session) || "No errors" : undefined}><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
       <div class="overview-section">
         <select class="overview-view" aria-label="Overview content" value={overviewView()} onChange={event => changeOverviewView(event.currentTarget.value)}><option value="page">On this page</option><option value="files">{filesOption()}</option></select>
         <Show when={overviewView() === "files"} fallback={<nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, decision: !event.error && Boolean(event.decision), user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>}>

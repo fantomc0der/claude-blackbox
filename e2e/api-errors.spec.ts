@@ -7,7 +7,7 @@ test("API error turns read as Claude Code's own error cards and never as Claude 
   await page.goto("/?errors=1&q=API+error+verification");
   const row = page.getByRole("button", { name: /API error verification/ });
   await expect(row).toBeVisible();
-  await expect(row.locator(".session-symbol")).toHaveAttribute("title", "Conversation · 1 error");
+  await expect(row.locator(".session-symbol")).toHaveAttribute("title", "Conversation · 1 API error");
   await expect(row.getByLabel("2 messages")).toBeVisible();
   await row.click();
   await expect(page.getByRole("region", { name: "Session replay" })).toBeVisible();

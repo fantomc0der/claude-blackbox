@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { activeTimeSummary, duration, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
+import { activeTimeSummary, duration, errorBreakdown, errorSummary, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, stoppedTools, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
 import { compareVersions, noteFiling, recordedDuration, recordedVersion, recordPolicy, recordSubtype, thinkingMeasure, turnDuration, unrecognizedKind } from "../src/shared/records";
 
@@ -21,6 +21,17 @@ test("measured times read in the two largest units", () => {
   expect(measuredTime({ ...recorded, apiDurationMs: null, toolDurationMs: null })).toBe("");
   expect(thinkingSummary({ durationMs: 12_340, tokens: 1840 })).toBe("thought for 12s (1,840 thinking tokens)");
   expect(thinkingSummary({ durationMs: 400, tokens: null })).toBe("thought for <1s");
+});
+
+test("a recording's errors name the API errors among them, and the tools a decision stopped stand apart", () => {
+  const counts = (errorCount: number, apiErrorCount: number, decisionCount: number) => ({ errorCount, apiErrorCount, decisionCount });
+  expect(errorSummary(counts(3, 1, 2))).toBe("3 errors (1 API error) · 2 tools stopped");
+  expect(errorSummary(counts(1, 0, 1))).toBe("1 error · 1 tool stopped");
+  expect(errorSummary(counts(2, 2, 0))).toBe("2 API errors");
+  expect(errorSummary(counts(1200, 0, 0))).toBe(`${(1200).toLocaleString()} errors`);
+  expect(errorSummary(counts(0, 0, 4))).toBe("4 tools stopped");
+  expect(errorSummary(counts(0, 0, 0))).toBe("");
+  expect([errorBreakdown(counts(0, 0, 4)), stoppedTools(counts(5, 2, 0))]).toEqual(["", ""]);
 });
 
 // Claude Code's own schema bounds a recorded duration as a finite non-negative number up to 1e15, and its loader rewrites
