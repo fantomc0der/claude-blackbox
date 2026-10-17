@@ -380,10 +380,10 @@ export class Recorder {
   /**
    * The row of a known recording whose file is gone and whose path inside its project folder is this new file's, moved
    * to the new path, or undefined when no such row exists. A candidate's file is confirmed gone with `stat()`, so a walk
-   * that could not read every directory still tells a move from a file it did not reach. With several, the one whose
-   * prefix checkpoint the new file still passes is taken, so two copies of one session id in cloned folders cannot claim
-   * each other's row. The new `identity` is stored with the path because a move across volumes changes it without
-   * changing a byte.
+   * that could not read every directory still tells a move from a file it did not reach. With several, only the one
+   * whose prefix checkpoint the new file still passes is taken, and none when no checkpoint passes, so two copies of one
+   * session id in cloned folders cannot claim each other's row and an unrelated file cannot claim either. The new
+   * `identity` is stored with the path because a move across volumes changes it without changing a byte.
    */
   private async relocated(path: string, size: number, identity: string, displaced: Map<string, SourceRow[]>, known: Map<string, SourceRow>): Promise<SourceRow | undefined> {
     const candidates: SourceRow[] = [];
@@ -391,10 +391,11 @@ export class Recorder {
       if (known.has(candidate.source) && await stat(candidate.source).then(() => false, error => object(error).code === "ENOENT")) candidates.push(candidate);
     }
     if (!candidates.length) return undefined;
-    let row = candidates[0];
-    if (candidates.length > 1) for (const candidate of candidates) {
+    let row: SourceRow | undefined = candidates.length === 1 ? candidates[0] : undefined;
+    if (!row) for (const candidate of candidates) {
       if (candidate.size <= size && candidate.fingerprint === await this.fingerprint(path, candidate.size)) { row = candidate; break; }
     }
+    if (!row) return undefined;
     known.delete(row.source);
     // An empty identity marks the row for re-reading and must stay empty.
     const stored = row.identity ? identity : row.identity;

@@ -532,6 +532,29 @@ describe("recording index", () => {
     expect(recorder.getSession(clone.id)).toMatchObject({ bookmarked: true, title: expect.stringContaining("Clone session") });
   });
 
+  test("indexes a file afresh when the deleted copies that shared its path match none of its content", async () => {
+    const fixtureData = await fixture();
+    const second = join(fixtureData.data, "projects", "test-clone");
+    await mkdir(second);
+    await writeFile(fixtureData.file, fixtureData.record("Main session with a prefix long enough to fingerprint " + "a".repeat(300)) + "\n");
+    await writeFile(join(second, "session-a.jsonl"), fixtureData.record("Clone session with a prefix long enough to fingerprint " + "b".repeat(300)) + "\n");
+    const recorder = await fixtureData.open();
+    const copies = recorder.list(new URLSearchParams()).items.map(item => item.id);
+    expect(copies).toHaveLength(2);
+    for (const id of copies) recorder.bookmark(id, true);
+    const third = join(fixtureData.data, "projects", "test-other");
+    await mkdir(third);
+    await writeFile(join(third, "session-a.jsonl"), fixtureData.record("Unrelated session with a prefix long enough to fingerprint " + "c".repeat(300)) + "\n");
+    await rm(fixtureData.file);
+    await rm(join(second, "session-a.jsonl"));
+    await recorder.scan();
+    const [session, ...rest] = recorder.list(new URLSearchParams()).items;
+    expect(rest).toHaveLength(0);
+    expect(copies).not.toContain(session.id);
+    expect(session).toMatchObject({ bookmarked: false, title: expect.stringContaining("Unrelated session") });
+    expect((await recorder.catalog()).bookmarked).toBe(0);
+  });
+
   test("groups cloned folders reversibly, retaining cwd and distinct identical session IDs", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, fixtureData.record("Main session") + "\n");
