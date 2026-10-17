@@ -70,6 +70,13 @@ function sessionStateText(type: string, raw: Record<string, unknown>): string {
   return searchable(copied ? Object.fromEntries(Object.entries(raw).filter(([key]) => !copied.includes(key))) : raw);
 }
 
+// Claude Code 2.1.30x writes a `relocated` record, with no `cwd` or timestamp, when it moves a session's recording to
+// the project folder of a new working directory, as EnterWorktree and ExitWorktree do. Its `relocatedCwd` is that
+// directory, so it serves as the record's working directory and the replay marks the change where it happened.
+function relocatedCwd(type: string, raw: Record<string, unknown>): string {
+  return type === "relocated" ? string(raw.relocatedCwd) : "";
+}
+
 export function normalize(raw: Record<string, unknown>, sourceId: string, offset: number, sequence: number): ReplayEvent {
   const message = object(raw.message);
   const type = string(raw.type) || "unknown";
@@ -108,7 +115,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     decision: decisions.find(decision => decision !== null) ?? null,
     parentId: string(raw.parentUuid) || undefined,
     uuid: string(raw.uuid) || undefined,
-    cwd: string(raw.cwd) || undefined,
+    cwd: string(raw.cwd) || relocatedCwd(type, raw) || undefined,
     agentId: string(raw.agentId) || undefined,
     raw,
   };
