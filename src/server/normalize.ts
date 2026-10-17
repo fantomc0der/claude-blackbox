@@ -69,27 +69,49 @@ export function isInterruptionMarker(raw: Record<string, unknown>, blocks: Conte
 // Claude Code writes a blob only for a message no run of transcript records holds whole, but the user message it sends
 // for a prompt merges the prompt with the context composed for it, so that blob repeats the prompt's text block for
 // block, as it does any context an `attachment` record keeps in `rendered`. `TranscriptTexts` collects the text of a
-// recording's `user` records without tool blocks and its attachments' rendered messages, and a blob's text that an
-// earlier one holds is left out of its searchable text, so a prompt is found once, on its user record, while composed
-// context that no record holds stays searchable. `load` supplies the records already indexed when a read resumes at its
-// cursor without the previous read's collection, and runs only once a blob asks.
+// recording's `user` records without tool blocks and its attachments' rendered messages, and a blob's text that one of
+// them holds is left out of its searchable text, so a prompt is found once, on its user record, while composed context
+// that no record holds stays searchable. Claude Code writes some of those records after the request, so a blob keeping
+// a text is listed under it, and `note()` names the blobs a record holding that text arrives too late for. `load`
+// supplies the records and blobs already indexed when a read resumes at its cursor without the previous read's
+// collection, and runs once a record or blob asks.
 export class TranscriptTexts {
   private readonly hashes = new Set<number | bigint>();
+  private readonly kept = new Map<number | bigint, Set<number>>();
 
-  constructor(private load?: () => Record<string, unknown>[]) {}
+  constructor(private load?: (texts: TranscriptTexts) => void) {}
 
-  note(raw: Record<string, unknown>): void {
-    for (const text of transcriptTexts(raw)) this.hashes.add(Bun.hash(text));
+  private loaded(): void {
+    if (!this.load) return;
+    const load = this.load;
+    this.load = undefined;
+    load(this);
   }
 
-  has(text: string): boolean {
-    if (this.load) {
-      const load = this.load;
-      this.load = undefined;
-      for (const raw of load()) this.note(raw);
+  /** Collects the text a transcript record holds and returns the sequences of the blobs that kept any of it. */
+  note(raw: Record<string, unknown>): number[] {
+    const texts = transcriptTexts(raw);
+    if (!texts.length) return [];
+    this.loaded();
+    const revised = new Set<number>();
+    for (const text of texts) {
+      const hash = Bun.hash(text);
+      this.hashes.add(hash);
+      for (const sequence of this.kept.get(hash) ?? []) revised.add(sequence);
+      this.kept.delete(hash);
     }
+    return [...revised];
+  }
+
+  /** Whether a transcript record holds `text`; when none does, the blob at `sequence` is listed as keeping it. */
+  holds(text: string, sequence: number): boolean {
     const trimmed = text.trim();
-    return trimmed !== "" && this.hashes.has(Bun.hash(trimmed));
+    if (!trimmed) return false;
+    this.loaded();
+    const hash = Bun.hash(trimmed);
+    if (this.hashes.has(hash)) return true;
+    this.kept.set(hash, (this.kept.get(hash) ?? new Set()).add(sequence));
+    return false;
   }
 }
 
@@ -110,9 +132,9 @@ function transcriptTexts(raw: Record<string, unknown>): string[] {
   return texts.map(text => text.trim()).filter(Boolean);
 }
 
-function requestMessageText(message: Record<string, unknown>, transcript?: TranscriptTexts): string {
+function requestMessageText(message: Record<string, unknown>, sequence: number, transcript?: TranscriptTexts): string {
   if (message.role === "assistant") return "";
-  const held = (text: unknown) => transcript?.has(string(text)) ?? false;
+  const held = (text: unknown) => transcript?.holds(string(text), sequence) ?? false;
   if (typeof message.content === "string") return held(message.content) ? "" : message.content;
   return Array.isArray(message.content) ? searchable(message.content.filter(entry => {
     if (typeof entry === "string") return !held(entry);
@@ -152,7 +174,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     return { ...block, type: string(block.type) || "unknown" } as ContentBlock;
   });
   if (!blocks.length && !note && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
-  const text = copy ? requestMessageText(message, transcript) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
+  const text = copy ? requestMessageText(message, sequence, transcript) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
   // Claude Code 2.1.30x writes a decided result's kind as `toolDenialKind` beside the result, on the record that holds
   // it, and when it loads a user rejection the session's shutdown cut short, marked `interruptedByShutdown`, it files
   // that as an interruption. Once the searchable text is taken, the kind is copied onto each flagged result, so a result

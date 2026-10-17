@@ -317,6 +317,44 @@ test("API request message copies leave out the text an earlier user or attachmen
   expect([find("Retry"), find("worktree"), find("Sweep"), find("tool note"), find("conventions")]).toEqual([[4], [7], [9], [8, 10], [0]]);
 });
 
+test("a record Claude Code writes after an API request message copy rewrites the copy's searchable text", async () => {
+  const setup = await fixture();
+  const instructions = "<system-reminder>Larkspur instructions</system-reminder>";
+  const source = await setup.write("later", [
+    record("Start the Larkspur audit"),
+    requestBlob("hash-a", { role: "user", content: [text("Sweep the Larkspur queue"), text(instructions)] }),
+    apiRequest(["hash-a"]),
+    { ...hookAttachment, attachment: { type: "instructions" }, rendered: [{ content: instructions }] },
+    record("Sweep the Larkspur queue"),
+  ]);
+  let recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const find = (term: string) => recorder.matches(session.id, new URLSearchParams({ kind: "all", find: term })).items.map(item => item.sequence);
+  const indexed = (term: string) => recorder.db.query<{ sequence: number }, [string, string]>(
+    "SELECT e.sequence FROM event_fts JOIN events e ON e.rowid=event_fts.rowid WHERE event_fts MATCH ? AND e.session_id=? ORDER BY e.sequence").all(term, session.id).map(row => row.sequence);
+  const copies = () => recorder.events(session.id, new URLSearchParams("kind=all")).items.filter(event => event.type === "api-request-blob").map(event => [event.sequence, event.text]);
+  const append = (records: unknown[]) => appendFile(source, records.map(value => JSON.stringify(value)).join("\n") + "\n");
+  // The prompt and the attachment come after the copy in the same read.
+  expect(copies()).toEqual([[1, ""]]);
+  expect([find("Sweep"), find("instructions"), indexed("Sweep")]).toEqual([[4], [3], [4]]);
+  // The prompt arrives in a later read, which rewrites the stored copy and its full-text row.
+  await append([requestBlob("hash-b", { role: "user", content: [text("Close the Larkspur ticket"), text("<system-reminder>Larkspur tail note</system-reminder>")] }), apiRequest(["hash-b"])]);
+  await recorder.scan();
+  expect([find("ticket"), indexed("ticket")]).toEqual([[5], [5]]);
+  await append([record("Close the Larkspur ticket")]);
+  await recorder.scan();
+  expect(copies()[1]).toEqual([5, "type: text\ntext: <system-reminder>Larkspur tail note</system-reminder>"]);
+  expect([find("ticket"), indexed("ticket"), indexed("note")]).toEqual([[7], [7], [5]]);
+  // And after a restart, from the copies already indexed.
+  await append([requestBlob("hash-c", { role: "user", content: [text("Archive the Larkspur log")] }), apiRequest(["hash-c"])]);
+  await recorder.scan();
+  await recorder.close();
+  await append([record("Archive the Larkspur log")]);
+  recorder = await setup.open();
+  expect(copies()[2]).toEqual([8, ""]);
+  expect([find("Archive"), indexed("Archive")]).toEqual([[10], [10]]);
+});
+
 test("version 18 indexes re-index only the recordings whose API request message copies have searchable text", async () => {
   const setup = await fixture();
   await setup.write("repeated", [record("Repeat the Fernhollow prompt"), requestBlob("hash-repeat", { role: "user", content: [text("Repeat the Fernhollow prompt")] }), apiRequest(["hash-repeat"])]);

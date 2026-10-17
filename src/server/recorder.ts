@@ -446,6 +446,26 @@ export class Recorder {
     return { ...row, source: path, identity: stored };
   }
 
+  // The transcript text a recording's indexed user and attachment records hold, and the message copies whose searchable
+  // text keeps some text, for a read that resumes at the cursor.
+  private indexedTranscript(id: string, texts: TranscriptTexts): void {
+    for (const row of this.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? AND ((type='user' AND has_tools=0) OR type='attachment')").all(id)) {
+      texts.note(object(JSON.parse(row.raw)));
+    }
+    for (const row of this.db.query<{ raw: string; sequence: number }, [string, string]>("SELECT raw, sequence FROM events WHERE session_id=? AND type=? AND text!=''").all(id, requestMessageType)) {
+      normalize(object(JSON.parse(row.raw)), id, 0, row.sequence, texts);
+    }
+  }
+
+  // The full-text index reads `events.text` only through the insert and delete triggers, so a rewrite replaces its row.
+  private reviseText(rowid: number, before: string, after: string): void {
+    this.db.transaction(() => {
+      this.db.query("INSERT INTO event_fts(event_fts, rowid, text) VALUES ('delete', ?, ?)").run(rowid, before);
+      this.db.query("UPDATE events SET text=? WHERE rowid=?").run(after, rowid);
+      this.db.query("INSERT INTO event_fts(rowid, text) VALUES (?, ?)").run(rowid, after);
+    })();
+  }
+
   /**
    * Runs one upgrade step's `fill` for every recording not already marked for re-reading, whose next read derives the
    * same values afresh, each recording in its own transaction through `events_session`. The scan runs after the server
@@ -700,12 +720,21 @@ export class Recorder {
         // appends no new one keeps the total already stored.
         let recordedCost: RecordedCost | null = null;
         // A read that resumes at the cursor continues the transcript text the previous read of this recording collected,
-        // or else reads the text already indexed once a message copy asks.
+        // or else reads what is already indexed once a record or message copy asks.
         const cached = this.transcripts.get(id);
         this.transcripts.delete(id);
-        const transcript = row.cursor && cached?.cursor === row.cursor ? cached.texts : new TranscriptTexts(row.cursor ? () => this.db.query<{ raw: string }, [string]>(
-          "SELECT raw FROM events WHERE session_id=? AND ((type='user' AND has_tools=0) OR type='attachment')").all(id).map(stored => object(JSON.parse(stored.raw))) : undefined);
+        const transcript = row.cursor && cached?.cursor === row.cursor ? cached.texts : new TranscriptTexts(row.cursor ? texts => this.indexedTranscript(id, texts) : undefined);
         let batch: ReplayEvent[] = [];
+        // A record holding text a message copy before it kept rewrites the copy's searchable text, in the batch or in
+        // the index, where the full-text row follows it.
+        const revise = (sequence: number) => {
+          const pending = batch.find(event => event.sequence === sequence);
+          if (pending) { pending.text = normalize(pending.raw, id, pending.offset, sequence, transcript).text; return; }
+          const stored = this.db.query<{ rowid: number; raw: string; text: string }, [string, number]>("SELECT rowid, raw, text FROM events WHERE session_id=? AND sequence=?").get(id, sequence);
+          if (!stored) return;
+          const text = normalize(object(JSON.parse(stored.raw)), id, 0, sequence, transcript).text;
+          if (text !== stored.text) this.reviseText(stored.rowid, stored.text, text);
+        };
         const write = this.db.transaction((events: ReplayEvent[]) => {
           const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text,role,timestamp,model,cwd,has_thinking,has_tools,decision)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
@@ -759,7 +788,7 @@ export class Recorder {
           row.cursor = line.nextOffset;
           if (!line.value) { row.warnings += Number(line.malformed); continue; }
           const event = normalize(line.value, id, line.offset, row.events, transcript);
-          transcript.note(line.value);
+          for (const sequence of transcript.note(line.value)) revise(sequence);
           recordedCost = readCostState(line.value) ?? recordedCost;
           const turn = turnDuration(line.value);
           if (turn !== null) { row.turns++; row.active_ms += turn; }
