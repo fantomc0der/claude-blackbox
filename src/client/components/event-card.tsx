@@ -12,6 +12,7 @@ import {
   isImageBlock,
   isRecord,
   isRequestMessage,
+  isSessionStateEvent,
   isToolResultEvent,
   mentions,
   prettyValue,
@@ -301,6 +302,18 @@ function RequestMessages(props: { run: RequestMessageRun; highlight?: string }) 
   </details>;
 }
 
+const sessionStateDetail = "Claude Code writes this record for its own session state, such as the prompt to resume with, the permission mode, or cost totals, not as part of the transcript. It adds no conversation content or tool calls, and a prompt it repeats is searchable only on the record that holds it. Raw event shows the record.";
+
+// A session state record reads as a one-line note. Its searchable text shows only when a highlighted term is in it, so a
+// find match on a mode or a path is visible without opening Raw event.
+function SessionStateNote(props: { event: ReplayEvent; highlight?: string }) {
+  const highlighted = () => Boolean(props.highlight) && mentions(props.event.text, props.highlight!);
+  return <>
+    <p class="tool-hidden" title={sessionStateDetail}><code>{props.event.type}</code> · kept by Claude Code, not part of the transcript</p>
+    <Show when={highlighted()}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show>
+  </>;
+}
+
 function ThinkingBlock(props: { block: ContentBlock; highlight?: string }) {
   const [open, setOpen] = createSignal(false);
   const text = () => getString(props.block.thinking) ?? getString(props.block.text) ?? "";
@@ -326,8 +339,10 @@ export function EventCard(props: EventCardProps) {
     setSettled(true);
   });
   const role = createMemo(() => props.event.role || "system");
-  const presentation = createMemo(() => isToolResultEvent(props.event) ? "tool-result" : role());
-  const roleLabel = createMemo(() => presentation() === "tool-result" ? "Tool result" : role());
+  const presentation = createMemo(() => isSessionStateEvent(props.event) ? "state" : isToolResultEvent(props.event) ? "tool-result" : role());
+  const roleLabel = createMemo(() => presentation() === "tool-result" ? "Tool result" : presentation() === "state" ? "Session state" : role());
+  // Claude Code writes most session state without a timestamp, so a state note says so instead of reporting the time as unknown.
+  const timeLabel = () => presentation() === "state" && !props.event.timestamp ? "No timestamp" : formatEventTime(props.event.timestamp);
   // A glyph ahead of the label tells user and assistant turns apart at a glance; results and system records keep the plain label.
   const roleIcon = createMemo((): IconName | undefined => presentation() === "user" ? "user" : presentation() === "assistant" ? "sparkle" : undefined);
   const hasBlocks = createMemo(() => props.event.blocks.length > 0);
@@ -341,8 +356,8 @@ export function EventCard(props: EventCardProps) {
     return url.pathname + url.search;
   };
   return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : props.event.decision ? "replay-event-decision" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
-    <header class="replay-event-header"><span class="replay-role"><Show when={roleIcon()}>{name => <Icon name={name()} size={14} class="replay-role-icon" />}</Show>{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show><Show when={props.event.decision}>{decision => <span class="replay-decision-label">{decisionLabels[decision()]}</span>}</Show></header>
-    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={isRequestMessage(props.event)} fallback={<><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></>}><p class="tool-hidden" title={`${requestMessageDetail} Raw event shows this copy.`}>Message stored for the API request that follows</p></Show><Show when={props.requestMessages}>{run => <RequestMessages run={run()} highlight={props.highlight} />}</Show></div>
+    <header class="replay-event-header"><span class="replay-role"><Show when={roleIcon()}>{name => <Icon name={name()} size={14} class="replay-role-icon" />}</Show>{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{timeLabel()}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{timeLabel()}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show><Show when={props.event.decision}>{decision => <span class="replay-decision-label">{decisionLabels[decision()]}</span>}</Show></header>
+    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={presentation() === "state"} fallback={<Show when={isRequestMessage(props.event)} fallback={<><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></>}><p class="tool-hidden" title={`${requestMessageDetail} Raw event shows this copy.`}>Message stored for the API request that follows</p></Show>}><SessionStateNote event={props.event} highlight={props.highlight} /></Show><Show when={props.requestMessages}>{run => <RequestMessages run={run()} highlight={props.highlight} />}</Show></div>
     <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} json /></Show></details>
   </article>;

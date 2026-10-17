@@ -175,7 +175,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(10);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(11);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -264,7 +264,7 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(10);
+  expect(version()).toBe(11);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
@@ -306,7 +306,7 @@ test("version 8 indexes retitle recordings by Claude Code's first-prompt rules w
   expect(version()).toBe(8);
   expect(titles().commandFirst).toBe("/clear clear");
   await after.scan();
-  expect(version()).toBe(10);
+  expect(version()).toBe(11);
   expect(titles()).toEqual({ commandFirst: "Add retries to the upload client", ideFirst: "Why does the upload client hang?", review: "/review PR 12",
     outputOnly: "Session output-o", named: "Custom title", plain: "Plain prompt" });
   for (const id of [ids.commandFirst, ids.ideFirst, ids.outputOnly, ids.named, ids.plain]) expect(cwds(id)).toEqual(["/synthetic/stale"]);
@@ -319,7 +319,7 @@ const toolResult = (id: string, content: string, is_error = true) => record("", 
 const apiErrorTurn = () => record("", { type: "assistant", isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 },
   message: { id: "synthetic-1", model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "API Error: 529 Overloaded" }], usage: { input_tokens: 0, output_tokens: 0 } } });
 
-test("version 9 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
+test("version 10 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
   const setup = await fixture();
   await setup.write("denied", [record("Clean the install"), toolResult("rm-call", denial)]);
   await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
@@ -327,21 +327,21 @@ test("version 9 indexes re-index only the recordings whose errors need telling a
   await setup.write("plain", [record("Plain prompt")]);
   const before = await setup.open();
   const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
-  // Indexes written before version 10 flagged every `is_error` result as an error and no API error turn.
+  // Indexes written before version 11 flagged every `is_error` result as an error and no API error turn.
   before.db.query("UPDATE events SET error=1, decision=0 WHERE session_id=?").run(sessions["Clean the install"]);
   before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions["Clean the install"]);
   before.db.query("UPDATE events SET error=0 WHERE session_id=?").run(sessions["Fix the flaky test"]);
   before.db.query("UPDATE sessions SET errors=0 WHERE id=?").run(sessions["Fix the flaky test"]);
   before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=9");
+  before.db.exec("PRAGMA user_version=10");
   await before.close();
   const after = await setup.open({ scan: false });
   const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(9);
+  expect(version()).toBe(10);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(10);
+  expect(version()).toBe(11);
   for (const title of ["Clean the install", "Run the tests", "Fix the flaky test"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(0);
@@ -362,6 +362,78 @@ test("an API request's copies of an /add-dir command and its output add no folde
   const session = recorder.list(new URLSearchParams()).items[0];
   const summary = recorder.summary(session.id, new URLSearchParams("kind=all"));
   expect(summary.folders.map(folder => [folder.path, Boolean(folder.working), Boolean(folder.added)])).toEqual([["/synthetic/project", true, false]]);
+});
+
+// Claude Code 2.1.30x keeps its own session state in the recording: `last-prompt` and `atis-latch` after every turn,
+// without timestamps, a timestamped `queue-operation` when a prompt is queued, and settings such as `cost-state`. The
+// first two copy the prompt a user record holds.
+const sessionState = (type: string, fields: Record<string, unknown> = {}) => ({ type, sessionId: "synthetic", ...fields });
+const turnState = (prompt: string) => [sessionState("last-prompt", { lastPrompt: prompt, leafUuid: "leaf" }), sessionState("atis-latch", { atis: "" })];
+
+test("session state records index as notes without blocks or their copies of the prompt", async () => {
+  const setup = await fixture();
+  const prompt = "Rename the Saltmarsh helper";
+  await setup.write("state", [
+    sessionState("queue-operation", { operation: "enqueue", timestamp: "2026-09-20T11:59:59Z", content: prompt }),
+    record(prompt),
+    record("", { type: "assistant", timestamp: "2026-09-20T12:00:01Z", message: { model: "model-a", content: [{ type: "text", text: "Renaming it now" }] } }),
+    ...turnState(prompt),
+    sessionState("cost-state", { totalCostUSD: 0.42, totalInputTokens: 1200 }),
+    sessionState("permission-mode", { mode: "acceptEdits" }),
+    record("", { type: "assistant", timestamp: "2026-09-20T12:00:02Z", message: { model: "model-a", content: [{ type: "text", text: "Done" }] } }),
+    ...turnState(prompt),
+  ]);
+  await setup.write("plain", [record("Saltmarsh plain prompt")]);
+  const recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items.find(item => item.title === prompt)!;
+  const all = recorder.events(session.id, new URLSearchParams("kind=all"));
+  expect(all.total).toBe(10);
+  const state = all.items.filter(event => event.type !== "user" && event.type !== "assistant");
+  expect(state.map(event => [event.type, event.category, event.role, event.blocks.length, event.timestamp])).toEqual([
+    ["queue-operation", "system", "system", 0, "2026-09-20T11:59:59.000Z"],
+    ["last-prompt", "system", "system", 0, ""], ["atis-latch", "system", "system", 0, ""],
+    ["cost-state", "system", "system", 0, ""], ["permission-mode", "system", "system", 0, ""],
+    ["last-prompt", "system", "system", 0, ""], ["atis-latch", "system", "system", 0, ""],
+  ]);
+  // The prompt copies are left out of the searchable text; the rest of each record, and the whole raw record, stay.
+  expect(state.map(event => event.text.includes("Saltmarsh"))).toEqual(Array(7).fill(false));
+  expect(state[0].text).toBe("type: queue-operation\nsessionId: synthetic\noperation: enqueue\ntimestamp: 2026-09-20T11:59:59Z");
+  expect(state[4].text).toBe("type: permission-mode\nsessionId: synthetic\nmode: acceptEdits");
+  expect(state[1].raw.lastPrompt).toBe(prompt);
+  expect(recorder.matches(session.id, new URLSearchParams("kind=all&find=Saltmarsh")).items.map(item => item.sequence)).toEqual([1]);
+  expect(recorder.matches(session.id, new URLSearchParams("kind=all&find=acceptEdits")).items.map(item => item.sequence)).toEqual([6]);
+  expect(recorder.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([1, 2, 7]);
+  // Library search ranks the prompt itself, so the replay opens on Conversation at the prompt rather than at a note.
+  const hit = recorder.list(new URLSearchParams("q=Saltmarsh")).items.find(item => item.id === session.id)!;
+  expect([hit.matchEventId, hit.matchCategory, hit.matchRole, hit.snippet]).toEqual([all.items[1].id, "message", "user", prompt]);
+  // Every record still counts as a record, as it does for API request copies; messages and tools count the transcript.
+  expect([session.eventCount, session.messageCount, session.toolCount]).toEqual([10, 3, 0]);
+  expect([session.startedAt, session.updatedAt]).toEqual(["2026-09-20T11:59:59.000Z", "2026-09-20T12:00:02.000Z"]);
+});
+
+test("version 9 indexes re-index only the recordings that hold session state records", async () => {
+  const setup = await fixture();
+  await setup.write("state", [record("Stateful prompt"), ...turnState("Stateful prompt")]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const before = await setup.open();
+  const sessions = before.list(new URLSearchParams()).items;
+  const stateful = sessions.find(item => item.title === "Stateful prompt")!, plain = sessions.find(item => item.title === "Plain prompt")!;
+  // Indexes written before version 10 flattened the whole record, so the prompt copy was searchable on the state record.
+  before.db.query("UPDATE events SET text='type: last-prompt\nlastPrompt: Stateful prompt' WHERE session_id=? AND type='last-prompt'").run(stateful.id);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=9");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(9);
+  expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0, 1]);
+  await after.scan();
+  expect(version()).toBe(11);
+  expect(cwds(stateful.id)).not.toContain("/synthetic/stale");
+  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
+  expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0]);
 });
 
 test("full-session replay filters precede pagination and context keeps original sequence", async () => {

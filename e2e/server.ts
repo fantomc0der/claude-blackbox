@@ -209,6 +209,22 @@ await writeFile(join(folder, "request-copies.jsonl"), [
   requestBlob("copy-hash-3", { role: "user", content: "Request copy follow-up" }),
   apiRequest(60, ["copy-hash-3"]),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Claude Code 2.1.30x keeps its own session state in the recording: `last-prompt` and `atis-latch` after every turn,
+// without timestamps, a timestamped `queue-operation` holding a queued prompt, and settings such as `cost-state`. The
+// prompt's word Brackenfold is recorded once in the transcript and copied by three state records.
+const sessionState = (type: string, fields: Record<string, unknown> = {}) => ({ type, sessionId: "session-state", ...fields });
+await writeFile(join(folder, "session-state.jsonl"), [
+  sessionState("queue-operation", { operation: "enqueue", timestamp: "2026-01-01T00:00:00Z", content: "Rename the Brackenfold helper" }),
+  event("Rename the Brackenfold helper", 1),
+  event("Renaming the helper now.", 2, "assistant"),
+  sessionState("last-prompt", { lastPrompt: "Rename the Brackenfold helper", leafUuid: "browser-2" }),
+  sessionState("atis-latch", { atis: "" }),
+  sessionState("cost-state", { totalCostUSD: 0.42 }),
+  sessionState("permission-mode", { mode: "acceptEdits" }),
+  event("The helper is renamed.", 3, "assistant"),
+  sessionState("last-prompt", { lastPrompt: "Rename the Brackenfold helper", leafUuid: "browser-3" }),
+  sessionState("atis-latch", { atis: "" }),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "subagent-parent.jsonl"),Array.from({ length: 65 }, (_, index) => JSON.stringify({ ...event(index === 0 ? "Subagent preview parent" : `Parent event ${index}`, index), sessionId: "subagent-parent" })).join("\n") + "\n");
 const agentsFolder = join(folder, "subagent-parent", "subagents");
 await mkdir(agentsFolder, { recursive: true });
