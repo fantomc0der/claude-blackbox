@@ -1,3 +1,5 @@
+import type { Decision } from "./decisions";
+
 export interface ContentBlock {
   type: string;
   text?: string;
@@ -23,7 +25,12 @@ export interface ReplayEvent {
   text: string;
   category: "message" | "tool" | "thinking" | "hidden" | "system";
   toolNames: string[];
+  /** A failure is recorded: a tool result marked `is_error` that is not a decision, a record marked `is_error` or
+   *  `level: "error"`, or an API error turn. Only these count as errors. */
   error: boolean;
+  /** The first decision among the record's tool results: a tool that never ran because the user, a permission rule, or
+   *  a hook stopped it. Shown with the errors, but never counted as one. */
+  decision: Decision | null;
   parentId?: string;
   uuid?: string;
   cwd?: string;
@@ -202,14 +209,17 @@ export interface EventTimeline {
  */
 export interface SummaryRecord { id: string; position: number | null; timestamp: string }
 
-/** One Edit, Write, MultiEdit, or NotebookEdit call. `error` means its recorded result was an error. */
-export interface SummaryChange extends SummaryRecord { tool: string; error: boolean }
+/**
+ * One Edit, Write, MultiEdit, or NotebookEdit call. `error` means its recorded result was a failure; `decision` means
+ * the call never ran because the user, a permission rule, or a hook stopped it.
+ */
+export interface SummaryChange extends SummaryRecord { tool: string; error: boolean; decision: Decision | null }
 
 /**
- * A changed file. `display` is the path relative to its folder, or the whole path when no folder contains it. `count`
- * and `errors` cover every recorded change, even when `changes` stops at its limit.
+ * A changed file. `display` is the path relative to its folder, or the whole path when no folder contains it. `count`,
+ * `errors`, and `denied` cover every recorded change, even when `changes` stops at its limit.
  */
-export interface SummaryFile { path: string; display: string; count: number; errors: number; changes: SummaryChange[] }
+export interface SummaryFile { path: string; display: string; count: number; errors: number; denied: number; changes: SummaryChange[] }
 
 /**
  * A file the recording read but never changed, pointing at its first read. `folder` is its containing folder or

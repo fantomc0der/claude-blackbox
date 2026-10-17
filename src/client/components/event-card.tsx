@@ -27,6 +27,7 @@ import {
 } from "../lib/content";
 import { jsonSegments, overlaySegments, sliceSegments, type TextSegment } from "../lib/json-highlight";
 import { terminalRuns } from "../../shared/ansi";
+import { decisionLabels, resultDecision, type Decision } from "../../shared/decisions";
 import { Markdown } from "./markdown";
 import { Highlight } from "./highlight";
 import { Icon, type IconName } from "./icon";
@@ -192,6 +193,24 @@ function ResultImages(props: { title: string; result?: ContentBlock }) {
   return <For each={resultImages(props.result)}>{(block) => <ImagePanel title={props.title} block={block} />}</For>;
 }
 
+// The status a result gives its call: a decision the user, a permission rule, or a hook made is told apart from a
+// failure, in the glyph, the accessible name, and the card's tint.
+type ToolStatus = "error" | "success" | "pending" | Decision;
+
+function resultStatus(result: ContentBlock | undefined): ToolStatus {
+  if (!result) return "pending";
+  return resultDecision(result) ?? (result.is_error === true ? "error" : "success");
+}
+
+// The heading of a recorded result's panel: a decision is named as such, a failure as an error.
+function resultTitle(result: ContentBlock | undefined, error: string, success: string): string {
+  const decision = resultDecision(result);
+  return decision ? decisionLabels[decision] : result?.is_error ? error : success;
+}
+
+const statusGlyphs: Record<ToolStatus, string> = { error: "!", success: "✓", pending: "→", denied: "⊘", blocked: "⊘", interrupted: "⊘" };
+const statusClass = (status: ToolStatus) => status === "error" ? "tool-card-error" : status === "success" || status === "pending" ? "" : "tool-card-decision";
+
 function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highlight?: string }) {
   const input = () => getToolInput(props.block);
   const name = () => (props.block.name ?? "").toLowerCase();
@@ -204,35 +223,35 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
     <Show when={name() === "write"}><CodePanel title={getString(input().file_path) ?? "Written file"} value={getString(input().content) ?? prettyValue(input())} highlight={props.highlight} /></Show>
     <Show when={name() === "read" && (result() || !images().length)}><CodePanel title={readTitle()} value={result() || prettyValue(input())} highlight={props.highlight} /></Show>
     <Show when={name() === "read"}><ResultImages title={readTitle()} result={props.result} /></Show>
-    <Show when={terminal()}><CodePanel title="Command" value={getString(input().command) ?? prettyValue(input())} highlight={props.highlight} terminal /><Show when={result()}><CodePanel title={props.result?.is_error ? "Command error" : "Command output"} value={result()} highlight={props.highlight} terminal /></Show></Show>
+    <Show when={terminal()}><CodePanel title="Command" value={getString(input().command) ?? prettyValue(input())} highlight={props.highlight} terminal /><Show when={result()}><CodePanel title={resultTitle(props.result, "Command error", "Command output")} value={result()} highlight={props.highlight} terminal /></Show></Show>
     <Show when={name() === "todowrite" || name() === "todo"}><TodoPanel input={input()} /></Show>
     <Show when={name() === "task" || name() === "agent"}><section class="tool-task"><strong>{getString(input().description) ?? getString(input().subagent_type) ?? "Task"}</strong><p>{getString(input().prompt) ?? ""}</p></section></Show>
     <Show when={name() === "askuserquestion" || name() === "ask_question"}><QuestionPanel input={input()} /></Show>
     <Show when={!(["edit", "write", "read", "bash", "shell", "powershell", "todowrite", "todo", "task", "agent", "askuserquestion", "ask_question"] as string[]).includes(name())}><CodePanel title="Tool input" value={prettyValue(input())} highlight={props.highlight} json /></Show>
-    <Show when={!terminal() && name() !== "read" && result()}><CodePanel title={props.result?.is_error ? "Tool error" : "Tool result"} value={result()} highlight={props.highlight} /></Show>
+    <Show when={!terminal() && name() !== "read" && result()}><CodePanel title={resultTitle(props.result, "Tool error", "Tool result")} value={result()} highlight={props.highlight} /></Show>
     <Show when={name() !== "read"}><ResultImages title="Tool result image" result={props.result} /></Show>
   </div>;
 }
 
 // A call's status, name, and command, path, or query, shared by the call's own card and by a result card that names it.
-function ToolLabel(props: { block: ContentBlock; status: "error" | "success" | "pending"; previewId?: string }) {
+function ToolLabel(props: { block: ContentBlock; status: ToolStatus; previewId?: string }) {
   const preview = createMemo(() => toolPreviewParts(props.block));
   const previewText = () => preview().head + preview().tail;
-  return <><span class="tool-status" aria-label={`Tool ${props.status}`}>{props.status === "error" ? "!" : props.status === "success" ? "✓" : "→"}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden" id={props.previewId}>{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show></>;
+  return <><span class="tool-status" aria-label={`Tool ${props.status}`}>{statusGlyphs[props.status]}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden" id={props.previewId}>{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show></>;
 }
 
 function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string; subagents?: SubagentNavigation }) {
   // A highlight opens only the calls whose input or result contains it, so a highlighted replay does not unfold every call.
   const highlighted = createMemo(() => Boolean(props.highlight) && (mentions(getToolInput(props.block), props.highlight!) || mentions(resultText(props.result), props.highlight!)));
   const [open, setOpen] = createSignal(untrack(() => Boolean(props.result?.is_error || highlighted() || /^(todowrite|askuserquestion|task|agent)$/i.test(props.block.name || ""))));
-  const status = () => props.result?.is_error === true ? "error" : props.result ? "success" : "pending";
+  const status = () => resultStatus(props.result);
   const recording = () => props.subagents?.targets[props.block.id || ""];
   const previewId = createUniqueId();
   createEffect(() => Boolean(highlighted() || props.result?.is_error), value => { if (value) setOpen(true); });
   // The row opens the call wherever it is pressed, the disclosure glyph beside the copy button included; presses on the
   // buttons themselves are theirs alone.
   const toggleRow = (event: MouseEvent) => { if (!(event.target instanceof Element && event.target.closest("button"))) setOpen(!open()); };
-  return <section class={`tool-card ${props.result?.is_error ? "tool-card-error" : ""}`}>
+  return <section class={`tool-card ${statusClass(status())}`}>
     <div class="tool-head" onClick={toggleRow}>
       <button class="tool-summary" type="button" aria-expanded={open() ? "true" : "false"} onClick={() => { setOpen(!open()); }}><ToolLabel block={props.block} status={status()} previewId={previewId} /></button>
       <ToolCopy block={props.block} describedBy={previewId} />
@@ -255,8 +274,9 @@ function ToolResult(props: { block: ContentBlock; call?: ContentBlock; highlight
   const previewId = createUniqueId();
   const images = () => contentImages(props.block.content);
   const value = () => contentToText(props.block.content) || (images().length ? "" : prettyValue(props.block.content ?? props.block));
-  const output = () => <><Show when={value()}><CodePanel title={props.block.is_error ? "Recorded tool error" : "Recorded tool result"} value={value()} highlight={props.highlight} /></Show><For each={images()}>{(block) => <Attachment block={block} label="Recorded image result" />}</For></>;
-  return <section class={`tool-card tool-result ${props.block.is_error ? "tool-card-error" : ""}`}><Show when={props.call} fallback={output()}>{call => <><div class="tool-head"><div class="tool-summary tool-result-call"><ToolLabel block={call()} status={props.block.is_error ? "error" : "success"} previewId={previewId} /></div><ToolCopy block={call()} describedBy={previewId} /></div><div class="tool-content">{output()}</div></>}</Show></section>;
+  const status = () => resultStatus(props.block);
+  const output = () => <><Show when={value()}><CodePanel title={resultTitle(props.block, "Recorded tool error", "Recorded tool result")} value={value()} highlight={props.highlight} /></Show><For each={images()}>{(block) => <Attachment block={block} label="Recorded image result" />}</For></>;
+  return <section class={`tool-card tool-result ${statusClass(status())}`}><Show when={props.call} fallback={output()}>{call => <><div class="tool-head"><div class="tool-summary tool-result-call"><ToolLabel block={call()} status={status()} previewId={previewId} /></div><ToolCopy block={call()} describedBy={previewId} /></div><div class="tool-content">{output()}</div></>}</Show></section>;
 }
 
 function HiddenReasoning(props: { label: string; detail: string }) {
@@ -320,8 +340,8 @@ export function EventCard(props: EventCardProps) {
     url.searchParams.delete("context");
     return url.pathname + url.search;
   };
-  return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
-    <header class="replay-event-header"><span class="replay-role"><Show when={roleIcon()}>{name => <Icon name={name()} size={14} class="replay-role-icon" />}</Show>{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show></header>
+  return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : props.event.decision ? "replay-event-decision" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
+    <header class="replay-event-header"><span class="replay-role"><Show when={roleIcon()}>{name => <Icon name={name()} size={14} class="replay-role-icon" />}</Show>{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{formatEventTime(props.event.timestamp)}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">Error</span></Show><Show when={props.event.decision}>{decision => <span class="replay-decision-label">{decisionLabels[decision()]}</span>}</Show></header>
     <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={isRequestMessage(props.event)} fallback={<><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></>}><p class="tool-hidden" title={`${requestMessageDetail} Raw event shows this copy.`}>Message stored for the API request that follows</p></Show><Show when={props.requestMessages}>{run => <RequestMessages run={run()} highlight={props.highlight} />}</Show></div>
     <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} json /></Show></details>

@@ -1,7 +1,7 @@
 @layer base, layout, components, responsive;
 
 @layer base {
-  :root { color-scheme: dark; --bg: #101214; --surface: #171a1c; --raised: #1d2123; --line: #2a2e30; --text: #e9eae5; --muted: #929a9a; --accent: #c7ee79; --accent-dim: #c7ee7910; --danger: #f4a59b; --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace; --text-meta: .75rem; --text-support: .8125rem; --text-control: .875rem; --text-code: .875rem; --text-body: .9375rem; font-family: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif; font-size: 100%; color: var(--text); background: var(--bg); font-synthesis: none; -webkit-font-smoothing: antialiased; }
+  :root { color-scheme: dark; --bg: #101214; --surface: #171a1c; --raised: #1d2123; --line: #2a2e30; --text: #e9eae5; --muted: #929a9a; --accent: #c7ee79; --accent-dim: #c7ee7910; --danger: #f4a59b; --caution: #e0b86b; --caution-line: #5f5134; --caution-surface: #332c1c; --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace; --text-meta: .75rem; --text-support: .8125rem; --text-control: .875rem; --text-code: .875rem; --text-body: .9375rem; font-family: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif; font-size: 100%; color: var(--text); background: var(--bg); font-synthesis: none; -webkit-font-smoothing: antialiased; }
   :root[data-text-size="larger"] { --text-meta: .875rem; --text-support: .9375rem; --text-control: 1rem; --text-code: .9375rem; --text-body: 1.0625rem; }
   * { box-sizing: border-box; }
   body { margin: 0; font-size: var(--text-control); line-height: 1.5; }
@@ -506,6 +506,7 @@
     .outline-dot { width: 5px; height: 5px; margin-top: 5px; flex-shrink: 0; border-radius: 50%; background: #8ea47a; }
     .outline-dot.user { background: #b6b9b0; }
     .outline-dot.error { background: #e5a492; }
+    .outline-dot.decision { background: var(--caution); }
     .inspector-note { display: flex; gap: 6px; align-items: center; margin: 24px 0 0; font-size: var(--text-meta); color: #8f9e86; }
   }
   @media (max-height: 820px) and (min-width: 681px) {

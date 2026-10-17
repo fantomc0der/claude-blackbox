@@ -322,6 +322,48 @@ describe("recording index", () => {
     expect(timeline.buckets.every((bucket, index) => bucket.first === index * 10 && bucket.last === index * 10 + 9)).toBe(true);
   });
 
+  test("shows the tools the user stopped with the errors without counting them as errors", async () => {
+    const fixtureData = await fixture();
+    const call = (id: string, command: string) => fixtureData.record([{ type: "tool_use", id, name: "Bash", input: { command } }], { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command } }], model: "claude-sonnet-5-5" } });
+    const result = (id: string, content: string, at: string, extra = {}) => fixtureData.record([{ type: "tool_result", tool_use_id: id, content, is_error: true }], { timestamp: at, ...extra });
+    const denial = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
+    await writeFile(fixtureData.file, [
+      fixtureData.record("clean the install", { timestamp: "2026-10-17T10:00:00Z" }),
+      call("toolu_1", "rm -rf node_modules"),
+      result("toolu_1", denial, "2026-10-17T10:00:02Z", { toolUseResult: "The user doesn't want to take this action right now." }),
+      call("toolu_2", "git push --force"),
+      result("toolu_2", "Execution stopped by PreToolUse hook: protected branch", "2026-10-17T10:00:04Z"),
+      call("toolu_3", "sleep 600"),
+      result("toolu_3", "[Request interrupted by user for tool use]", "2026-10-17T10:00:06Z"),
+      call("toolu_4", "bun test"),
+      result("toolu_4", "<tool_use_error>Exit code 1\n1 fail</tool_use_error>", "2026-10-17T10:00:08Z"),
+    ].join("\n") + "\n");
+    await writeFile(join(fixtureData.project, "session-b.jsonl"), [
+      fixtureData.record("just a denial", { sessionId: "session-b" }),
+      result("toolu_5", denial, "2026-10-17T11:00:00Z", { sessionId: "session-b" }),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const sessions = recorder.list(new URLSearchParams()).items;
+    const mixed = sessions.find(session => session.title === "clean the install")!, denied = sessions.find(session => session.title === "just a denial")!;
+    // Only the failing test counts; the denial, the hook stop, and the interruption are the user's decisions.
+    expect([mixed.errorCount, denied.errorCount]).toEqual([1, 0]);
+    expect(recorder.list(new URLSearchParams({ errors: "1" })).items.map(session => session.title)).toEqual(["clean the install"]);
+    expect(recorder.list(new URLSearchParams({ sort: "errors" })).items.map(session => session.title)).toEqual(["clean the install", "just a denial"]);
+    expect((await recorder.catalog()).errors).toBe(1);
+    // The Errors view keeps every stopped tool beside the failure, each knowing which it is; the error constraint on
+    // another view does the same.
+    const errors = recorder.events(mixed.id, new URLSearchParams({ kind: "all", errors: "1" }));
+    expect(errors.items.map(event => [event.sequence, event.error, event.decision])).toEqual([[2, false, "denied"], [4, false, "blocked"], [6, false, "interrupted"], [8, true, null]]);
+    expect(recorder.events(mixed.id, new URLSearchParams({ kind: "tool", errors: "1" })).total).toBe(4);
+    expect(recorder.events(denied.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.decision)).toEqual(["denied"]);
+    expect(recorder.matches(mixed.id, new URLSearchParams({ kind: "all", errors: "1", find: "user" })).items.map(item => item.sequence)).toEqual([2, 6]);
+    // The activity strip's error share counts failures only.
+    const timeline = recorder.timeline(mixed.id, new URLSearchParams({ kind: "all" }));
+    expect(timeline.buckets.map(bucket => [bucket.count, bucket.errors])).toEqual([[9, 1]]);
+    expect(recorder.timeline(mixed.id, new URLSearchParams({ kind: "all", errors: "1" })).buckets.map(bucket => [bucket.count, bucket.errors])).toEqual([[4, 1]]);
+    expect(recorder.db.query<{ error: number; decision: number }, [string]>("SELECT sum(error) AS error, sum(decision) AS decision FROM events WHERE session_id=?").get(mixed.id)).toEqual({ error: 1, decision: 3 });
+  });
+
   test("indexes tool-only content, supports phrase/exclusion and combined filters", async () => {
     const fixtureData = await fixture();
     await writeFile(fixtureData.file, [fixtureData.record("Fix auth"), fixtureData.record([

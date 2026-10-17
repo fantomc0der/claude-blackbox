@@ -20,7 +20,7 @@ On every open, the constructor runs the `schema` script, which begins with three
 
 The code sets no other pragma; `synchronous`, `page_size`, and the rest keep SQLite's defaults. Because of WAL mode, `index.sqlite-wal` and `index.sqlite-shm` sit beside `index.sqlite` while a connection is open. A clean close checkpoints and removes them; after a forced exit they can remain and hold committed data, so a backup of the state directory must include all three files.
 
-The schema version lives in `PRAGMA user_version` and is currently 8 (see [Schema versions](#schema-versions)).
+The schema version lives in `PRAGMA user_version` and is currently 9 (see [Schema versions](#schema-versions)).
 
 ## Derived and user-owned data
 
@@ -103,6 +103,7 @@ erDiagram
     TEXT cwd
     INTEGER has_thinking
     INTEGER has_tools
+    INTEGER decision
   }
   event_fts {
     INTEGER rowid "events.rowid"
@@ -175,7 +176,7 @@ One row per recording file. `reconcile()` inserts the row with `id`, `session_id
 | `events` | `INTEGER NOT NULL DEFAULT 0` | Number of complete, parseable records read. |
 | `messages` | `INTEGER NOT NULL DEFAULT 0` | Records whose category is `message`. |
 | `tools` | `INTEGER NOT NULL DEFAULT 0` | Total `tool_use` blocks across all records. |
-| `errors` | `INTEGER NOT NULL DEFAULT 0` | Records whose error flag is set. |
+| `errors` | `INTEGER NOT NULL DEFAULT 0` | Records whose `error` flag is set: failures, not the decisions `events.decision` marks. |
 | `edits` | `INTEGER NOT NULL DEFAULT 0` | 1 when any tool name matches `edit`, `write`, `multiedit`, or `notebookedit` case-insensitively. |
 | `agent` | `INTEGER NOT NULL DEFAULT 0` | 1 when the path contains a `subagents` directory segment or the file name starts with `agent-`. |
 | `size` | `INTEGER NOT NULL DEFAULT 0` | File size in bytes at the last read. |
@@ -202,7 +203,7 @@ One row per complete JSONL record, in file order. `reconcile()` calls `normalize
 | `offset` | `INTEGER NOT NULL` | Byte offset of the record's line in the file. |
 | `category` | `TEXT NOT NULL` | `system` when the role is system; `hidden` when every block is reasoning the API did not return; `message` when a text block has content; `tool` when a `tool_use` or `tool_result` block is present; otherwise `thinking`. |
 | `type` | `TEXT NOT NULL` | The record's `type` field, or `unknown`. |
-| `error` | `INTEGER NOT NULL` | 1 when any block has `is_error: true`, the record has `is_error: true`, or its `level` is `error`. |
+| `error` | `INTEGER NOT NULL` | 1 when a block has `is_error: true` without recording a decision (see `decision`), the record has `is_error: true`, its `level` is `error`, or it has `isApiErrorMessage: true`. Since version 9 for the decision and API error rules. |
 | `tools` | `TEXT NOT NULL` | Names of the record's `tool_use` blocks (`Unknown tool` for a missing name) that pass `isFacetValue()`, joined by newlines. The tool filters test this column with `instr()`. |
 | `raw` | `TEXT NOT NULL` | `JSON.stringify` of the whole record. Replay, export, and the summary parse it back. |
 | `text` | `TEXT NOT NULL` | The searchable text (see [Full-text search](#full-text-search)). |
@@ -212,8 +213,9 @@ One row per complete JSONL record, in file order. `reconcile()` calls `normalize
 | `cwd` | `TEXT NOT NULL DEFAULT ''` | The record's `cwd` field. Since version 5. |
 | `has_thinking` | `INTEGER NOT NULL DEFAULT 0` | 1 when a `thinking` block has non-empty `thinking` or `text`. Since version 5. |
 | `has_tools` | `INTEGER NOT NULL DEFAULT 0` | 1 when a `tool_use` or `tool_result` block is present. Since version 5. |
+| `decision` | `INTEGER NOT NULL DEFAULT 0` | 1 when a `tool_result` block with `is_error: true` records a decision rather than a failure: Claude Code's own message for a permission that the user, a permission rule, or a non-interactive mode refused, for a PreToolUse hook that stopped the call, or for an interruption, as `resultDecision()` in `src/shared/decisions.ts` matches it. The `errors=1` replay filter selects these records with the errors; nothing counts them as errors. Since version 9. |
 
-Indexes: `events_session` on `(session_id, sequence)` serves every per-recording query: paging and anchors in `events()`, `matches()`, `timeline()`, `summary()`, the export route, and the interrupted-import check. `events_model`, `events_timestamp`, `events_cwd`, and `events_tools`, each on `(session_id, <column>)`, serve the replay filters of the same name and the model and tool filters of the library listing, which test a session's events with `EXISTS`; `events_cwd` also serves the summary's first record per working directory. These four are created in the constructor rather than in the `schema` script because their columns were added by `ALTER TABLE` in version 5. The `UNIQUE` constraint on `event_id` serves the `anchor` lookup and makes `INSERT OR IGNORE` idempotent.
+Indexes: `events_session` on `(session_id, sequence)` serves every per-recording query: paging and anchors in `events()`, `matches()`, `timeline()`, `summary()`, the export route, and the interrupted-import check. `events_model`, `events_timestamp`, `events_cwd`, and `events_tools`, each on `(session_id, <column>)`, serve the replay filters of the same name and the model and tool filters of the library listing, which test a session's events with `EXISTS`; `events_cwd` also serves the summary's first record per working directory. These four are created in the constructor rather than in the `schema` script because their columns were added by `ALTER TABLE` in version 5. `decision` has no index: the filter that reads it always runs within one recording through `events_session`. The `UNIQUE` constraint on `event_id` serves the `anchor` lookup and makes `INSERT OR IGNORE` idempotent.
 
 ### usage_records
 
@@ -334,7 +336,7 @@ Interrupted imports are repaired at the next open. The constructor selects every
 
 ## Schema versions
 
-`PRAGMA user_version` records which normalization the derived rows were written with. The constructor reads it first and throws `This index was created by a newer version. Choose a different state directory.` when it is greater than 8, so after an upgrade an older installed build cannot open the index. It then runs the `schema` script (its pragmas, then `CREATE ... IF NOT EXISTS` statements), adds any column that `PRAGMA table_info` reports missing, creates the indexes of version 5, and applies the version steps in order. Versions 1 and 3 were never written by any build: the gate started at 2 and later moved from 2 to 4 directly.
+`PRAGMA user_version` records which normalization the derived rows were written with. The constructor reads it first and throws `This index was created by a newer version. Choose a different state directory.` when it is greater than 9, so after an upgrade an older installed build cannot open the index. It then runs the `schema` script (its pragmas, then `CREATE ... IF NOT EXISTS` statements), adds any column that `PRAGMA table_info` reports missing, creates the indexes of version 5, and applies the version steps in order. Versions 1 and 3 were never written by any build: the gate started at 2 and later moved from 2 to 4 directly.
 
 | Version | Introduced | What changed | Upgrade |
 | --- | --- | --- | --- |
@@ -345,8 +347,9 @@ Interrupted imports are repaired at the next open. The constructor selects every
 | 6 | 2026-10-10 | Reasoning the API did not return is classified as `hidden` instead of `thinking`. | Full reset on open. |
 | 7 | 2026-10-15 | Terminal escape sequences are stripped from `sessions.title`. | In place on open: a transaction rewrites each title that `stripAnsi()` changes and sets the version; nothing is re-read. |
 | 8 | 2026-10-16 | An `api-request-blob` record indexes as a system record with no blocks, no tool links, and only its composed text searchable. | Targeted reset at the start of the first scan after open: recordings with an event of type `api-request-blob` are marked for re-reading and the version is set in the same transaction. |
+| 9 | 2026-10-17 | `events.decision`; a `tool_result` that records a permission denial, a hook stop, or an interruption sets `decision` instead of `error`, and an assistant record with `isApiErrorMessage: true` sets `error`. | Targeted reset at the start of the first scan after open: recordings with an event whose `error` is 1 or whose `model` is `<synthetic>` are marked for re-reading and the version is set in the same transaction. Every result an earlier build flagged is in the first group and every API error turn in the second. |
 
-"Full reset on open" is `UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=6;`, which runs whenever the version is below 6, or whenever the `tool_results` or `session_facets` table did not exist before the `schema` script ran, so any index older than version 6 is re-read in full and then passes through the version 7 and 8 steps. Versions up to 7 complete inside the constructor, before `Recorder.open()` returns. Version 8 is different: finding the affected recordings reads every event, so `reconcile()` performs it when the first scan begins. `src/server/cli.ts` opens the recorder with `scan: false`, binds the HTTP port, and only then starts that scan, so a large index does not delay the desktop window. Until that scan runs, the version stays at 7 and the derived rows are those of version 7.
+"Full reset on open" is `UPDATE sessions SET mtime=0, identity=''; PRAGMA user_version=6;`, which runs whenever the version is below 6, or whenever the `tool_results` or `session_facets` table did not exist before the `schema` script ran, so any index older than version 6 is re-read in full and then passes through the version 7, 8, and 9 steps. Versions up to 7 complete inside the constructor, before `Recorder.open()` returns. Versions 8 and 9 are different: finding the affected recordings reads every event, so `reconcile()` performs each step the stored version is below, in order, when the first scan begins. `src/server/cli.ts` opens the recorder with `scan: false`, binds the HTTP port, and only then starts that scan, so a large index does not delay the desktop window. Until that scan runs, the version stays at the stored 7 or 8 and the derived rows are those of that version; the `decision` column already exists by then, added through the `PRAGMA table_info` check with its default of 0.
 
 The `rates` and `unrated` columns of `usage_records` were added after version 7 without a version bump. They arrive through the `PRAGMA table_info` check like every other added column, and the rate-stamp comparison described above re-indexes the rows that lack a current stamp, so no version step was needed.
 
@@ -376,7 +379,7 @@ Useful queries against the real schema:
 SELECT id, session_id, title, cwd, events, started, updated FROM sessions ORDER BY updated DESC LIMIT 20;
 
 -- The records of one recording in order.
-SELECT sequence, offset, event_id, type, role, category, has_tools, error, timestamp
+SELECT sequence, offset, event_id, type, role, category, has_tools, error, decision, timestamp
 FROM events WHERE session_id = '0123456789abcdef01234567' ORDER BY sequence;
 
 -- Every tool call with the result that answered it, if any.

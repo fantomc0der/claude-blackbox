@@ -19,6 +19,9 @@
   --light-error-line: #c7a298;
   --light-warning: #785832;
   --light-warning-surface: #eee7da;
+  --caution: var(--light-warning);
+  --caution-line: #c8b48a;
+  --caution-surface: var(--light-warning-surface);
   --light-success: #405a38;
   --light-success-surface: #e0e8da;
   --light-shadow: #2628251f;

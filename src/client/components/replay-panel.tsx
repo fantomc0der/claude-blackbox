@@ -17,6 +17,7 @@ import { SessionFamilyNavigation } from "./session-family";
 import { ReplayTimeline } from "./replay-timeline";
 import { OverviewFiles } from "./overview-files";
 import { isPlainNavigation, recalledReplayPosition, rememberReplayPosition, replayPositionKey, sessionDestination, sessionHref } from "../lib/session-navigation";
+import { decisionLabels } from "../../shared/decisions";
 
 type ReplayPage = EventPage & { results: Record<string, ContentBlock>; calls: Record<string, ContentBlock> };
 
@@ -43,6 +44,7 @@ function summaryRecord(summary: SessionSummary, id: string): SummaryRecord | und
 
 function outlineLabel(event: ReplayEvent): string {
   if (event.error) return "Error";
+  if (event.decision) return decisionLabels[event.decision];
   if (event.toolNames.length) return [...new Set(event.toolNames)].join(" · ");
   if (isToolResultEvent(event)) return "Tool result";
   return event.role === "user" ? "You" : "Claude";
@@ -561,7 +563,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
   });
-  const outline = () => visibleEvents().filter(event => event.category === "message" || event.error || event.toolNames.length).slice(0, 24);
+  const outline = () => visibleEvents().filter(event => event.category === "message" || event.error || event.decision || event.toolNames.length).slice(0, 24);
   const jumpToEvent = (id: string) => {
     scroll.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   };
@@ -729,7 +731,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
       <div class="overview-section">
         <select class="overview-view" aria-label="Overview content" value={overviewView()} onChange={event => changeOverviewView(event.currentTarget.value)}><option value="page">On this page</option><option value="files">{filesOption()}</option></select>
-        <Show when={overviewView() === "files"} fallback={<nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>}>
+        <Show when={overviewView() === "files"} fallback={<nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, decision: !event.error && Boolean(event.decision), user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>}>
           <OverviewFiles summary={summaryState()?.data ?? null} failed={summaryFailed()} retry={() => { setSummaryFailed(false); setSummaryRetry(value => value + 1); }} show={showRecord} selected={pinned()} />
         </Show>
       </div>

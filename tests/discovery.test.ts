@@ -175,7 +175,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(8);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(9);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -264,11 +264,47 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(8);
+  expect(version()).toBe(9);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
   expect(after.getSession(copied.id)?.toolCount).toBe(1);
+});
+
+const denial = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
+const toolResult = (id: string, content: string, is_error = true) => record("", { message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error }] } });
+const apiErrorTurn = () => record("", { type: "assistant", isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 },
+  message: { id: "synthetic-1", model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "API Error: 529 Overloaded" }], usage: { input_tokens: 0, output_tokens: 0 } } });
+
+test("version 8 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
+  const setup = await fixture();
+  await setup.write("denied", [record("Clean the install"), toolResult("rm-call", denial)]);
+  await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
+  await setup.write("api-error", [record("Fix the flaky test"), apiErrorTurn()]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const before = await setup.open();
+  const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
+  // Indexes written before version 9 flagged every `is_error` result as an error and no API error turn.
+  before.db.query("UPDATE events SET error=1, decision=0 WHERE session_id=?").run(sessions["Clean the install"]);
+  before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions["Clean the install"]);
+  before.db.query("UPDATE events SET error=0 WHERE session_id=?").run(sessions["Fix the flaky test"]);
+  before.db.query("UPDATE sessions SET errors=0 WHERE id=?").run(sessions["Fix the flaky test"]);
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=8");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(8);
+  expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
+  await after.scan();
+  expect(version()).toBe(9);
+  for (const title of ["Clean the install", "Run the tests", "Fix the flaky test"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
+  expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
+  expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(0);
+  expect(after.getSession(sessions["Run the tests"])?.errorCount).toBe(1);
+  expect(after.getSession(sessions["Fix the flaky test"])?.errorCount).toBe(1);
+  expect(after.events(sessions["Clean the install"], new URLSearchParams("kind=all&errors=1")).items.map(event => [event.sequence, event.error, event.decision])).toEqual([[1, false, "denied"]]);
 });
 
 test("an API request's copies of an /add-dir command and its output add no folder", async () => {
