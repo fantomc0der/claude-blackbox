@@ -175,7 +175,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(7);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(8);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -196,6 +196,93 @@ test("version 6 indexes clean terminal styling out of stored titles without resc
   expect(after.getSession(named.id)?.title).toBe("Custom  title");
   expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(7);
   expect(after.db.query<{ identity: string }, [string]>("SELECT identity FROM sessions WHERE id=?").get(session.id)!.identity).not.toBe("");
+});
+
+// Claude Code writes the messages an API request adds as `api-request-blob` records, without timestamps, just before the
+// `api-request` record that sends them. Assistant turns and tool blocks copy other records; the hook context Claude Code
+// composed for the request can appear only in its copy.
+const requestBlob = (hash: string, message: unknown) => ({ type: "api-request-blob", sessionId: "synthetic", hash, message });
+const apiRequest = (tail: string[]) => ({ type: "api-request", sessionId: "synthetic", id: "request", timestamp: "2026-09-20T12:00:03Z", keep: 2, tail });
+
+function requestCopies(call: Record<string, unknown>, result: Record<string, unknown>) {
+  return [
+    requestBlob("hash-assistant", { role: "assistant", content: [{ type: "thinking", thinking: "", signature: "signed" }, call, { type: "text", text: "Saltmarsh renamed" }] }),
+    requestBlob("hash-user", { role: "user", content: [result] }),
+    requestBlob("hash-system", { role: "system", content: [{ type: "text", text: "PreToolUse:Edit hook additional context: Saltmarsh" }] }),
+    apiRequest(["hash-assistant", "hash-user", "hash-system"]),
+  ];
+}
+
+test("API request message copies stay in the chronology without blocks, tool links, or copied search text", async () => {
+  const setup = await fixture();
+  const call = { type: "tool_use", id: "edit-call", name: "Edit", input: { file_path: "/synthetic/project/app.ts", old_string: "a", new_string: "b" } };
+  const result = { type: "tool_result", tool_use_id: "edit-call", content: "Saltmarsh edit rejected", is_error: true };
+  await setup.write("copies", [
+    record("Rename the Saltmarsh helper"),
+    record("", { type: "assistant", timestamp: "2026-09-20T12:00:01Z", message: { model: "model-a", content: [call] } }),
+    record("", { timestamp: "2026-09-20T12:00:02Z", message: { content: [result] } }),
+    ...requestCopies(call, result),
+  ]);
+  const recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
+  const all = events("kind=all");
+  expect(all.total).toBe(7);
+  const copies = all.items.filter(event => event.type === "api-request-blob");
+  expect(copies.map(event => ({ category: event.category, blocks: event.blocks.length, tools: event.toolNames.length, error: event.error, timestamp: event.timestamp })))
+    .toEqual(Array(3).fill({ category: "system", blocks: 0, tools: 0, error: false, timestamp: "" }));
+  expect(copies.map(event => event.text)).toEqual(["", "", "type: text\ntext: PreToolUse:Edit hook additional context: Saltmarsh"]);
+  expect(events("kind=tool").items.map(event => event.sequence)).toEqual([1, 2]);
+  expect(events("kind=edits").items.map(event => event.sequence)).toEqual([1, 2]);
+  expect(events("kind=all&errors=1").items.map(event => event.sequence)).toEqual([2]);
+  expect(recorder.matches(session.id, new URLSearchParams("kind=all&find=Saltmarsh")).items.map(item => item.sequence)).toEqual([0, 2, 5]);
+  expect([session.toolCount, session.errorCount]).toEqual([1, 1]);
+  const changes = recorder.summary(session.id, new URLSearchParams("kind=all")).folders.flatMap(folder => folder.files).flatMap(file => file.changes);
+  expect(changes.map(change => ({ id: change.id, timestamp: change.timestamp, error: change.error })))
+    .toEqual([{ id: all.items[1].id, timestamp: "2026-09-20T12:00:01.000Z", error: true }]);
+});
+
+test("version 7 indexes re-index only the recordings that hold API request message copies", async () => {
+  const setup = await fixture();
+  const call = { type: "tool_use", id: "edit-call", name: "Edit", input: { file_path: "/synthetic/project/app.ts", old_string: "a", new_string: "b" } };
+  const result = { type: "tool_result", tool_use_id: "edit-call", content: "Edited" };
+  await setup.write("copies", [record("Copied prompt"), record("", { type: "assistant", message: { content: [call] } }), record("", { message: { content: [result] } }), ...requestCopies(call, result)]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const before = await setup.open();
+  const sessions = before.list(new URLSearchParams()).items;
+  const copied = sessions.find(item => item.title === "Copied prompt")!, plain = sessions.find(item => item.title === "Plain prompt")!;
+  // Indexes written before version 8 read each copy's blocks, so the copied call took over the original's tool link.
+  before.db.query("UPDATE tool_calls SET event_row=(SELECT rowid FROM events WHERE session_id=? AND type='api-request-blob' ORDER BY sequence LIMIT 1)").run(copied.id);
+  before.db.query("UPDATE sessions SET tools=2 WHERE id=?").run(copied.id);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=7");
+  await before.close();
+  // Finding those recordings reads every event, so opening leaves it to the first scan, after the server binds its port.
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(7);
+  await after.scan();
+  expect(version()).toBe(8);
+  expect(cwds(copied.id)).not.toContain("/synthetic/stale");
+  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
+  expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
+  expect(after.getSession(copied.id)?.toolCount).toBe(1);
+});
+
+test("an API request's copies of an /add-dir command and its output add no folder", async () => {
+  const setup = await fixture();
+  await setup.write("add-dir-copies", [
+    record("Start"),
+    requestBlob("hash-command", { role: "user", content: "<command-name>/add-dir</command-name>\n<command-message>add-dir</command-message>\n<command-args>/synthetic/shared</command-args>" }),
+    requestBlob("hash-output", { role: "user", content: "<local-command-stdout>Added /synthetic/shared as a working directory for this session</local-command-stdout>" }),
+    apiRequest(["hash-command", "hash-output"]),
+  ]);
+  const recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const summary = recorder.summary(session.id, new URLSearchParams("kind=all"));
+  expect(summary.folders.map(folder => [folder.path, Boolean(folder.working), Boolean(folder.added)])).toEqual([["/synthetic/project", true, false]]);
 });
 
 test("full-session replay filters precede pagination and context keeps original sequence", async () => {

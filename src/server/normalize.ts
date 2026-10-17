@@ -32,11 +32,25 @@ export function isHiddenReasoning(blocks: ContentBlock[]): boolean {
   return blocks.length > 0 && blocks.every(block => block.type === "redacted_thinking" || (block.type === "thinking" && !readableThinking(block)));
 }
 
+// Claude Code stores each message of an API request body once, keyed by its hash, in an `api-request-blob` record written
+// just before the `api-request` record that sends it. Its assistant turns, tool calls and results, and reasoning repeat
+// other records verbatim, so a blob contributes no blocks or tool links, and only the context Claude Code composed for
+// the request, such as hook output and reminders, stays searchable. The raw record keeps the whole message.
+export const requestMessageType = "api-request-blob";
+const copiedBlocks = new Set(["tool_use", "tool_result", "thinking", "redacted_thinking"]);
+
+function requestMessageText(message: Record<string, unknown>): string {
+  if (message.role === "assistant") return "";
+  if (typeof message.content === "string") return message.content;
+  return Array.isArray(message.content) ? searchable(message.content.filter(entry => !copiedBlocks.has(string(object(entry).type)))) : "";
+}
+
 export function normalize(raw: Record<string, unknown>, sourceId: string, offset: number, sequence: number): ReplayEvent {
   const message = object(raw.message);
   const type = string(raw.type) || "unknown";
   const role = (type === "user" || type === "assistant") && raw.isMeta !== true && raw.isCompactSummary !== true ? type : "system";
-  const content = message.content ?? raw.content;
+  const copy = type === requestMessageType;
+  const content = copy ? undefined : message.content ?? raw.content;
   let blocks: ContentBlock[] = [];
   if (typeof content === "string") blocks = [{ type: "text", text: content }];
   else if (Array.isArray(content)) blocks = content.map(entry => {
@@ -45,7 +59,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     return { ...block, type: string(block.type) || "unknown" } as ContentBlock;
   });
   if (!blocks.length && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
-  const text = blocks.length ? searchable(blocks) : searchable(raw);
+  const text = copy ? requestMessageText(message) : blocks.length ? searchable(blocks) : searchable(raw);
   const tools = blocks.filter(block => block.type === "tool_use");
   const hasTools = blocks.some(block => block.type === "tool_use" || block.type === "tool_result");
   const hasText = blocks.some(block => block.type === "text" && block.text?.trim());
