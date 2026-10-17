@@ -175,7 +175,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(8);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(9);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -264,11 +264,76 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(8);
+  expect(version()).toBe(9);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
   expect(after.getSession(copied.id)?.toolCount).toBe(1);
+});
+
+// When an API request fails for good, Claude Code records the failure itself as an `assistant` record marked
+// `isApiErrorMessage` with the error kind and HTTP status, the `<synthetic>` model, and zero usage. It writes other
+// stand-ins, such as `No response requested.`, the same way without the error marks.
+const standIn = (uuid: string, parentUuid: string, timestamp: string, text: string, extra: Record<string, unknown> = {}) => ({
+  type: "assistant", uuid, parentUuid, timestamp, cwd: "/synthetic/project", sessionId: "s1", ...extra,
+  message: { id: `synthetic-${uuid}`, model: "<synthetic>", role: "assistant", type: "message", stop_reason: "stop_sequence", content: [{ type: "text", text }],
+    usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+});
+const apiErrorText = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
+const apiError = (uuid: string, parentUuid: string, timestamp: string) => standIn(uuid, parentUuid, timestamp, apiErrorText, { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } });
+
+test("API error turns and other Claude Code stand-ins count as errors, never as Claude responses", async () => {
+  const setup = await fixture();
+  await setup.write("failed", [
+    { type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-10-17T10:00:00Z", cwd: "/synthetic/project", sessionId: "s1", message: { role: "user", content: "Fix the flaky login test" } },
+    apiError("a1", "u1", "2026-10-17T10:00:05Z"),
+    standIn("a2", "a1", "2026-10-17T10:00:06Z", "No response requested."),
+    { type: "assistant", uuid: "a3", parentUuid: "a2", timestamp: "2026-10-17T10:00:07Z", cwd: "/synthetic/project", sessionId: "s1",
+      message: { id: "m1", model: "model-a", role: "assistant", content: [{ type: "text", text: "Login test fixed" }], usage: { input_tokens: 10, output_tokens: 5 } } },
+  ]);
+  const recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
+  expect([session.messageCount, session.errorCount, session.usage.requests, session.model]).toEqual([2, 1, 1, "model-a"]);
+  const all = events("kind=all");
+  expect(all.items.map(event => [event.role, event.category, event.error])).toEqual([["user", "message", false], ["assistant", "synthetic", true], ["assistant", "synthetic", false], ["assistant", "message", false]]);
+  expect(all.items[1].blocks).toEqual([{ type: "text", text: apiErrorText }]);
+  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 1, 2, 3]);
+  expect(events("kind=responses").items.map(event => event.sequence)).toEqual([3]);
+  expect(events("kind=all&errors=1").items.map(event => event.sequence)).toEqual([1]);
+  expect(recorder.timeline(session.id, new URLSearchParams("kind=all")).buckets.map(bucket => bucket.errors)).toEqual([1]);
+  expect(recorder.list(new URLSearchParams("errors=1")).items.map(item => item.id)).toEqual([session.id]);
+  expect(recorder.list(new URLSearchParams("q=Overloaded")).items[0]).toMatchObject({ matchCategory: "synthetic", matchRole: "assistant" });
+  const catalog = await recorder.catalog();
+  expect([catalog.messages, catalog.errors]).toEqual([2, 1]);
+});
+
+test("version 8 indexes re-index only the recordings that hold Claude Code's stand-ins", async () => {
+  const setup = await fixture();
+  await setup.write("failed", [record("Failed prompt"), apiError("a1", "u1", "2026-09-20T12:00:05Z")]);
+  await setup.write("plain", [record("Plain prompt"), record("Reply", { type: "assistant", message: { model: "model-a", content: "Reply" } })]);
+  const before = await setup.open();
+  const sessions = before.list(new URLSearchParams()).items;
+  const failed = sessions.find(item => item.title === "Failed prompt")!, plain = sessions.find(item => item.title === "Plain prompt")!;
+  // Indexes written before version 9 read a stand-in as a reply with no error flag.
+  before.db.exec("UPDATE events SET category='message', error=0 WHERE type='assistant' AND model='<synthetic>'");
+  before.db.query("UPDATE sessions SET messages=2, errors=0 WHERE id=?").run(failed.id);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=8");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const counts = (id: string) => { const session = after.getSession(id)!; return [session.messageCount, session.errorCount]; };
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(8);
+  expect(counts(failed.id)).toEqual([2, 0]);
+  await after.scan();
+  expect(version()).toBe(9);
+  expect(counts(failed.id)).toEqual([1, 1]);
+  expect(after.events(failed.id, new URLSearchParams("kind=all&errors=1")).items.map(event => event.sequence)).toEqual([1]);
+  expect(cwds(failed.id)).not.toContain("/synthetic/stale");
+  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
 });
 
 test("an API request's copies of an /add-dir command and its output add no folder", async () => {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { UsageSummary } from "../shared/types";
-import { object, string } from "./normalize";
+import { object, string, syntheticModel } from "./normalize";
 import { isFacetValue } from "./facets";
 
 /** Rate multipliers for a request whose prompt, counting cache reads and writes, is over `above` tokens. */
@@ -82,7 +82,7 @@ export function normalizeModel(model: string): string {
 
 export function readUsage(raw: Record<string, unknown>, sessionId: string, eventId: string): UsageRecord | null {
   const message = object(raw.message);
-  if (raw.type !== "assistant" || message.model === "<synthetic>") return null;
+  if (raw.type !== "assistant" || message.model === syntheticModel) return null;
   const usage = object(message.usage);
   const cache = object(usage.cache_creation);
   const fields = [usage.input_tokens, usage.output_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens, cache.ephemeral_5m_input_tokens, cache.ephemeral_1h_input_tokens];

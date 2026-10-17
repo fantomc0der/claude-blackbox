@@ -5,6 +5,7 @@ test("search hits open on Conversation only when that view shows the matching re
   expect(matchReplayKind({ matchCategory: "message", matchRole: "user" })).toBe("conversation");
   expect(matchReplayKind({ matchCategory: "message", matchRole: "assistant" })).toBe("conversation");
   expect(matchReplayKind({ matchCategory: "thinking", matchRole: "assistant" })).toBe("conversation");
+  expect(matchReplayKind({ matchCategory: "synthetic", matchRole: "assistant" })).toBe("conversation");
   expect(matchReplayKind({ matchCategory: "tool", matchRole: "assistant" })).toBe("conversation");
   expect(matchReplayKind({ matchCategory: "tool", matchRole: "user" })).toBe("all");
   expect(matchReplayKind({ matchCategory: "tool" })).toBe("all");

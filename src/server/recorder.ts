@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string } from "./normalize";
+import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, rateStamp, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -215,7 +215,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 8) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 9) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -341,9 +341,17 @@ export class Recorder {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
     // its port, and before the recordings are compared with what was indexed.
-    if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 8) this.db.transaction(() => {
+    const version = () => this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+    if (version() < 8) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
       this.db.exec("PRAGMA user_version=8");
+    })();
+    // Version 9 re-indexes only the recordings that hold Claude Code's own stand-ins for a model turn, which earlier
+    // builds counted as replies and never as errors. An API error always records the `<synthetic>` model, so the stored
+    // model column finds every affected recording; like version 8, that reads every event and runs with the first scan.
+    if (version() < 9) this.db.transaction(() => {
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='assistant' AND model=?)").run(syntheticModel);
+      this.db.exec("PRAGMA user_version=9");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
@@ -412,7 +420,7 @@ export class Recorder {
             }
             if (inserted.changes) {
               const model = string(object(event.raw.message).model);
-              if (model !== "<synthetic>" && isFacetValue(model)) insertFacet.run(id, "model", model);
+              if (model !== syntheticModel && isFacetValue(model)) insertFacet.run(id, "model", model);
               if (isFacetValue(event.cwd, 2048)) insertFacet.run(id, "cwd", event.cwd);
               for (const name of toolNames) insertFacet.run(id, "tool", name);
               for (const block of event.blocks) {
@@ -435,7 +443,7 @@ export class Recorder {
           row.session_id = string(line.value.sessionId) || string(line.value.session_id) || row.session_id;
           row.branch = string(line.value.gitBranch) || row.branch;
           const model = string(object(line.value.message).model);
-          if (model && model !== "<synthetic>") row.model = model;
+          if (model && model !== syntheticModel) row.model = model;
           const explicit = string(line.value.customTitle) || string(line.value.aiTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
           if (explicit) { row.title = explicit.slice(0, 240); row.named = 1; }
           else if (!row.title || (!row.named && row.title.startsWith("Session "))) row.title = promptTitle(event) || row.title;

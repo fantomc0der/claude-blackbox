@@ -1,8 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { boundedDiff, contentToText, imageMeta, mentions, mentionsBudget, requestMessageRuns, resultImages, resultText, safeDataImage, toolArgument, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
+import { apiErrorLabel, boundedDiff, contentToText, imageMeta, mentions, mentionsBudget, requestMessageRuns, resultImages, resultText, safeDataImage, toolArgument, toolPreview, toolPreviewParts, toolTitle } from "../src/client/lib/content";
 import type { ReplayEvent } from "../src/shared/types";
 
 describe("replay content helpers", () => {
+  test("labels an API error with the recorded kind and HTTP status when they are usable", () => {
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } } })).toBe("API error · rate limit · HTTP 529");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "billing_error" } })).toBe("API error · billing error");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "unknown", apiError: { status: 500 } } })).toBe("API error · HTTP 500");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "", apiError: { status: "529" } } })).toBe("API error");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: 7, apiError: { status: 9000 } } })).toBe("API error");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "x".repeat(80), apiError: 529 } })).toBe(`API error · ${"x".repeat(39)}…`);
+  });
+
   test("keeps mixed nested content in source order", () => {
     expect(contentToText([{ type: "text", text: "first" }, { type: "thinking", thinking: "second" }, { type: "text", text: "third" }])).toBe("first\nsecond\nthird");
   });

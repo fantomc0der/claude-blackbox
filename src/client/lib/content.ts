@@ -48,6 +48,27 @@ export function isRequestMessage(event: Pick<ReplayEvent, "type">): boolean {
   return event.type === "api-request-blob";
 }
 
+/** A record Claude Code wrote itself in place of a model turn: an API error, or a stand-in such as `No response requested.`. */
+export function isStandIn(event: Pick<ReplayEvent, "category">): boolean {
+  return event.category === "synthetic";
+}
+
+export function isApiError(event: Pick<ReplayEvent, "raw">): boolean {
+  return event.raw.isApiErrorMessage === true;
+}
+
+// Claude Code notes the kind of a failed request (`rate_limit`, `invalid_request`, `billing_error`, or `unknown`) and
+// the HTTP status when there was one. Both are recorded content, so the label keeps them short and leaves out a status
+// that is not one.
+export function apiErrorLabel(event: Pick<ReplayEvent, "raw">): string {
+  const parts = ["API error"];
+  const kind = getString(event.raw.error)?.trim().replace(/_/g, " ");
+  if (kind && kind !== "unknown") parts.push(truncate(kind, 40));
+  const status = isRecord(event.raw.apiError) ? event.raw.apiError.status : undefined;
+  if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) parts.push(`HTTP ${status}`);
+  return parts.join(" · ");
+}
+
 export interface RequestMessageRun {
   messages: ReplayEvent[];
   /** The run opens a page that has records before it, so more of it may be on the previous page. */
