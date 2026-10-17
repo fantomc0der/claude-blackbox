@@ -137,6 +137,10 @@ export interface Session {
   usage: UsageSummary;
   recordedCost: RecordedCost | null;
   activeTime: ActiveTime | null;
+  /** The last Claude Code version named on the recording's records, such as `2.1.302`, or "" when none names one. */
+  version: string;
+  /** Records whose type, or `system` or `attachment` subtype, this build does not recognize. */
+  unrecognizedCount: number;
   snippet?: string;
   matchEventId?: string;
   matchCategory?: ReplayEvent["category"];
@@ -177,7 +181,13 @@ export interface Catalog {
   models: string[];
   toolsUsed: string[];
   efforts: string[];
+  /** Every Claude Code version named on indexed records, newest first. */
+  versions: string[];
   facetsLimited: boolean;
+  /** Records across every recording whose kind this build does not recognize. */
+  unrecognizedRecords: number;
+  /** Those records' kinds, such as `type:foo` or `system:bar`, when the name has the shape of an identifier. */
+  unrecognizedKinds: string[];
   groups: WorkspaceGroup[];
   dataDir: string;
   indexedAt: string;

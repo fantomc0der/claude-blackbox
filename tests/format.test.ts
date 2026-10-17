@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { activeTimeSummary, duration, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
-import { noteFiling, recordedDuration, recordPolicy, thinkingMeasure, turnDuration } from "../src/shared/records";
+import { compareVersions, noteFiling, recordedDuration, recordedVersion, recordPolicy, recordSubtype, thinkingMeasure, turnDuration, unrecognizedKind } from "../src/shared/records";
 
 test("measured times read in the two largest units", () => {
   expect(duration(0)).toBe("0s");
@@ -56,6 +56,29 @@ test("record types are filed as Claude Code files them, and only bookkeeping and
   // An API request and its message copies are bookkeeping, but the replay shows them as a request card.
   expect(["last-prompt", "file-history-snapshot", "api-request", "api-request-blob", "summary", "permission-mode", "system", "future-record", "constructor"].map(noteFiling))
     .toEqual(["bookkeeping", "bookkeeping", null, null, "state", "state", null, null, null]);
+  expect(recordSubtype("system", { subtype: "turn_duration" })).toBe("turn_duration");
+  expect(recordSubtype("attachment", { attachment: { type: "hook_success" } })).toBe("hook_success");
+  expect(recordSubtype("attachment", { attachment: "hook_success" })).toBeUndefined();
+  expect(recordSubtype("user", { subtype: "turn_duration" })).toBeUndefined();
+});
+
+test("unrecognized records are named by kind only when the name has the shape of an identifier", () => {
+  for (const [type, subtype] of [["user", undefined], ["cost-state", undefined], ["system", "turn_duration"], ["system", "api_error"], ["attachment", "hook_success"], ["system", undefined], ["attachment", null]]) {
+    expect(unrecognizedKind(type as string, subtype)).toBeNull();
+  }
+  expect(unrecognizedKind("future-record", undefined)).toBe("type:future-record");
+  expect(unrecognizedKind("system", "future_notice")).toBe("system:future_notice");
+  expect(unrecognizedKind("attachment", "future_reminder")).toBe("attachment:future_reminder");
+  // Recorded content never becomes a name, though the record still counts.
+  for (const [type, subtype] of [["Rename the helper", undefined], ["system", "x".repeat(41)], ["system", "Future Notice"], ["system", 7], ["attachment", { type: "nested" }], ["attachment", '{"type":"nested"}']]) {
+    expect(unrecognizedKind(type as string, subtype)).toBe("");
+  }
+});
+
+test("Claude Code versions are read only in the shape of a version and order by their numbers", () => {
+  expect(["2.1.302", "2.1.10-beta.2", "1.0.0+build.5"].map(recordedVersion)).toEqual(["2.1.302", "2.1.10-beta.2", "1.0.0+build.5"]);
+  expect(["v2.1.302", "2.1", "latest", "2.1.302 (Claude Code)", 2.1, null].map(recordedVersion)).toEqual(Array(6).fill(""));
+  expect(["2.1.99", "2.1.302", "2.1.302-beta.1", "1.0.0"].sort(compareVersions)).toEqual(["1.0.0", "2.1.99", "2.1.302-beta.1", "2.1.302"]);
 });
 
 test("search highlights use the term the server matched records with", () => {

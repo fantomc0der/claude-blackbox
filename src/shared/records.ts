@@ -74,6 +74,60 @@ export const attachmentTypes: ReadonlySet<string> = new Set([
   "mcp_dropped_tools_delta", "teammate_mailbox", "team_context", "proactivity",
 ]);
 
+/** The subtype of a `system` record (`subtype`) or an `attachment` record (`attachment.type`); undefined for others. */
+export function recordSubtype(type: string, raw: Record<string, unknown>): unknown {
+  return type === "system" ? raw.subtype : type === "attachment" ? objectOf(raw.attachment).type : undefined;
+}
+
+// Names taken from recorded records become facet values only in this shape, so recorded content never does.
+const recordName = /^[a-z0-9_.-]{1,40}$/;
+
+/**
+ * Null when this build recognizes a record: its type is in `recordPolicy` and a `system` or `attachment` subtype, when
+ * it has one, is in the known set. Otherwise the kind it counts under: `type:<type>`, `system:<subtype>`, or
+ * `attachment:<type>`, or "" when the name does not have the shape of an identifier. A subtype read from SQL with
+ * `json_extract()` gives the same answer as the value read from the parsed record.
+ */
+export function unrecognizedKind(type: string, subtype: unknown): string | null {
+  if (!recordPolicy.has(type)) return recordName.test(type) ? `type:${type}` : "";
+  const known = type === "system" ? systemSubtypes : type === "attachment" ? attachmentTypes : null;
+  if (!known || subtype === undefined || subtype === null || (typeof subtype === "string" && known.has(subtype))) return null;
+  return typeof subtype === "string" && recordName.test(subtype) ? `${type}:${subtype}` : "";
+}
+
+// Claude Code writes the version that wrote a record, such as `2.1.302`, on its transcript records and API requests; a
+// resumed or forked copy keeps the version of its original.
+const versionPattern = /^(\d{1,4})\.(\d{1,5})\.(\d{1,6})(?:-([0-9A-Za-z.-]{1,32}))?(?:\+[0-9A-Za-z.-]{1,32})?$/;
+
+/** The record's Claude Code version when it has the shape of one, or "". */
+export function recordedVersion(value: unknown): string {
+  return typeof value === "string" && versionPattern.test(value) ? value : "";
+}
+
+/** Semantic version order, prereleases before their release, and anything that is not a version after every version. */
+export function compareVersions(a: string, b: string): number {
+  const x = versionPattern.exec(a), y = versionPattern.exec(b);
+  if (!x || !y) return x ? -1 : y ? 1 : a.localeCompare(b);
+  for (let part = 1; part <= 3; part++) {
+    const difference = Number(x[part]) - Number(y[part]);
+    if (difference) return difference;
+  }
+  if (x[4] === y[4]) return a.localeCompare(b);
+  if (x[4] === undefined) return 1;
+  if (y[4] === undefined) return -1;
+  const left = x[4].split("."), right = y[4].split(".");
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const p = left[index], q = right[index];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    const pNumber = /^\d+$/.test(p), qNumber = /^\d+$/.test(q);
+    if (pNumber && qNumber && Number(p) !== Number(q)) return Number(p) - Number(q);
+    if (pNumber !== qNumber) return pNumber ? -1 : 1;
+    if (!pNumber && p !== q) return p < q ? -1 : 1;
+  }
+  return a.localeCompare(b);
+}
+
 // Claude Code's own schema bounds every recorded duration and count as a finite non-negative number no greater than
 // this, and its own loader rewrites a `durationMs` outside those bounds as 0.
 const durationLimit = 1_000_000_000_000_000;

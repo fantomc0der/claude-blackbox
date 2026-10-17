@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, RecordedCost, RecordedCostTotal, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { turnDuration } from "../shared/records";
+import { compareVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -19,13 +19,17 @@ const callInputKeys = 32;
 const callInputLength = 2000;
 const timelineGranularities = [[16, 60_000], [15, 600_000], [13, 3_600_000], [10, 86_400_000]] as const;
 type TimelineRow = { at: string | null; count: number; first: number; last: number; errors: number };
-// The record types version 10 first indexed as session state. The step keeps its own list, so an index upgraded past it
-// is re-read as that version decided.
+// The record types version 10 first indexed as session state, and the ones version 16 adds to them as bookkeeping or
+// state. Each step keeps its own list, so an index upgraded across both is re-read as each version decided.
 const version10StateTypes = [
   "last-prompt", "atis-latch", "queue-operation", "cost-state", "mode", "permission-mode", "worktree-state",
   "isolation-latch", "dev-mods", "memory-mode", "agent-name", "agent-color", "agent-setting", "tag",
   "attribution-snapshot", "file-history-delta", "api-request-shape", "relocated", "continued-in", "fork-context-ref",
   "observer-ref", "history-suppression", "ended-by-model", "content-replacement",
+];
+const version16NoteTypes = [
+  "file-history-snapshot", "frame-link", "artifact-comment-monitor", "summary", "custom-title", "ai-title", "pr-link",
+  "artifact-autoreact-ledger", "bridge-session",
 ];
 
 interface SourceRow {
@@ -33,6 +37,7 @@ interface SourceRow {
   started: string; updated: string; events: number; messages: number; tools: number; errors: number;
   edits: number; agent: number; size: number; mtime: number; cursor: number; fingerprint: string;
   warnings: number; named: number; identity: string; tailprint: string; turns: number; active_ms: number;
+  version: string; unrecognized: number;
   group_id?: string; group_name?: string; bookmarked?: number;
   recorded_cost?: number | null; recorded_started?: string | null; recorded_unknown?: number | null; recorded_models?: string | null;
   recorded_api_ms?: number | null; recorded_tool_ms?: number | null;
@@ -70,7 +75,8 @@ const schema = `
     size INTEGER NOT NULL DEFAULT 0, mtime REAL NOT NULL DEFAULT 0, cursor INTEGER NOT NULL DEFAULT 0,
     fingerprint TEXT NOT NULL DEFAULT '', warnings INTEGER NOT NULL DEFAULT 0, named INTEGER NOT NULL DEFAULT 0,
     identity TEXT NOT NULL DEFAULT '', tailprint TEXT NOT NULL DEFAULT '',
-    turns INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0
+    turns INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0,
+    version TEXT NOT NULL DEFAULT '', unrecognized INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS events (
     rowid INTEGER PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -239,7 +245,7 @@ export class Recorder {
   private stopped = false;
   private scanWarnings = 0;
   private workspaceUsage: Map<string, UsageSummary> | null = null;
-  private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "facetsLimited"> | null = null;
+  private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "versions" | "unrecognizedKinds" | "facetsLimited"> | null = null;
   private replayFacets = new Map<string, EventPage["facets"]>();
   private replayTimelines = new Map<string, { total: number; rows: TimelineRow[] }>();
   private replaySummaries = new Map<string, { total: number; summary: SessionSummary }>();
@@ -249,7 +255,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 15) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 16) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -258,6 +264,8 @@ export class Recorder {
     if (!fields.has("tailprint")) db.exec("ALTER TABLE sessions ADD COLUMN tailprint TEXT NOT NULL DEFAULT ''");
     if (!fields.has("turns")) db.exec("ALTER TABLE sessions ADD COLUMN turns INTEGER NOT NULL DEFAULT 0");
     if (!fields.has("active_ms")) db.exec("ALTER TABLE sessions ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0");
+    if (!fields.has("version")) db.exec("ALTER TABLE sessions ADD COLUMN version TEXT NOT NULL DEFAULT ''");
+    if (!fields.has("unrecognized")) db.exec("ALTER TABLE sessions ADD COLUMN unrecognized INTEGER NOT NULL DEFAULT 0");
     const costFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(session_costs)").all().map(row => row.name));
     if (!costFields.has("api_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN api_ms REAL");
     if (!costFields.has("tool_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN tool_ms REAL");
@@ -414,7 +422,7 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9 to 15 steps below follow it
+    // its port, and before the recordings are compared with what was indexed; the version 9 to 16 steps below follow it
     // in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
@@ -478,6 +486,39 @@ export class Recorder {
       this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='relocated')");
       this.db.exec("PRAGMA user_version=15");
     })();
+    // Version 16 keeps the Claude Code version a recording's records name and counts the records this build does not
+    // recognize. The stored records hold both, so each recording is filled where it is instead of being re-read: one
+    // statement reads every event's `version` and another every event's type and subtype, like version 8. The second also
+    // finds the recordings holding a record of a type version 16 first reads as a note but an earlier build read as
+    // content, which kept the content in its searchable text, and marks only those for re-reading.
+    if (version < 16) this.db.transaction(() => {
+      const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
+      const latest = new Map<string, { version: string; sequence: number }>();
+      for (const row of this.db.query<{ id: string; version: unknown; sequence: number }, []>(`SELECT session_id AS id,
+        json_extract(raw,'$.version') AS version, max(sequence) AS sequence FROM events WHERE instr(raw,'"version":')>0 GROUP BY id, version`).all()) {
+        const recorded = recordedVersion(row.version);
+        if (!isFacetValue(recorded)) continue;
+        insertFacet.run(row.id, "version", recorded);
+        if ((latest.get(row.id)?.sequence ?? -1) < row.sequence) latest.set(row.id, { version: recorded, sequence: row.sequence });
+      }
+      const unrecognized = new Map<string, number>();
+      const stale = new Set<string>();
+      for (const row of this.db.query<{ id: string; type: string; subtype: unknown; records: number; stale: number }, [string]>(`SELECT session_id AS id, type,
+        CASE type WHEN 'system' THEN json_extract(raw,'$.subtype') WHEN 'attachment' THEN json_extract(raw,'$.attachment.type') END AS subtype,
+        count(*) AS records, max(CASE WHEN type IN (SELECT value FROM json_each(?)) THEN json_type(raw,'$.message.content') IN ('text','array')
+          OR json_type(raw,'$.content') IN ('text','array') OR json_type(raw,'$.summary')='text' ELSE 0 END) AS stale
+        FROM events GROUP BY id, type, subtype`).all(JSON.stringify(version16NoteTypes))) {
+        const kind = unrecognizedKind(row.type, row.subtype);
+        if (kind !== null) unrecognized.set(row.id, (unrecognized.get(row.id) ?? 0) + row.records);
+        if (kind) insertFacet.run(row.id, "unrecognized", kind);
+        if (row.stale) stale.add(row.id);
+      }
+      const update = this.db.query("UPDATE sessions SET version=?, unrecognized=? WHERE id=?");
+      for (const { id } of this.db.query<{ id: string }, []>("SELECT id FROM sessions").all()) update.run(latest.get(id)?.version ?? "", unrecognized.get(id) ?? 0, id);
+      const reset = this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
+      for (const id of stale) reset.run(id);
+      this.db.exec("PRAGMA user_version=16");
+    })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -525,7 +566,7 @@ export class Recorder {
           this.db.query("DELETE FROM session_costs WHERE session_id = ?").run(id);
           this.db.query("DELETE FROM session_facets WHERE session_id = ?").run(id);
           this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
-            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0,turns=0,active_ms=0 WHERE id=?`).run(id);
+            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0,turns=0,active_ms=0,version='',unrecognized=0 WHERE id=?`).run(id);
         })();
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id)!;
         // Claude Code files `cost-state` as last-wins, so the last one read replaces the stored total; a read that
@@ -567,6 +608,10 @@ export class Recorder {
               if (model !== syntheticModel && isFacetValue(model)) insertFacet.run(id, "model", model);
               if (isFacetValue(event.cwd, 2048)) insertFacet.run(id, "cwd", event.cwd);
               for (const name of toolNames) insertFacet.run(id, "tool", name);
+              const version = recordedVersion(event.raw.version);
+              if (isFacetValue(version)) insertFacet.run(id, "version", version);
+              const unrecognized = unrecognizedKind(event.type, recordSubtype(event.type, event.raw));
+              if (unrecognized) insertFacet.run(id, "unrecognized", unrecognized);
               for (const block of event.blocks) {
                 if (block.type === "tool_result" && typeof block.tool_use_id === "string") insertResult.run(id, block.tool_use_id, JSON.stringify(block), inserted.lastInsertRowid);
                 if (block.type === "tool_use" && typeof block.id === "string" && isFacetValue(block.name || "Unknown tool")) insertCall.run(id, block.id, block.name || "Unknown tool", inserted.lastInsertRowid);
@@ -591,6 +636,8 @@ export class Recorder {
           row.branch = string(line.value.gitBranch) || row.branch;
           const model = string(object(line.value.message).model);
           if (model && model !== syntheticModel) row.model = model;
+          row.version = recordedVersion(line.value.version) || row.version;
+          row.unrecognized += Number(unrecognizedKind(event.type, recordSubtype(event.type, line.value)) !== null);
           const explicit = string(line.value.customTitle) || string(line.value.aiTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
           if (explicit) { row.title = explicit.slice(0, 240); row.named = 1; }
           else if (!row.title || (!row.named && row.title.startsWith("Session "))) row.title = promptTitle(event) || row.title;
@@ -606,11 +653,12 @@ export class Recorder {
           .run(id, recordedCost.costUSD, recordedCost.startedAt, Number(recordedCost.unknownModelCost), JSON.stringify(recordedCost.models), recordedCost.apiDurationMs, recordedCost.toolDurationMs);
         const stamp = new Date(info.mtimeMs).toISOString();
         this.db.query(`UPDATE sessions SET cwd=?,title=?,branch=?,model=?,started=?,updated=?,events=?,messages=?,tools=?,errors=?,
-          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=?,turns=?,active_ms=? WHERE id=?`).run(
+          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=?,turns=?,active_ms=?,
+          version=?,unrecognized=? WHERE id=?`).run(
           row.cwd, row.title || `Session ${row.session_id.slice(0, 8)}`, row.branch, row.model, row.started || stamp, row.updated || stamp,
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
           await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true),
-          row.turns, row.active_ms, id);
+          row.turns, row.active_ms, row.version, row.unrecognized, id);
         changed.push(id);
         // Let live clients see a long first index fill in instead of an empty library.
         if (performance.now() - publishedAt >= 1000) {
@@ -680,6 +728,7 @@ export class Recorder {
       usage: this.db.query<UsageSummary, [string]>(`SELECT ${usageColumns} FROM usage_records WHERE session_id=?`).get(row.id)!,
       recordedCost: recordedCostOf(row),
       activeTime: row.turns > 0 ? { durationMs: row.active_ms, turns: row.turns } : null,
+      version: row.version, unrecognizedCount: row.unrecognized,
     };
   }
 
@@ -875,6 +924,10 @@ export class Recorder {
         ${effortMissing ? " AND model_usage.effort IS NULL" : ""}${effort ? " AND model_usage.effort=?" : ""}${model ? " AND model_usage.model IN (?,?)" : ""})`);
       if (effort) bindings.push(effort);
       if (model) bindings.push(model, normalizeModel(model));
+    }
+    if (params.get("version")) {
+      conditions.push("EXISTS (SELECT 1 FROM session_facets version_facet WHERE version_facet.session_id=s.id AND version_facet.kind='version' AND version_facet.value=?)");
+      bindings.push(params.get("version")!);
     }
     if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
     if (params.get("errors") === "1") conditions.push("s.errors>0");
@@ -1263,12 +1316,16 @@ export class Recorder {
 
   async catalog(): Promise<Catalog> {
     if (!this.catalogFacets) {
-      const models = this.facetValues("model"), tools = this.facetValues("tool");
+      const models = this.facetValues("model"), tools = this.facetValues("tool"), versions = this.facetValues("version");
       const efforts = this.db.query<{ effort: string }, [number]>("SELECT DISTINCT effort FROM usage_records WHERE effort IS NOT NULL ORDER BY effort LIMIT ?").all(facetLimit + 1);
-      this.catalogFacets = { models: models.values, toolsUsed: tools.values, efforts: efforts.slice(0, facetLimit).map(row => row.effort), facetsLimited: models.limited || tools.limited || efforts.length > facetLimit };
+      this.catalogFacets = {
+        models: models.values, toolsUsed: tools.values, efforts: efforts.slice(0, facetLimit).map(row => row.effort),
+        versions: versions.values.sort((left, right) => compareVersions(right, left)), unrecognizedKinds: this.facetValues("unrecognized").values,
+        facetsLimited: models.limited || tools.limited || efforts.length > facetLimit || versions.limited,
+      };
     }
-    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number }, []>(
-      "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings FROM sessions").get()!;
+    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number; unrecognizedRecords: number }, []>(
+      "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings,coalesce(sum(unrecognized),0) AS unrecognizedRecords FROM sessions").get()!;
     const sources = this.db.query<{ cwd: string; count: number; mainCount: number }, []>("SELECT cwd,count(*) AS count,sum(CASE WHEN agent=0 THEN 1 ELSE 0 END) AS mainCount FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
     const groups = this.groups();
     if (!this.workspaceUsage) {

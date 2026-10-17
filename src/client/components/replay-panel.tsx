@@ -79,13 +79,15 @@ function SessionActions(props: { session: Session }) {
 const ProvenanceSeparator = () => <span class="meta-dot" aria-hidden="true">·</span>;
 
 // Where and when the recording happened, on one line under the title at every pane width. Values truncate in place
-// (the folder first) and narrow panes drop the times and the model; the Session details menu keeps the full values.
+// (the folder first), the Claude Code version shows only on a wide pane, and narrow panes drop the times and the model;
+// the Session details menu keeps the full values.
 function Provenance(props: { session: Session }) {
   return <p class="replay-provenance">
     <span class="provenance-folder" title={props.session.cwd || "Working directory not recorded"}><Icon name="folder" size={12} /><span class="visually-hidden">Folder </span><span class="provenance-value">{props.session.cwd ? folderName(props.session.cwd) : "Folder not recorded"}</span></span><ProvenanceSeparator />
     <span class="provenance-branch" title={props.session.branch || "No branch recorded"}><Icon name="branch" size={12} /><span class="visually-hidden">Branch </span><span class="provenance-value">{props.session.branch || "No branch"}</span></span><ProvenanceSeparator />
     <span class="provenance-dates" title={`First recorded ${dateTime(props.session.startedAt)}. Last recorded ${dateTime(props.session.updatedAt)}.`}><span class="visually-hidden">Recorded </span><span class="provenance-value provenance-times">{recordedRange(props.session.startedAt, props.session.updatedAt)}</span><span class="provenance-value provenance-days">{recordedRange(props.session.startedAt, props.session.updatedAt, { days: true })}</span></span><ProvenanceSeparator />
     <span class="provenance-model" title={props.session.model || "Model not recorded"}><span class="visually-hidden">Model </span><span class="provenance-value">{modelName(props.session.model)}</span></span>
+    <Show when={props.session.version}>{version => <><ProvenanceSeparator /><span class="provenance-version" title={`The Claude Code version that wrote this recording, as its last records name it: ${version()}`}><span class="provenance-value">Claude Code {version()}</span></span></>}</Show>
   </p>;
 }
 
@@ -661,6 +663,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
                 <dt>Original workspace</dt><dd><button class="source-path" title="Copy original working directory" onClick={() => void copy(session().cwd, "Source path")}><Icon name="folder" size={13} /><span>{session().cwd || "Working directory not recorded"}</span><Icon name="copy" size={12} /></button></dd>
                 <dt>Branch</dt><dd>{session().branch || "No branch"}</dd>
                 <dt>Model</dt><dd>{modelName(session().model)}</dd>
+                <dt>Claude Code version</dt><dd>{session().version || "Not recorded"}</dd>
                 <dt>Activity</dt><dd>{session().messageCount} messages · {session().toolCount} tools</dd>
                 <dt>Active time</dt><dd title={activeTimeNote}><Show when={session().activeTime} fallback="Not recorded">{active => activeTimeSummary(active())}</Show></dd>
                 <Show when={session().recordedCost && measuredTime(session().recordedCost!)}>{measured => <><dt>Claude Code measured</dt><dd title={measuredTimeNote}>{measured()}</dd></>}</Show>

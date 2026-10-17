@@ -111,6 +111,7 @@
   .index-count { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: 6px; font-variant-numeric: tabular-nums; }
   .index-label, .index-count-value { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .index-status > button { flex-shrink: 0; min-width: 44px; min-height: 44px; }
+  .index-unrecognized { display: inline-flex; flex-shrink: 0; color: var(--muted); }
   .sidebar-footer .version-label { flex-shrink: 0; margin-left: auto; font: .6875rem/1.2 var(--mono); letter-spacing: .4px; color: #798181; }
   .version-label span { font-size: .6875rem; }
   .breadcrumbs, .topbar-actions { display: flex; align-items: center; gap: 12px; font-size: var(--text-support); color: var(--muted); min-width: 0; }
@@ -257,7 +258,7 @@
   .bookmark-toggle[aria-pressed="true"] path { fill: currentColor; }
   .replay-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 16px; min-width: 0; }
   .replay-provenance { display: flex; align-items: center; min-width: 0; max-width: 100%; margin: 0; overflow: hidden; color: var(--muted); font-size: var(--text-meta); line-height: 1.5; white-space: nowrap; }
-  .provenance-folder, .provenance-branch, .provenance-dates, .provenance-model { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 0 1 auto; }
+  .provenance-folder, .provenance-branch, .provenance-dates, .provenance-model, .provenance-version { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 0 1 auto; }
   .replay-provenance svg, .replay-provenance > .meta-dot { flex-shrink: 0; }
   .provenance-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .replay-provenance > .meta-dot { margin: 0 7px; }
@@ -475,6 +476,10 @@
     .session-details-label { display: inline; }
     .session-actions-label, .session-details-menu > .session-secondary-actions { display: none; }
     .session-details-menu h3 { margin: 0; padding: 0; border: 0; }
+  }
+  /* The Claude Code version gives way before the usage summary beside the strip would wrap below it. */
+  @container replay (max-width: 960px) {
+    .replay-provenance > .provenance-version, .provenance-model + .meta-dot { display: none; }
   }
   @container replay (max-width: 560px) {
     .provenance-times, .replay-provenance > .provenance-model, .provenance-dates + .meta-dot { display: none; }

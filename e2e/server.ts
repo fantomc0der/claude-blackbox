@@ -363,6 +363,13 @@ await writeFile(join(folder, "denial-only.jsonl"), [
   { ...decisionCall(1, "denial-only-call", "Bash", { command: "rm -rf dist" }), uuid: "denial-only-1" },
   { ...decisionResult(2, "denial-only-call", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."), uuid: "denial-only-2" },
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Claude Code names the version that wrote a record on its transcript records, here a session resumed under a newer
+// version, and a newer Claude Code may write a record type this build does not know.
+await writeFile(join(folder, "format-versions.jsonl"), [
+  { ...event("Quillmere format verification", 0), version: "2.1.296" },
+  { ...event("The recording format checks out.", 1, "assistant"), version: "2.1.302" },
+  { type: "future-record", sessionId: "format-versions", version: "2.1.302" },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);

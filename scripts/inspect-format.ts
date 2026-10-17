@@ -6,6 +6,9 @@ import { parseArgs } from "node:util";
 import { readJsonLines } from "../src/server/jsonl";
 import { object } from "../src/server/normalize";
 import { normalizeModel, readUsage } from "../src/server/usage";
+import { compareVersions, recordedVersion } from "../src/shared/records";
+
+export { compareVersions };
 
 /**
  * A read-only census of the record shapes in a Claude data directory, for noticing Claude Code format changes. It
@@ -32,8 +35,6 @@ const recordKeyLimit = 64;
 export const transcriptTypes = ["user", "assistant", "system", "attachment", "progress"] as const;
 
 const tokenFields = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] as const;
-
-const semver = /^(\d{1,4})\.(\d{1,5})\.(\d{1,6})(?:-([0-9A-Za-z.-]{1,32}))?(?:\+[0-9A-Za-z.-]{1,32})?$/;
 
 export type Counts = Record<string, number>;
 
@@ -162,7 +163,7 @@ function modelLabel(value: unknown): string {
 }
 
 function versionLabel(value: unknown): string {
-  return typeof value === "string" && semver.test(value) ? value : placeholder(value);
+  return recordedVersion(value) || placeholder(value);
 }
 
 function keyName(key: string): string {
@@ -202,30 +203,6 @@ function hasTimestamp(raw: Record<string, unknown>): boolean {
 
 function isSubagent(path: string): boolean {
   return path.includes(`${sep}subagents${sep}`) || basename(path).startsWith("agent-");
-}
-
-/** Semantic version order, prereleases before their release, and placeholders after every real version. */
-export function compareVersions(a: string, b: string): number {
-  const x = semver.exec(a), y = semver.exec(b);
-  if (!x || !y) return x ? -1 : y ? 1 : a.localeCompare(b);
-  for (let part = 1; part <= 3; part++) {
-    const difference = Number(x[part]) - Number(y[part]);
-    if (difference) return difference;
-  }
-  if (x[4] === y[4]) return a.localeCompare(b);
-  if (x[4] === undefined) return 1;
-  if (y[4] === undefined) return -1;
-  const left = x[4].split("."), right = y[4].split(".");
-  for (let index = 0; index < Math.max(left.length, right.length); index++) {
-    const p = left[index], q = right[index];
-    if (p === undefined) return -1;
-    if (q === undefined) return 1;
-    const pNumber = /^\d+$/.test(p), qNumber = /^\d+$/.test(q);
-    if (pNumber && qNumber && Number(p) !== Number(q)) return Number(p) - Number(q);
-    if (pNumber !== qNumber) return pNumber ? -1 : 1;
-    if (!pNumber && p !== q) return p < q ? -1 : 1;
-  }
-  return a.localeCompare(b);
 }
 
 async function discover(directory: string, files: string[], failures: { count: number }, depth = 0): Promise<void> {
