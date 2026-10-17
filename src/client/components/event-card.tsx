@@ -197,8 +197,9 @@ function ResultImages(props: { title: string; result?: ContentBlock }) {
   return <For each={resultImages(props.result)}>{(block) => <ImagePanel title={props.title} block={block} />}</For>;
 }
 
-// The status a result gives its call: a decision the user, a permission rule, or a hook made is told apart from a
-// failure, in the glyph, the accessible name, and the card's tint.
+// The status a result gives its call: a decision the user, a permission rule, a hook, or the auto mode classifier made,
+// or an interruption or cancellation, is told apart from a failure, in the glyph, the accessible name, and the card's
+// tint.
 type ToolStatus = "error" | "success" | "pending" | Decision;
 
 function resultStatus(result: ContentBlock | undefined): ToolStatus {
@@ -212,7 +213,11 @@ function resultTitle(result: ContentBlock | undefined, error: string, success: s
   return decision ? decisionLabels[decision] : result?.is_error ? error : success;
 }
 
-const statusGlyphs: Record<ToolStatus, string> = { error: "!", success: "✓", pending: "→", denied: "⊘", blocked: "⊘", interrupted: "⊘" };
+const statusGlyphs: Record<ToolStatus, string> = { error: "!", success: "✓", pending: "→", denied: "⊘", blocked: "⊘", "auto-denied": "⊘", unreviewed: "⊘", interrupted: "⊘", cancelled: "⊘" };
+const statusNames: Record<ToolStatus, string> = {
+  error: "Tool error", success: "Tool success", pending: "Tool pending", denied: "Tool denied", blocked: "Tool blocked",
+  "auto-denied": "Tool denied by auto mode", unreviewed: "Tool not reviewed by auto mode", interrupted: "Tool interrupted", cancelled: "Tool cancelled",
+};
 const statusClass = (status: ToolStatus) => status === "error" ? "tool-card-error" : status === "success" || status === "pending" ? "" : "tool-card-decision";
 
 function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highlight?: string }) {
@@ -241,7 +246,7 @@ function ToolContent(props: { block: ContentBlock; result?: ContentBlock; highli
 function ToolLabel(props: { block: ContentBlock; status: ToolStatus; previewId?: string }) {
   const preview = createMemo(() => toolPreviewParts(props.block));
   const previewText = () => preview().head + preview().tail;
-  return <><span class="tool-status" aria-label={`Tool ${props.status}`}>{statusGlyphs[props.status]}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden" id={props.previewId}>{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show></>;
+  return <><span class="tool-status" aria-label={statusNames[props.status]}>{statusGlyphs[props.status]}</span><span>{toolTitle(props.block.name)}</span><Show when={previewText()}><span class="visually-hidden" id={props.previewId}>{truncate(previewText(), 100)}</span><Show when={preview().head && preview().tail} fallback={<span class="tool-preview" aria-hidden="true" title={previewText()}>{previewText()}</span>}><span class="tool-preview tool-preview-path" aria-hidden="true" title={previewText()}><span class="tool-preview-dir">{preview().head}</span><span class="tool-preview-name">{preview().tail}</span></span></Show></Show></>;
 }
 
 function ToolUse(props: { block: ContentBlock; result?: ContentBlock; highlight?: string; subagents?: SubagentNavigation }) {

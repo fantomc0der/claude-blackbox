@@ -29,8 +29,9 @@ export interface ReplayEvent {
   /** A failure is recorded: a tool result marked `is_error` that is not a decision, a record marked `is_error` or
    *  `level: "error"`, or an API error turn. Only these count as errors. */
   error: boolean;
-  /** The first decision among the record's tool results: a tool that never ran because the user, a permission rule, or
-   *  a hook stopped it. Shown with the errors, but never counted as one. */
+  /** The first decision among the record's tool results: a tool that never ran, or never finished, because the user, a
+   *  permission rule, a hook, or the auto mode classifier stopped it, or because it was interrupted or cancelled. Shown
+   *  with the errors, but never counted as one. */
   decision: Decision | null;
   parentId?: string;
   uuid?: string;
@@ -274,7 +275,8 @@ export interface SummaryRecord { id: string; position: number | null; timestamp:
 
 /**
  * One Edit, Write, MultiEdit, or NotebookEdit call. `error` means its recorded result was a failure; `decision` means
- * the call never ran because the user, a permission rule, or a hook stopped it.
+ * the call never ran, or never finished, because of a decision the user, a permission rule, a hook, or the auto mode
+ * classifier made, or because it was interrupted or cancelled.
  */
 export interface SummaryChange extends SummaryRecord { tool: string; error: boolean; decision: Decision | null }
 

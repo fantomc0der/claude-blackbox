@@ -341,9 +341,11 @@ await writeFile(join(folder, "overview-files.jsonl"), [
   overviewText("The overview files are ready.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
-// messages, plus one genuine failure: the Errors tab labels each, and only the failure counts as an error.
+// messages, plus one genuine failure: the Errors tab labels each, and only the failure counts as an error. The edit's
+// record files its decision as `user-rejected`, which decides over the cancellation its message alone would read as.
 const decisionCall = (sequence: number, id: string, name: string, input: Record<string, unknown>) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "tool_use", id, name, input }], model: "claude-sonnet-4-5" } });
 const decisionResult = (sequence: number, id: string, content: string, is_error = true) => ({ ...event("", sequence), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error }] } });
+const kindResult = (sequence: number, id: string, content: string, toolDenialKind: string) => ({ ...decisionResult(sequence, id, content), toolDenialKind });
 await writeFile(join(folder, "decisions.jsonl"), [
   event("Thornquill decision verification", 0),
   decisionCall(1, "decision-denied", "Bash", { command: "rm -rf node_modules" }),
@@ -353,7 +355,7 @@ await writeFile(join(folder, "decisions.jsonl"), [
   decisionCall(5, "decision-interrupted", "Bash", { command: "sleep 600" }),
   decisionResult(6, "decision-interrupted", "[Request interrupted by user for tool use]"),
   decisionCall(7, "decision-edit", "Edit", { file_path: "/synthetic/browser-tests/src/config.ts", old_string: "a", new_string: "b" }),
-  decisionResult(8, "decision-edit", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."),
+  kindResult(8, "decision-edit", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", "user-rejected"),
   decisionCall(9, "decision-failed", "Bash", { command: "bun test tests/decisions.test.ts" }),
   decisionResult(10, "decision-failed", "<tool_use_error>Exit code 1\n1 fail</tool_use_error>"),
   event("Stopping here until you decide.", 11, "assistant"),
@@ -362,6 +364,25 @@ await writeFile(join(folder, "denial-only.jsonl"), [
   { ...event("Marrowgate denial verification", 0), uuid: "denial-only-0" },
   { ...decisionCall(1, "denial-only-call", "Bash", { command: "rm -rf dist" }), uuid: "denial-only-1" },
   { ...decisionResult(2, "denial-only-call", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."), uuid: "denial-only-2" },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Claude Code 2.1.30x files every decided result by kind beside it. A permission rule's denial in a hook's own words
+// says nothing a message rule knows, so only its kind keeps it from reading as a failure, even where Tools shows the
+// result stored apart from its record inside its call's card.
+await writeFile(join(folder, "decision-kinds.jsonl"), [
+  event("Galeharrow decision kinds verification", 0),
+  decisionCall(1, "kind-auto", "Bash", { command: "git push --force origin main" }),
+  kindResult(2, "kind-auto", "Permission for this action was denied by the Claude Code auto mode classifier. Reason: Force push to main.", "automode-blocked"),
+  decisionCall(3, "kind-unreviewed", "Bash", { command: "terraform apply" }),
+  kindResult(4, "kind-unreviewed", "The API told auto mode's safety classifier (opus) to wait 30s from now, so auto mode cannot determine the safety of Bash until then.", "automode-unavailable"),
+  decisionCall(5, "kind-rule", "Bash", { command: "bun run deploy" }),
+  kindResult(6, "kind-rule", "Deploys are frozen until Monday.", "permission-rule"),
+  decisionCall(7, "kind-hook", "Bash", { command: "rm -rf dist" }),
+  kindResult(8, "kind-hook", "Hook PreToolUse:Bash denied this tool", "permission-rule"),
+  decisionCall(9, "kind-interrupted", "Bash", { command: "sleep 600" }),
+  kindResult(10, "kind-interrupted", "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]", "interrupted"),
+  decisionCall(11, "kind-cancelled", "Bash", { command: "bun test" }),
+  kindResult(12, "kind-cancelled", "[Tool call not completed: an approval request expired with no answer, so the action awaiting approval did not run. Nobody refused it, so this is not the user's decision; ask again if it is still needed.]", "cancelled"),
+  event("Waiting for the review.", 13, "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Claude Code names the version that wrote a record on its transcript records, here a session resumed under a newer
 // version, and a newer Claude Code may write a record type this build does not know.

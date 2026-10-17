@@ -93,12 +93,20 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
   });
   if (!blocks.length && !note && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
   const text = copy ? requestMessageText(message) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
+  // Claude Code 2.1.30x writes a decided result's kind as `toolDenialKind` beside the result, on the record that holds
+  // it. Once the searchable text is taken, the kind is copied onto each flagged result, so a result kept or shown apart
+  // from its record, as `tool_results` stores it, still knows how it was decided.
+  if (typeof raw.toolDenialKind === "string") {
+    const kind = raw.toolDenialKind;
+    blocks = blocks.map(block => block.type === "tool_result" && block.is_error === true ? { ...block, toolDenialKind: kind } : block);
+  }
   const tools = blocks.filter(block => block.type === "tool_use");
   const hasTools = blocks.some(block => block.type === "tool_use" || block.type === "tool_result");
   const hasText = blocks.some(block => block.type === "text" && block.text?.trim());
   const stamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(string(raw.timestamp));
-  // A result Claude Code marked `is_error` because the user, a permission rule, or a hook stopped the tool records a
-  // decision, not a failure; only the remaining `is_error` results, error-level records, and API error turns are errors.
+  // A result Claude Code marked `is_error` because the user, a permission rule, a hook, or the auto mode classifier
+  // stopped the tool, or because the call was interrupted or cancelled, records a decision, not a failure; only the
+  // remaining `is_error` results, error-level records, and API error turns are errors.
   const decisions = blocks.map(resultDecision);
   return {
     id: `${sourceId}-${offset}`,

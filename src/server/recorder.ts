@@ -31,6 +31,13 @@ const version16NoteTypes = [
   "file-history-snapshot", "frame-link", "artifact-comment-monitor", "summary", "custom-title", "ai-title", "pr-link",
   "artifact-autoreact-ledger", "bridge-session",
 ];
+// Parts of the messages version 17 first reads as decisions, as a stored record serializes them. An earlier build
+// flagged a result holding one as a failure.
+const version17DecisionTexts = [
+  "[Request interrupted by user]", "[Tool call did not complete:", "[Tool call interrupted:", "[Tool call result not in this copy:",
+  "[Tool call skipped:", "[Tool call not completed:", "Hook PreToolUse", "Permission for this command was denied",
+  "Permission for this action ", "auto mode's safety classifier", ", so auto mode cannot determine the safety of ", " was not reviewed",
+];
 
 interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
@@ -255,7 +262,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 16) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 17) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -422,7 +429,7 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9 to 16 steps below follow it
+    // its port, and before the recordings are compared with what was indexed; the version 9 to 17 steps below follow it
     // in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
@@ -518,6 +525,18 @@ export class Recorder {
       const reset = this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
       for (const id of stale) reset.run(id);
       this.db.exec("PRAGMA user_version=16");
+    })();
+    // Version 17 reads Claude Code's `toolDenialKind` before a result's message and tells its interruptions and
+    // cancellations apart from its denials. A decision an earlier build recognized stays a decision, and its label is
+    // read from the stored record whenever it is shown, so only two groups of recordings are re-read: those holding a
+    // flagged or decided record with a `toolDenialKind`, whose stored results lack the kind `normalize()` now copies
+    // onto them, and those holding a failure whose record carries part of a message version 17 first reads as a
+    // decision. Finding them reads the records an earlier build flagged or decided, like version 12.
+    if (version < 17) this.db.transaction(() => {
+      this.db.query(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE (error=1 OR decision=1)
+        AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(events.raw,value)>0))))`)
+        .run(JSON.stringify(version17DecisionTexts));
+      this.db.exec("PRAGMA user_version=17");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
@@ -1059,8 +1078,8 @@ export class Recorder {
       OR EXISTS (SELECT 1 FROM tool_results result JOIN tool_calls call ON call.session_id=result.session_id AND call.tool_id=result.tool_id
         WHERE result.event_row=e.rowid AND lower(call.name) IN ('edit','write','multiedit','notebookedit')))`;
     else if (["message", "system"].includes(kind || "")) { filter += " AND e.category=?"; bindings.push(kind!); }
-    // The Errors view shows the tools the user, a permission rule, or a hook stopped beside the failures, each labelled;
-    // only the failures count toward a recording's errors and the activity strip's error bars.
+    // The Errors view shows the tools a decision stopped, or an interruption or cancellation ended, beside the failures,
+    // each labelled; only the failures count toward a recording's errors and the activity strip's error bars.
     if (params.get("errors") === "1") filter += " AND (e.error=1 OR e.decision=1)";
     if (params.get("q")) { filter += " AND instr(lower(e.text),lower(?))>0"; bindings.push(params.get("q")!.slice(0, 1000)); }
     for (const field of ["model", "cwd"]) {
@@ -1146,7 +1165,8 @@ export class Recorder {
   // Inputs are read from each call's own record, one record at a time, because a Write record carries the whole file it
   // wrote. A result's error flag is found in SQL for the same reason: a Read result carries the whole file it read. The
   // stored result is serialized JSON, where a quote inside recorded text is always escaped, so the flag cannot be faked.
-  // Only a flagged result travels, to tell a failure from a decision the user, a permission rule, or a hook made.
+  // Only a flagged result travels, to tell a failure from a decision, an interruption, or a cancellation; the record's
+  // `toolDenialKind` travels with it, copied onto the stored result by `normalize()`.
   private summaryData(id: string): SessionSummary {
     const record = (row: { id: string; timestamp: string }): SummaryRecord => ({ id: row.id, position: null, timestamp: row.timestamp });
     const roots: Array<SummaryRoot & { sequence: number }> = this.db.query<{ cwd: string; id: string; sequence: number; timestamp: string }, [string, string]>(

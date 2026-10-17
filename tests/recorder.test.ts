@@ -345,7 +345,7 @@ describe("recording index", () => {
     const recorder = await fixtureData.open();
     const sessions = recorder.list(new URLSearchParams()).items;
     const mixed = sessions.find(session => session.title === "clean the install")!, denied = sessions.find(session => session.title === "just a denial")!;
-    // Only the failing test counts; the denial, the hook stop, and the interruption are the user's decisions.
+    // Only the failing test counts; the cancellation, the hook stop, and the interruption are not failures.
     expect([mixed.errorCount, denied.errorCount]).toEqual([1, 0]);
     expect(recorder.list(new URLSearchParams({ errors: "1" })).items.map(session => session.title)).toEqual(["clean the install"]);
     expect(recorder.list(new URLSearchParams({ sort: "errors" })).items.map(session => session.title)).toEqual(["clean the install", "just a denial"]);
@@ -353,9 +353,9 @@ describe("recording index", () => {
     // The Errors view keeps every stopped tool beside the failure, each knowing which it is; the error constraint on
     // another view does the same.
     const errors = recorder.events(mixed.id, new URLSearchParams({ kind: "all", errors: "1" }));
-    expect(errors.items.map(event => [event.sequence, event.error, event.decision])).toEqual([[2, false, "denied"], [4, false, "blocked"], [6, false, "interrupted"], [8, true, null]]);
+    expect(errors.items.map(event => [event.sequence, event.error, event.decision])).toEqual([[2, false, "cancelled"], [4, false, "blocked"], [6, false, "interrupted"], [8, true, null]]);
     expect(recorder.events(mixed.id, new URLSearchParams({ kind: "tool", errors: "1" })).total).toBe(4);
-    expect(recorder.events(denied.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.decision)).toEqual(["denied"]);
+    expect(recorder.events(denied.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.decision)).toEqual(["cancelled"]);
     expect(recorder.matches(mixed.id, new URLSearchParams({ kind: "all", errors: "1", find: "user" })).items.map(item => item.sequence)).toEqual([2, 6]);
     // The activity strip's error share counts failures only.
     const timeline = recorder.timeline(mixed.id, new URLSearchParams({ kind: "all" }));

@@ -16,7 +16,8 @@ export interface SummaryRoot { path: string; added: boolean; record: SummaryReco
 
 /**
  * One Edit, Write, MultiEdit, NotebookEdit, or Read call, with the path its input names as recorded. `error` means its
- * result was a failure; `decision` means the user, a permission rule, or a hook stopped it before it ran.
+ * result was a failure; `decision` means a decision stopped it, or an interruption or cancellation ended it, as
+ * `resultDecision()` reads its result.
  */
 export interface SummaryCall { tool: string; path: string; cwd: string; error: boolean; decision: Decision | null; record: SummaryRecord }
 
