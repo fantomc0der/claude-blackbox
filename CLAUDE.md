@@ -19,7 +19,7 @@
 
 - Agent-owned development, preview, screenshot, and test runs must use an explicit isolated `--state-dir`. Never use the installed application's default cache at `~/.cache/claude-blackbox/<source-directory-hash>` for these runs. Builds reading the same Claude directory share that default cache: changing the port, browser profile, executable path, or branch does not isolate it. Startup can migrate the index and prevent an older installed app from opening it, even when both builds report the same application version.
 - Use disposable, ignored state outside the recording source directory, preferably `.blackbox/<task>-state` in the current checkout. Use separate directories for concurrent tasks or incompatible schema versions. Verify resolved source/state paths and the actual server arguments before launching; do not assume a launcher default selected safe state.
-- Prefer synthetic recordings for tests and screenshots. If real recordings are needed, keep their source read-only and index them into isolated development state. Installed indexes and their contents must not become committed or published fixtures.
+- Prefer synthetic recordings for tests and screenshots. If real recordings are needed, keep their source read-only and index them into isolated development state. Installed indexes and their contents must not become committed or published fixtures. To learn what real recordings contain without copying their content, run `bun scripts/inspect-format.ts`, which prints only key names, short identifiers, and counts.
 
 Safe browser workflows:
 
