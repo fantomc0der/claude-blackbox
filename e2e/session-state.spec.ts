@@ -34,7 +34,8 @@ test("session state records read as notes and never repeat the prompt in search 
   await expect(page.locator(".replay-event")).toHaveCount(13);
   const notes = page.locator(".replay-event-state");
   await expect(notes).toHaveCount(8);
-  await expect(notes.locator(".replay-role")).toHaveText(Array(8).fill("Session state"));
+  // Claude Code files `last-prompt` as its own bookkeeping and the rest as session state, where the latest record wins.
+  await expect(notes.locator(".replay-role")).toHaveText(["Session state", "Bookkeeping", "Session state", "Session state", "Session state", "Session state", "Bookkeeping", "Session state"]);
   await expect(notes.locator(".tool-hidden code")).toHaveText(["queue-operation", "last-prompt", "atis-latch", "cost-state", "permission-mode", "cost-state", "last-prompt", "atis-latch"]);
   await expect(page.locator(".replay-event-link time", { hasText: "Unknown time" })).toHaveCount(0);
   await expect(notes.locator(".replay-event-link time", { hasText: "No timestamp" })).toHaveCount(7);

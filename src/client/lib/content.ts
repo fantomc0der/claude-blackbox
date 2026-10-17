@@ -1,6 +1,5 @@
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
 import { stripAnsi } from "../../shared/ansi";
-import { isSessionState } from "../../shared/records";
 import { diffLines } from "diff";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,11 +67,6 @@ export function apiErrorLabel(event: Pick<ReplayEvent, "raw">): string {
   const status = isRecord(event.raw.apiError) ? event.raw.apiError.status : undefined;
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) parts.push(`HTTP ${status}`);
   return parts.join(" · ");
-}
-
-/** Whether the record is one Claude Code keeps as its own session state rather than as part of the transcript. */
-export function isSessionStateEvent(event: Pick<ReplayEvent, "type">): boolean {
-  return isSessionState(event.type);
 }
 
 export interface RequestMessageRun {

@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { activeTimeSummary, duration, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
-import { recordedDuration, thinkingMeasure, turnDuration } from "../src/shared/records";
+import { noteFiling, recordedDuration, recordPolicy, thinkingMeasure, turnDuration } from "../src/shared/records";
 
 test("measured times read in the two largest units", () => {
   expect(duration(0)).toBe("0s");
@@ -48,6 +48,14 @@ test("a reasoning step's measured time comes with its thinking tokens when the A
   expect(thinkingMeasure(thought(12_340, { output_tokens_details: "none" }))).toEqual({ durationMs: 12_340, tokens: null });
   for (const bad of [0, -1, 1.5, Number.NaN, "12340", undefined, null]) expect(thinkingMeasure(thought(bad))).toBeNull();
   expect(thinkingMeasure({ type: "assistant", message: { usage: { output_tokens_details: { thinking_tokens: 1840 } } } })).toBeNull();
+});
+
+test("record types are filed as Claude Code files them, and only bookkeeping and state read as notes", () => {
+  expect(["user", "progress", "last-prompt", "api-request", "summary", "cost-state", "future-record"].map(type => recordPolicy.get(type) ?? null))
+    .toEqual(["transcript", "transcript", "bookkeeping", "bookkeeping", "state", "state", null]);
+  // An API request and its message copies are bookkeeping, but the replay shows them as a request card.
+  expect(["last-prompt", "file-history-snapshot", "api-request", "api-request-blob", "summary", "permission-mode", "system", "future-record", "constructor"].map(noteFiling))
+    .toEqual(["bookkeeping", "bookkeeping", null, null, "state", "state", null, null, null]);
 });
 
 test("search highlights use the term the server matched records with", () => {

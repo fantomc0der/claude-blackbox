@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, RecordedCost, RecordedCostTotal, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { sessionStateTypes, turnDuration } from "../shared/records";
+import { turnDuration } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -19,6 +19,14 @@ const callInputKeys = 32;
 const callInputLength = 2000;
 const timelineGranularities = [[16, 60_000], [15, 600_000], [13, 3_600_000], [10, 86_400_000]] as const;
 type TimelineRow = { at: string | null; count: number; first: number; last: number; errors: number };
+// The record types version 10 first indexed as session state. The step keeps its own list, so an index upgraded past it
+// is re-read as that version decided.
+const version10StateTypes = [
+  "last-prompt", "atis-latch", "queue-operation", "cost-state", "mode", "permission-mode", "worktree-state",
+  "isolation-latch", "dev-mods", "memory-mode", "agent-name", "agent-color", "agent-setting", "tag",
+  "attribution-snapshot", "file-history-delta", "api-request-shape", "relocated", "continued-in", "fork-context-ref",
+  "observer-ref", "history-suppression", "ended-by-model", "content-replacement",
+];
 
 interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
@@ -428,7 +436,7 @@ export class Recorder {
     // Version 10 re-indexes only the recordings holding Claude Code's session state records, which an earlier build read
     // as content with their prompt copies searchable; finding them reads every event, like version 8.
     if (version < 10) this.db.transaction(() => {
-      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify([...sessionStateTypes]));
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify(version10StateTypes));
       this.db.exec("PRAGMA user_version=10");
     })();
     // Version 11 re-indexes only the recordings that hold Claude Code's own stand-ins for a model turn, which earlier

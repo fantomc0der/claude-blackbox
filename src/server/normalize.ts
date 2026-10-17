@@ -1,6 +1,6 @@
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { isSessionState } from "../shared/records";
+import { noteFiling } from "../shared/records";
 import type { ContentBlock, ReplayEvent } from "../shared/types";
 
 export function object(value: unknown): Record<string, unknown> {
@@ -61,12 +61,12 @@ function requestMessageText(message: Record<string, unknown>): string {
   return Array.isArray(message.content) ? searchable(message.content.filter(entry => !copiedBlocks.has(string(object(entry).type)))) : "";
 }
 
-// A session state record's prompt copy is held by the user record it repeats, so it is left out of the searchable text;
-// the rest of the record, such as a permission mode or a worktree path, stays searchable and in `raw`.
-const copiedStateFields: Record<string, readonly string[]> = { "last-prompt": ["lastPrompt"], "queue-operation": ["content"] };
+// A bookkeeping or state record's prompt copy is held by the user record it repeats, so it is left out of the searchable
+// text; the rest of the record, such as a permission mode, a worktree path, or a `summary`, stays searchable and in `raw`.
+const copiedNoteFields: Record<string, readonly string[]> = { "last-prompt": ["lastPrompt"], "queue-operation": ["content"] };
 
-function sessionStateText(type: string, raw: Record<string, unknown>): string {
-  const copied = copiedStateFields[type];
+function noteText(type: string, raw: Record<string, unknown>): string {
+  const copied = copiedNoteFields[type];
   return searchable(copied ? Object.fromEntries(Object.entries(raw).filter(([key]) => !copied.includes(key))) : raw);
 }
 
@@ -82,8 +82,8 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
   const type = string(raw.type) || "unknown";
   const role = (type === "user" || type === "assistant") && raw.isMeta !== true && raw.isCompactSummary !== true ? type : "system";
   const copy = type === requestMessageType;
-  const state = isSessionState(type);
-  const content = copy || state ? undefined : message.content ?? raw.content;
+  const note = noteFiling(type) !== null;
+  const content = copy || note ? undefined : message.content ?? raw.content;
   let blocks: ContentBlock[] = [];
   if (typeof content === "string") blocks = [{ type: "text", text: content }];
   else if (Array.isArray(content)) blocks = content.map(entry => {
@@ -91,8 +91,8 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     const block = object(entry);
     return { ...block, type: string(block.type) || "unknown" } as ContentBlock;
   });
-  if (!blocks.length && !state && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
-  const text = copy ? requestMessageText(message) : state ? sessionStateText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
+  if (!blocks.length && !note && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
+  const text = copy ? requestMessageText(message) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
   const tools = blocks.filter(block => block.type === "tool_use");
   const hasTools = blocks.some(block => block.type === "tool_use" || block.type === "tool_result");
   const hasText = blocks.some(block => block.type === "text" && block.text?.trim());
