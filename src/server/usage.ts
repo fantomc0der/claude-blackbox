@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { UsageSummary } from "../shared/types";
+import type { RecordedCost, RecordedModelUsage, UsageSummary } from "../shared/types";
 import { object, string, syntheticModel } from "./normalize";
 import { isFacetValue } from "./facets";
 
@@ -112,6 +112,45 @@ export function readUsage(raw: Record<string, unknown>, sessionId: string, event
     }
   }
   return { key, model, effort, input, output, cacheCreation, cacheRead, cost, recorded: recordedCost !== null, unrated: cost === null && !price && model !== "", sidechain: raw.isSidechain === true };
+}
+
+function money(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Reads Claude Code's own running total from a `cost-state` record. Claude Code writes one at the end of each turn and
+ * on resume, files the type as last-wins, and restores its tracker from it, so the last record in a recording holds the
+ * session's total so far. `modelUsage` is keyed by the requested model string (`claude-opus-5[1m]`,
+ * `claude-haiku-4-5-20251001`), which `normalizeModel()` maps onto the rate table's keys; models that normalize to the
+ * same key are summed. A record without a readable `totalCostUSD` is not a total.
+ */
+export function readCostState(raw: Record<string, unknown>): RecordedCost | null {
+  if (raw.type !== "cost-state") return null;
+  const costUSD = money(raw.totalCostUSD);
+  if (costUSD === null) return null;
+  const started = typeof raw.startTime === "number" ? raw.startTime : Date.parse(string(raw.startTime));
+  const models = new Map<string, RecordedModelUsage>();
+  for (const [name, entry] of Object.entries(object(raw.modelUsage))) {
+    const model = normalizeModel(name);
+    if (!isFacetValue(model)) continue;
+    const usage = object(entry);
+    const total = models.get(model) ?? { inputTokens: 0, outputTokens: 0, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, webSearchRequests: 0, costUSD: 0 };
+    total.inputTokens += count(usage.inputTokens);
+    total.outputTokens += count(usage.outputTokens);
+    total.thinkingTokens += count(usage.thinkingTokens);
+    total.cacheCreationTokens += count(usage.cacheCreationInputTokens);
+    total.cacheReadTokens += count(usage.cacheReadInputTokens);
+    total.webSearchRequests += count(usage.webSearchRequests);
+    total.costUSD += money(usage.costUSD) ?? 0;
+    models.set(model, total);
+  }
+  return {
+    costUSD,
+    startedAt: Number.isFinite(started) ? new Date(started).toISOString() : "",
+    unknownModelCost: raw.hasUnknownModelCost === true,
+    models: Object.fromEntries(models),
+  };
 }
 
 export function emptyUsage(): UsageSummary {

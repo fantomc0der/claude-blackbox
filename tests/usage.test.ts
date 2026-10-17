@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
-import { emptyUsage, rateStamp, readUsage } from "../src/server/usage";
+import { emptyUsage, rateStamp, readCostState, readUsage } from "../src/server/usage";
 import { dollars, effortName, pricingGap, usageCost } from "../src/client/lib/format";
 import { removeTestDirectory } from "./helpers";
 
@@ -471,5 +471,65 @@ describe("indexed usage", () => {
     expect(page.usage).toMatchObject({ requests: 2, unpricedRequests: 1, unratedRequests: 1 });
     expect(page.items[0].bookmarked).toBe(true);
     expect(await Bun.file(file).text()).toBe(original);
+  });
+});
+
+// Claude Code 2.1.27x and later write their own running total into the recording as a `cost-state` record at the end of
+// each turn, filed last-wins. It counts the session's subagents and the requests Claude Code bills but never records,
+// so it is the figure to show beside the estimate, never a replacement for it.
+describe("Claude Code's recorded totals", () => {
+  const costState = (totalCostUSD: unknown, extra: Record<string, unknown> = {}) => ({ type: "cost-state", sessionId: "session-a", totalCostUSD, ...extra });
+
+  test("reads the running total with its model keys normalized and merged", () => {
+    const recorded = readCostState(costState(1.27, {
+      startTime: Date.UTC(2026, 8, 20, 12), hasUnknownModelCost: true,
+      modelUsage: {
+        "claude-opus-5[1m]": { inputTokens: 2, outputTokens: 275, thinkingTokens: 40, cacheReadInputTokens: 100, cacheCreationInputTokens: 94_896, webSearchRequests: 1, costUSD: 0.6 },
+        "claude-opus-5": { inputTokens: 1, outputTokens: 1, costUSD: 0.4 },
+        "claude-haiku-4-5-20251001": { inputTokens: 1000, costUSD: 0.07 },
+        "@preset/claude-code-default-opus-model": { inputTokens: 5, costUSD: 0.2 },
+        "bad\u0000model": { costUSD: 9 },
+      },
+    }))!;
+    expect(recorded).toMatchObject({ costUSD: 1.27, startedAt: "2026-09-20T12:00:00.000Z", unknownModelCost: true });
+    expect(Object.keys(recorded.models)).toEqual(["claude-opus-5", "claude-haiku-4-5", "@preset/claude-code-default-opus-model"]);
+    expect(recorded.models["claude-opus-5"]).toMatchObject({ inputTokens: 3, outputTokens: 276, thinkingTokens: 40, cacheCreationTokens: 94_896, cacheReadTokens: 100, webSearchRequests: 1 });
+    expect(recorded.models["claude-opus-5"].costUSD).toBeCloseTo(1, 9);
+    expect(recorded.models["claude-haiku-4-5"]).toEqual({ inputTokens: 1000, outputTokens: 0, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, webSearchRequests: 0, costUSD: 0.07 });
+    expect(readCostState(costState(0.5, { startTime: "2026-09-20T12:00:00Z" }))).toEqual({ costUSD: 0.5, startedAt: "2026-09-20T12:00:00.000Z", unknownModelCost: false, models: {} });
+    expect(readCostState(costState(0.5, { startTime: "soon", modelUsage: "none" }))).toMatchObject({ startedAt: "", models: {} });
+    expect(readCostState(costState(0))?.costUSD).toBe(0);
+    for (const total of [undefined, -1, Number.NaN, Number.POSITIVE_INFINITY, "1.27"]) expect(readCostState(costState(total))).toBeNull();
+    expect(readCostState({ type: "last-prompt", totalCostUSD: 1 })).toBeNull();
+  });
+
+  test("indexes the last total of each recording, follows appended ones and sums them over a selection", async () => {
+    const setup = await fixture();
+    // Each turn ends with two `cost-state` records, as Claude Code 2.1.278 writes them; the later one is the total so far.
+    const turn = (id: string, total: number) => [record(id),
+      costState(total / 2, { modelUsage: { "claude-sonnet-4-5-20250929": { outputTokens: 100, costUSD: total / 2 } } }),
+      costState(total, { modelUsage: { "claude-sonnet-4-5-20250929": { outputTokens: 200, costUSD: total } } })];
+    const file = await setup.write("session-a", [...turn("first", 0.5), ...turn("second", 1.25)]);
+    await setup.write("session-b", [record("other", { sessionId: "session-b", cwd: "C:\work\elsewhere" })]);
+    await mkdir(join(setup.project, "session-a", "subagents"), { recursive: true });
+    await writeFile(join(setup.project, "session-a", "subagents", "agent-helper.jsonl"), JSON.stringify(record("agent", { isSidechain: true })) + "\n");
+    const recorder = await setup.open();
+    const page = recorder.list(new URLSearchParams());
+    const costed = page.items.find(item => item.sessionId === "session-a" && !item.isAgent)!;
+    expect(costed.recordedCost).toEqual({ costUSD: 1.25, startedAt: "", unknownModelCost: false,
+      models: { "claude-sonnet-4-5": { inputTokens: 0, outputTokens: 200, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, webSearchRequests: 0, costUSD: 1.25 } } });
+    expect(page.items.find(item => item.sessionId === "session-b")!.recordedCost).toBeNull();
+    // The selection's total spans the same recordings as its usage: hidden subagents add nothing unless they carry one.
+    expect(page).toMatchObject({ total: 2, hiddenAgents: 1, recordedCost: { costUSD: 1.25, recordings: 1 } });
+    expect(recorder.list(new URLSearchParams({ agents: "1" })).recordedCost).toEqual({ costUSD: 1.25, recordings: 1 });
+    expect(recorder.list(new URLSearchParams({ agents: "only" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
+    expect(recorder.list(new URLSearchParams({ cwd: "C:\work\elsewhere" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
+    // A later turn's total replaces the stored one; a turn without one keeps it.
+    await appendFile(file, [...turn("third", 2), record("fourth")].map(value => JSON.stringify(value)).join("\n") + "\n");
+    await recorder.scan();
+    expect(recorder.getSession(costed.id)?.recordedCost).toMatchObject({ costUSD: 2, models: { "claude-sonnet-4-5": { outputTokens: 200, costUSD: 2 } } });
+    expect(recorder.list(new URLSearchParams()).recordedCost).toEqual({ costUSD: 2, recordings: 1 });
+    // The estimate still covers only the requests the recording holds.
+    expect(recorder.getSession(costed.id)?.usage.requests).toBe(4);
   });
 });

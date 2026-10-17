@@ -50,6 +50,7 @@
   .session-trailing { grid-column: -3 / -2; grid-row: 1; align-self: start; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; min-width: 0; padding-top: calc((var(--text-control) * 1.6 - var(--text-meta) * 1.5) / 2); }
   .session-usage { color: var(--text); font-size: var(--text-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .session-usage-tokens, .session-cost-label { color: var(--muted); }
+  .session-details-menu .recorded-models { color: var(--muted); overflow-wrap: anywhere; }
   .replay-heading-content { flex: 1; min-width: 0; }
   .replay-usage { display: flex; flex-wrap: wrap; gap: 3px 16px; color: var(--muted); font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
   .session-details-menu .token-breakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

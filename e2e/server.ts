@@ -221,17 +221,22 @@ await writeFile(join(folder, "api-errors.jsonl"), [
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Claude Code 2.1.30x keeps its own session state in the recording: `last-prompt` and `atis-latch` after every turn,
 // without timestamps, a timestamped `queue-operation` holding a queued prompt, and settings such as `cost-state`. The
-// prompt's word Brackenfold is recorded once in the transcript and copied by three state records.
+// prompt's word Brackenfold is recorded once in the transcript and copied by three state records. `cost-state` is
+// Claude Code's own running total, written at the end of each turn and filed last-wins, keyed by the requested model
+// string; it counts requests the recording never holds, so it runs above the estimate from the one recorded request.
 const sessionState = (type: string, fields: Record<string, unknown> = {}) => ({ type, sessionId: "session-state", ...fields });
+const costState = (totalCostUSD: number, modelUsage: Record<string, Record<string, number>>) => sessionState("cost-state", { totalCostUSD, startTime: Date.parse("2026-01-01T00:00:00Z"), modelUsage, hasUnknownModelCost: false });
+const renamed = event("The helper is renamed.", 3, "assistant");
 await writeFile(join(folder, "session-state.jsonl"), [
   sessionState("queue-operation", { operation: "enqueue", timestamp: "2026-01-01T00:00:00Z", content: "Rename the Brackenfold helper" }),
   event("Rename the Brackenfold helper", 1),
   event("Renaming the helper now.", 2, "assistant"),
   sessionState("last-prompt", { lastPrompt: "Rename the Brackenfold helper", leafUuid: "browser-2" }),
   sessionState("atis-latch", { atis: "" }),
-  sessionState("cost-state", { totalCostUSD: 0.42 }),
+  costState(0.21, { "claude-sonnet-4-5[1m]": { inputTokens: 6, outputTokens: 1200, cacheReadInputTokens: 140_000, cacheCreationInputTokens: 11_000, costUSD: 0.21 } }),
   sessionState("permission-mode", { mode: "acceptEdits" }),
-  event("The helper is renamed.", 3, "assistant"),
+  { ...renamed, message: { ...renamed.message, id: "session-state-reply", usage: { input_tokens: 12, output_tokens: 412, cache_read_input_tokens: 52_916, cache_creation_input_tokens: 45 } } },
+  costState(0.42, { "claude-sonnet-4-5[1m]": { inputTokens: 12, outputTokens: 2512, cacheReadInputTokens: 284_747, cacheCreationInputTokens: 22_494, costUSD: 0.4 }, "claude-haiku-4-5-20251001": { inputTokens: 1000, outputTokens: 20, costUSD: 0.02 } }),
   sessionState("last-prompt", { lastPrompt: "Rename the Brackenfold helper", leafUuid: "browser-3" }),
   sessionState("atis-latch", { atis: "" }),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");

@@ -54,6 +54,39 @@ export interface UsageSummary {
   recordedCostRequests: number;
 }
 
+/** One model's share of Claude Code's own running total, keyed by the requested model after `normalizeModel()`. */
+export interface RecordedModelUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Claude Code's own schema describes this field as "Thinking tokens, already counted inside outputTokens", so it is
+   *  never added to `outputTokens`. Absent, and so 0 here, for turns run by versions that did not record it. */
+  thinkingTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  webSearchRequests: number;
+  costUSD: number;
+}
+
+/**
+ * Claude Code's own running total for a session, from the last `cost-state` record in the recording. It counts the
+ * session's subagents and the requests Claude Code bills but never records (prompt suggestions, compaction, summaries,
+ * memory extraction, hook evaluations), so it normally runs above the estimate from the recording's own requests.
+ */
+export interface RecordedCost {
+  costUSD: number;
+  /** The tracker's `startTime` as an ISO string, or empty when it is missing or unreadable. */
+  startedAt: string;
+  /** Claude Code's `hasUnknownModelCost`: it could not price every model itself. */
+  unknownModelCost: boolean;
+  models: Record<string, RecordedModelUsage>;
+}
+
+/** The sum of Claude Code's running totals over the recordings in a selection that carry one. */
+export interface RecordedCostTotal {
+  costUSD: number;
+  recordings: number;
+}
+
 export interface DirectoryUsage {
   cwd: string;
   sessions: number;
@@ -87,6 +120,7 @@ export interface Session {
   isAgent: boolean;
   source: string;
   usage: UsageSummary;
+  recordedCost: RecordedCost | null;
   snippet?: string;
   matchEventId?: string;
   matchCategory?: ReplayEvent["category"];
@@ -140,6 +174,7 @@ export interface Catalog {
  * recording across all pages plus the `hiddenAgents` subagent recordings that the agent filter leaves out of `items`
  * and `total`: their requests were spent on behalf of main sessions, so hiding them never lowers the totals.
  * `hiddenAgentUsage` is their share of `usage`, deduplicated the same way; it is empty while subagents are listed.
+ * `recordedCost` sums Claude Code's own totals over the same recordings, counting the ones that carry one.
  */
 export interface SessionPage {
   items: Session[];
@@ -147,6 +182,7 @@ export interface SessionPage {
   offset: number;
   limit: number;
   usage: UsageSummary;
+  recordedCost: RecordedCostTotal;
   directories: DirectoryUsage[];
   modelUsage: ModelUsage[];
   sessionsWithUsage: number;
