@@ -105,7 +105,10 @@ describe("ANSI escape sequences", () => {
 
   test("keeps escape sequences out of session titles and search snippets", () => {
     const raw = { type: "user", uuid: "u1", timestamp: "2026-10-14T18:09:45.275Z", message: { role: "user", content: addDir } };
-    expect(promptTitle(normalize(raw, "s", 0, 0))).toBe("Added C:\\code\\csii\\ingest-dealer-config as a working directory for this session · /permissions to manage");
+    const quoted = { ...raw, message: { role: "user", content: `Explain ${addDir}` } };
+    expect(promptTitle(normalize(quoted, "s", 0, 0))).toBe("Explain Added C:\\code\\csii\\ingest-dealer-config as a working directory for this session · /permissions to manage");
+    // The output record itself never titles a recording; its snippet still shows it clean.
+    expect(promptTitle(normalize(raw, "s", 0, 0))).toBe("");
     expect(displaySnippet(JSON.stringify(raw), "working directory")).toBe("<local-command-stdout>Added C:\\code\\csii\\ingest-dealer-config as a working directory for this session · /permissions to manage</local-command-stdout>");
   });
 });
