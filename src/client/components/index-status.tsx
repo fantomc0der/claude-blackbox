@@ -1,6 +1,7 @@
-import { createEffect, createSignal, Show } from "solid-js";
+import { Show } from "solid-js";
 import type { Catalog, IndexProgress } from "../../shared/types";
 import { tokenCount } from "../lib/format";
+import { createProlonged } from "../lib/prolonged";
 import { Icon } from "./icon";
 
 const shownKinds = 5;
@@ -8,12 +9,7 @@ const shownKinds = 5;
 export function IndexStatus(props: { catalog: Catalog | null; progress: IndexProgress | null; refreshing: boolean; refresh: () => void }) {
   const failed = () => props.progress?.phase === "error";
   const working = () => props.refreshing || props.progress?.phase === "discovering" || props.progress?.phase === "indexing";
-  const [visible, setVisible] = createSignal(false);
-  createEffect(() => working(), active => {
-    if (!active) { setVisible(false); return; }
-    const timer = setTimeout(() => setVisible(true), 300);
-    return () => clearTimeout(timer);
-  });
+  const visible = createProlonged(working);
   const label = () => {
     if (!props.progress) return props.catalog ? "Index unavailable" : "Connecting to index";
     if (failed()) return "Scan failed";

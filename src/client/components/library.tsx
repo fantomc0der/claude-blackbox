@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onSettled, Show } from "solid-js";
+import { createSignal, For, onSettled, Show } from "solid-js";
 import type { Catalog, Session, SessionPage } from "../../shared/types";
 import { anchoredMenu } from "../lib/anchor";
 import { dismissableDetails } from "../lib/dismissable";
@@ -6,14 +6,11 @@ import { activeTimeNote, compact, dateTime, dollars, duration, errorSummary, fol
 import type { Navigate } from "../lib/location";
 import { clearReplayFilters, matchReplayKind } from "../lib/replay-filters";
 import { withSelectedOption } from "../lib/filter-options";
+import { createProlonged } from "../lib/prolonged";
 import { Icon } from "./icon";
 import { SubagentToggle } from "./subagent-toggle";
 import { Highlight } from "./highlight";
 import { UsageBreakdown, UsagePanel } from "./usage-panel";
-
-/** How long a refresh runs before its dots show. A local refresh usually answers within a few frames, and a dot drawn for one
- *  frame reads as a stray bullet rather than as a loading indicator. */
-const REFRESH_DOT_DELAY = 300;
 
 /** Matches the stylesheet's short-screen block, which also hides the archive totals. */
 const SHORT_SCREEN = "(max-height: 820px) and (min-width: 681px)";
@@ -29,13 +26,8 @@ export function Library(props: LibraryProps) {
   onSettled(() => { const releases = [dismissableDetails(filters), anchoredMenu(filters, filterMenu)]; return () => { for (const release of releases) release(); }; });
   const [shortScreen, setShortScreen] = createSignal(matchMedia(SHORT_SCREEN).matches);
   onSettled(() => { const media = matchMedia(SHORT_SCREEN); const changed = () => setShortScreen(media.matches); media.addEventListener("change", changed); return () => media.removeEventListener("change", changed); });
-  // `aria-busy` still reports every refresh; only the dots wait out REFRESH_DOT_DELAY.
-  const [slow, setSlow] = createSignal(false);
-  createEffect(() => props.pending, pending => {
-    if (!pending) { setSlow(false); return; }
-    const timeout = setTimeout(() => setSlow(true), REFRESH_DOT_DELAY);
-    return () => clearTimeout(timeout);
-  });
+  // `aria-busy` reports every refresh; the dots show only for one that runs long enough to notice.
+  const slow = createProlonged(() => props.pending);
   // The breakdown is the list's first item, so opening it scrolls the list back to the top where it appears.
   const [usageOpen, setUsageOpen] = createSignal(false);
   const toggleUsage = () => { const open = !usageOpen(); setUsageOpen(open); if (open) recordings.scrollTop = 0; };
