@@ -22,12 +22,12 @@ async function indexedDemo() {
 
 test("demo catalog includes a multi-day session that fills more than one replay page", async () => {
   const recorder = await indexedDemo();
-  const listing = recorder.list(new URLSearchParams({ agents: "1", limit: "100" }));
+  const listing = recorder.queries.list(new URLSearchParams({ agents: "1", limit: "100" }));
   expect(listing.total).toBe(DEMO_SESSION_COUNT + Object.keys(DEMO_AGENT_IDS).length);
-  const ledger = recorder.list(new URLSearchParams({ q: "Stream ledger exports without timeouts" })).items[0]!;
+  const ledger = recorder.queries.list(new URLSearchParams({ q: "Stream ledger exports without timeouts" })).items[0]!;
   const conversation = new URLSearchParams({ kind: "conversation" });
-  expect(recorder.events(ledger.id, conversation).total).toBeGreaterThan(60);
-  const layout = layoutTimeline(recorder.timeline(ledger.id, conversation), 640);
+  expect(recorder.queries.events(ledger.id, conversation).total).toBeGreaterThan(60);
+  const layout = layoutTimeline(recorder.queries.timeline(ledger.id, conversation), 640);
   expect(layout.items.filter(item => item.kind === "gap").length).toBeGreaterThanOrEqual(1);
   expect(layout.bins.filter(bin => bin.errors > 0).length).toBeGreaterThanOrEqual(2);
 });
@@ -48,8 +48,8 @@ test("demo catalog never reuses an event uuid across recordings", async () => {
 
 test("demo catalog includes a parent session whose agent recordings link back to their launches", async () => {
   const recorder = await indexedDemo();
-  const parent = recorder.list(new URLSearchParams({ q: "Audit keyboard paths across the component library" })).items[0]!;
-  const family = recorder.family(parent.id);
+  const parent = recorder.queries.list(new URLSearchParams({ q: "Audit keyboard paths across the component library" })).items[0]!;
+  const family = recorder.queries.family(parent.id);
   const agents = family.members.filter(member => member.session.isAgent);
   expect(agents.map(member => member.label).sort()).toEqual(["Check menu roving focus", "Map dialog focus order", "Review skip links and landmarks"]);
   expect(agents.every(member => member.parentId === parent.id && member.depth === 1)).toBe(true);

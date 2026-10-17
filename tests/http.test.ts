@@ -16,7 +16,7 @@ async function setup(records: unknown[] = [{ type: "user", cwd: "/work/example",
   await writeFile(join(directory, "record.jsonl"), records.map(record => JSON.stringify(record)).join("\n") + "\n");
   const recorder = await Recorder.open(join(root, "claude"), join(root, "state"));
   cleanup.push(async () => { await recorder.close(); await removeTestDirectory(root); });
-  return { handler: createHandler({ recorder }), recorder, id: recorder.list(new URLSearchParams()).items[0].id };
+  return { handler: createHandler({ recorder }), recorder, id: recorder.queries.list(new URLSearchParams()).items[0].id };
 }
 
 test("blocks DNS rebinding, foreign origins and unsafe mutations", async () => {

@@ -292,20 +292,20 @@ describe("indexed usage", () => {
     const query = spyOn(recorder.db, "query");
     const aggregations = () => query.mock.calls.filter(([sql]) => sql.includes("PARTITION BY coalesce(gp.group_id,s.cwd)")).length;
     try {
-      const first = await recorder.catalog();
-      expect((await recorder.catalog()).workspaces).toEqual(first.workspaces);
+      const first = await recorder.queries.catalog();
+      expect((await recorder.queries.catalog()).workspaces).toEqual(first.workspaces);
       expect(aggregations()).toBe(1);
       await appendFile(file, JSON.stringify(record("appended", { costUSD: 3 })) + "\n");
       await recorder.scan();
-      expect((await recorder.catalog()).workspaces.find(workspace => workspace.name === "orbit")?.usage.costUSD).toBe(4);
+      expect((await recorder.queries.catalog()).workspaces.find(workspace => workspace.name === "orbit")?.usage.costUSD).toBe(4);
       expect(aggregations()).toBe(2);
-      const group = recorder.saveGroup({ name: "Cached group", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
-      expect((await recorder.catalog()).workspaces[0].usage.costUSD).toBe(6);
+      const group = recorder.queries.saveGroup({ name: "Cached group", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
+      expect((await recorder.queries.catalog()).workspaces[0].usage.costUSD).toBe(6);
       expect(aggregations()).toBe(3);
-      await recorder.catalog();
+      await recorder.queries.catalog();
       expect(aggregations()).toBe(3);
-      recorder.deleteGroup(group.id);
-      expect((await recorder.catalog()).workspaces).toHaveLength(2);
+      recorder.queries.deleteGroup(group.id);
+      expect((await recorder.queries.catalog()).workspaces).toHaveLength(2);
       expect(aggregations()).toBe(4);
     } finally { query.mockRestore(); }
   });
@@ -318,18 +318,18 @@ describe("indexed usage", () => {
     await setup.write("clone", [{ ...shared, cwd: "C:\\work\\clone" }, record("unique", { cwd: "C:\\work\\clone", costUSD: 3 })]);
     await setup.write("outside", [{ ...shared, cwd: "C:\\work\\outside" }]);
     const recorder = await setup.open();
-    const ungrouped = (await recorder.catalog()).workspaces;
+    const ungrouped = (await recorder.queries.catalog()).workspaces;
     expect(ungrouped.find(workspace => workspace.name === "orbit")).toMatchObject({ count: 2, usage: { requests: 1, costUSD: 10 } });
     expect(ungrouped.find(workspace => workspace.name === "clone")?.usage.costUSD).toBe(13);
-    for (const workspace of ungrouped) expect(workspace.usage).toEqual(recorder.list(new URLSearchParams({ workspace: workspace.id })).usage);
-    const group = recorder.saveGroup({ name: "Orbit together", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
-    const grouped = (await recorder.catalog()).workspaces;
+    for (const workspace of ungrouped) expect(workspace.usage).toEqual(recorder.queries.list(new URLSearchParams({ workspace: workspace.id })).usage);
+    const group = recorder.queries.saveGroup({ name: "Orbit together", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
+    const grouped = (await recorder.queries.catalog()).workspaces;
     expect(grouped).toHaveLength(2);
     expect(grouped.find(workspace => workspace.id === group.id)).toMatchObject({ count: 3, usage: { requests: 2, costUSD: 13 } });
     expect(grouped.find(workspace => workspace.name === "outside")?.usage.costUSD).toBe(10);
-    for (const workspace of grouped) expect(workspace.usage).toEqual(recorder.list(new URLSearchParams({ workspace: workspace.id, limit: "1" })).usage);
-    recorder.deleteGroup(group.id);
-    expect((await recorder.catalog()).workspaces).toEqual(ungrouped);
+    for (const workspace of grouped) expect(workspace.usage).toEqual(recorder.queries.list(new URLSearchParams({ workspace: workspace.id, limit: "1" })).usage);
+    recorder.queries.deleteGroup(group.id);
+    expect((await recorder.queries.catalog()).workspaces).toEqual(ungrouped);
   });
 
   test("catalog preserves missing, unpriced, partial and zero costs and refreshes after indexing", async () => {
@@ -339,15 +339,15 @@ describe("indexed usage", () => {
     const zeroFile = await setup.write("zero", [record("zero", { cwd: "/work/zero", costUSD: 0 })]);
     await setup.write("no-directory", [record("no-directory", { cwd: "", costUSD: 2 })]);
     const recorder = await setup.open();
-    const catalog = await recorder.catalog();
+    const catalog = await recorder.queries.catalog();
     expect(catalog.workspaces.find(workspace => workspace.name === "missing")?.usage).toEqual(emptyUsage());
     expect(catalog.workspaces.find(workspace => workspace.name === "unpriced")?.usage).toMatchObject({ requests: 1, unpricedRequests: 1, costUSD: 0 });
     expect(catalog.workspaces.find(workspace => workspace.name === "zero")?.usage).toMatchObject({ requests: 1, unpricedRequests: 0, costUSD: 0 });
     expect(catalog.workspaces.find(workspace => workspace.id === "unknown")?.usage.costUSD).toBe(2);
-    const group = recorder.saveGroup({ name: "Partial", paths: ["/work/unpriced", "/work/zero"] });
+    const group = recorder.queries.saveGroup({ name: "Partial", paths: ["/work/unpriced", "/work/zero"] });
     await appendFile(zeroFile, JSON.stringify(record("added", { cwd: "/work/zero", costUSD: 4 })) + "\n");
     await recorder.scan();
-    expect((await recorder.catalog()).workspaces.find(workspace => workspace.id === group.id)?.usage).toMatchObject({ requests: 3, unpricedRequests: 1, costUSD: 4 });
+    expect((await recorder.queries.catalog()).workspaces.find(workspace => workspace.id === group.id)?.usage).toMatchObject({ requests: 3, unpricedRequests: 1, costUSD: 4 });
   });
 
   test("model and effort expenses use each request and reconcile across grouped folders and pages", async () => {
@@ -360,9 +360,9 @@ describe("indexed usage", () => {
     ]);
     await setup.write("session-b", [record("unknown-model", { cwd: "C:\\work\\clone", message: { model: "future-model", effort: "high", usage: { input_tokens: 40 } } })]);
     const recorder = await setup.open();
-    const group = recorder.saveGroup({ name: "Expenses", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
+    const group = recorder.queries.saveGroup({ name: "Expenses", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
     const params = new URLSearchParams({ workspace: group.id, limit: "1" });
-    const page = recorder.list(params);
+    const page = recorder.queries.list(params);
     expect(page.modelUsage).toHaveLength(4);
     expect(page.modelUsage.map(row => [row.model, row.effort])).toContainEqual(["claude-opus-4-5", "high"]);
     expect(page.modelUsage.map(row => [row.model, row.effort])).toContainEqual(["claude-opus-4-5", "low"]);
@@ -373,11 +373,11 @@ describe("indexed usage", () => {
     }
     expect(page.modelUsage.map(row => row.usage.costUSD)).toEqual(page.modelUsage.map(row => row.usage.costUSD).toSorted((left, right) => right - left));
     params.set("offset", "1");
-    expect(recorder.list(params).modelUsage).toEqual(page.modelUsage);
+    expect(recorder.queries.list(params).modelUsage).toEqual(page.modelUsage);
     params.set("cwd", "C:\\work\\clone");
-    expect(recorder.list(params).modelUsage).toHaveLength(1);
-    expect(recorder.list(new URLSearchParams({ q: "sonnet-missing-effort" })).modelUsage).toHaveLength(3);
-    expect(recorder.list(new URLSearchParams({ q: "no-such-request" })).modelUsage).toEqual([]);
+    expect(recorder.queries.list(params).modelUsage).toHaveLength(1);
+    expect(recorder.queries.list(new URLSearchParams({ q: "sonnet-missing-effort" })).modelUsage).toHaveLength(3);
+    expect(recorder.queries.list(new URLSearchParams({ q: "no-such-request" })).modelUsage).toEqual([]);
   });
 
   test("a later copy without a model is priced and flagged as the copy that named the model", async () => {
@@ -393,7 +393,7 @@ describe("indexed usage", () => {
     });
     await appendFile(file, copies.join("\n") + "\n");
     await recorder.scan();
-    const rows = recorder.list(new URLSearchParams()).modelUsage;
+    const rows = recorder.queries.list(new URLSearchParams()).modelUsage;
     expect(rows.find(row => row.model === "claude-sonnet-4-5")?.usage).toMatchObject({ requests: 1, unpricedRequests: 0, unratedRequests: 0, outputTokens: 800 });
     expect(rows.find(row => row.model === "claude-sonnet-4-5")?.usage.costUSD).toBeCloseTo(readUsage(JSON.parse(copies[0]), "source", "event", "claude-sonnet-4-5")!.cost!, 12);
     expect(rows.find(row => row.model === "future-model")?.usage).toMatchObject({ requests: 1, unpricedRequests: 1, unratedRequests: 1, outputTokens: 800 });
@@ -405,7 +405,7 @@ describe("indexed usage", () => {
     await setup.write("session-a", [original]);
     await setup.write("session-b", [{ ...original, cwd: "C:\\work\\clone", message: { ...original.message, model: "claude-sonnet-4-5", effort: "high" } }]);
     const recorder = await setup.open();
-    const page = recorder.list(new URLSearchParams());
+    const page = recorder.queries.list(new URLSearchParams());
     expect(page.usage.requests).toBe(1);
     expect(page.modelUsage).toEqual([{ model: "claude-sonnet-4-5", effort: "high", usage: page.usage }]);
   });
@@ -418,11 +418,11 @@ describe("indexed usage", () => {
     const metadata = { ...original, uuid: "smaller-update", effort: "high", message: { ...original.message, usage: { ...original.message.usage, output_tokens: 10 } } };
     await appendFile(file, JSON.stringify(metadata) + "\n");
     await recorder.scan();
-    expect(recorder.list(new URLSearchParams()).modelUsage[0]).toMatchObject({ effort: "high", usage: { totalTokens: 1900 } });
+    expect(recorder.queries.list(new URLSearchParams()).modelUsage[0]).toMatchObject({ effort: "high", usage: { totalTokens: 1900 } });
     const larger = { ...original, uuid: "larger-update", message: { ...original.message, usage: { ...original.message.usage, output_tokens: 800 } } };
     await appendFile(file, JSON.stringify(larger) + "\n");
     await recorder.scan();
-    expect(recorder.list(new URLSearchParams()).modelUsage[0]).toMatchObject({ effort: "high", usage: { requests: 1, totalTokens: 2500 } });
+    expect(recorder.queries.list(new URLSearchParams()).modelUsage[0]).toMatchObject({ effort: "high", usage: { requests: 1, totalTokens: 2500 } });
   });
 
   test("upgrades version 3 usage indexes and backfills per-request model and effort", async () => {
@@ -430,12 +430,12 @@ describe("indexed usage", () => {
     const file = await setup.write("session-a", [record("backfill", { effort: "medium" })]);
     const original = await Bun.file(file).text();
     const before = await setup.open();
-    const expected = before.list(new URLSearchParams());
-    before.bookmark(expected.items[0].id, true);
+    const expected = before.queries.list(new URLSearchParams());
+    before.queries.bookmark(expected.items[0].id, true);
     before.db.exec("DROP INDEX usage_efforts; ALTER TABLE usage_records DROP COLUMN model; ALTER TABLE usage_records DROP COLUMN effort; PRAGMA user_version=3;");
     await before.close();
     const after = await setup.open();
-    const page = after.list(new URLSearchParams());
+    const page = after.queries.list(new URLSearchParams());
     expect(page.usage).toEqual(expected.usage);
     expect(page.modelUsage).toEqual(expected.modelUsage);
     expect(page.modelUsage[0].effort).toBe("medium");
@@ -448,15 +448,15 @@ describe("indexed usage", () => {
     const original = record("first");
     const file = await setup.write("session-a", [original, { ...original, uuid: "duplicate" }]);
     const recorder = await setup.open();
-    expect(recorder.list(new URLSearchParams()).usage).toMatchObject({ requests: 1, totalTokens: 1900 });
+    expect(recorder.queries.list(new URLSearchParams()).usage).toMatchObject({ requests: 1, totalTokens: 1900 });
     const final = { ...original, uuid: "final", message: { ...original.message, usage: { ...original.message.usage, output_tokens: 800 } } };
     await appendFile(file, JSON.stringify(final) + "\n" + JSON.stringify(record("second")) + "\n");
     await recorder.scan();
     await recorder.scan();
-    const page = recorder.list(new URLSearchParams());
+    const page = recorder.queries.list(new URLSearchParams());
     expect(page.usage).toMatchObject({ requests: 2, totalTokens: 4400, outputTokens: 1000 });
     expect(page.items[0].usage).toEqual(page.usage);
-    expect(recorder.getSession(page.items[0].id)?.usage).toEqual(page.usage);
+    expect(recorder.queries.getSession(page.items[0].id)?.usage).toEqual(page.usage);
     expect(page.sessionsWithUsage).toBe(1);
   });
 
@@ -466,19 +466,19 @@ describe("indexed usage", () => {
     await setup.write("session-b", [record("second", { cwd: "C:\\work\\orbit-clone", sessionId: "session-b" })]);
     await setup.write("session-c", [record("third", { cwd: "C:\\work\\elsewhere", sessionId: "session-c" })]);
     const recorder = await setup.open();
-    const group = recorder.saveGroup({ name: "Orbit", paths: ["C:\\work\\orbit", "C:\\work\\orbit-clone"] });
-    const grouped = recorder.list(new URLSearchParams({ workspace: group.id, limit: "1" }));
+    const group = recorder.queries.saveGroup({ name: "Orbit", paths: ["C:\\work\\orbit", "C:\\work\\orbit-clone"] });
+    const grouped = recorder.queries.list(new URLSearchParams({ workspace: group.id, limit: "1" }));
     expect(grouped.items).toHaveLength(1);
     expect(grouped.usage).toMatchObject({ requests: 2, totalTokens: 3800 });
     expect(grouped.directories).toHaveLength(2);
-    expect(recorder.list(new URLSearchParams({ workspace: group.id, offset: "1", limit: "1" })).usage).toEqual(grouped.usage);
-    expect(recorder.list(new URLSearchParams({ workspace: group.id, cwd: "C:\\work\\orbit" })).usage.requests).toBe(1);
-    expect(recorder.list(new URLSearchParams({ q: "second" })).usage.requests).toBe(1);
-    recorder.bookmark(grouped.items[0].id, true);
-    expect(recorder.list(new URLSearchParams({ bookmarked: "1" })).usage.requests).toBe(1);
-    expect(recorder.list(new URLSearchParams({ after: "2026-09-21" })).usage).toEqual(emptyUsage());
-    recorder.deleteGroup(group.id);
-    expect(recorder.list(new URLSearchParams()).usage.requests).toBe(3);
+    expect(recorder.queries.list(new URLSearchParams({ workspace: group.id, offset: "1", limit: "1" })).usage).toEqual(grouped.usage);
+    expect(recorder.queries.list(new URLSearchParams({ workspace: group.id, cwd: "C:\\work\\orbit" })).usage.requests).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ q: "second" })).usage.requests).toBe(1);
+    recorder.queries.bookmark(grouped.items[0].id, true);
+    expect(recorder.queries.list(new URLSearchParams({ bookmarked: "1" })).usage.requests).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams({ after: "2026-09-21" })).usage).toEqual(emptyUsage());
+    recorder.queries.deleteGroup(group.id);
+    expect(recorder.queries.list(new URLSearchParams()).usage.requests).toBe(3);
   });
 
   test("deduplicates copied requests across folders, preserves independent subagent requests", async () => {
@@ -487,12 +487,12 @@ describe("indexed usage", () => {
     await setup.write("session-b", [record("shared", { cwd: "C:\\clone" }), record("distinct", { cwd: "C:\\clone" })]);
     await setup.write("agent-subtask", [record("agent", { cwd: "C:\\clone", isSidechain: true })]);
     const recorder = await setup.open();
-    const page = recorder.list(new URLSearchParams({ agents: "1" }));
+    const page = recorder.queries.list(new URLSearchParams({ agents: "1" }));
     expect(page.usage.requests).toBe(3);
     expect(page.directories.reduce((sum, directory) => sum + directory.usage.requests, 0)).toBe(3);
     expect(page).toMatchObject({ total: 3, hiddenAgents: 0, sessionsWithUsage: 3 });
-    expect(recorder.list(new URLSearchParams({ cwd: "C:\\clone", agents: "1" })).usage.requests).toBe(3);
-    expect(recorder.list(new URLSearchParams({ agents: "only" }))).toMatchObject({ total: 1, hiddenAgents: 0, sessionsWithUsage: 1, usage: { requests: 1 } });
+    expect(recorder.queries.list(new URLSearchParams({ cwd: "C:\\clone", agents: "1" })).usage.requests).toBe(3);
+    expect(recorder.queries.list(new URLSearchParams({ agents: "only" }))).toMatchObject({ total: 1, hiddenAgents: 0, sessionsWithUsage: 1, usage: { requests: 1 } });
   });
 
   test("a request copied into a hidden subagent counts once, on the main session's side", async () => {
@@ -501,9 +501,9 @@ describe("indexed usage", () => {
     await setup.write("session-a", [shared]);
     await setup.write("agent-copy", [{ ...shared, isSidechain: true }, record("agent-only", { isSidechain: true, costUSD: 1 })]);
     const recorder = await setup.open();
-    const hidden = recorder.list(new URLSearchParams());
+    const hidden = recorder.queries.list(new URLSearchParams());
     expect(hidden).toMatchObject({ total: 1, hiddenAgents: 1, usage: { requests: 2, costUSD: 6 }, hiddenAgentUsage: { requests: 1, costUSD: 1 } });
-    expect(recorder.list(new URLSearchParams({ agents: "1" })).usage).toEqual(hidden.usage);
+    expect(recorder.queries.list(new URLSearchParams({ agents: "1" })).usage).toEqual(hidden.usage);
   });
 
   test("hidden subagents still count toward every usage total, folder and model breakdown", async () => {
@@ -513,8 +513,8 @@ describe("indexed usage", () => {
     await setup.write("agent-subtask", [record("agent", { isSidechain: true, costUSD: 2, message: { ...record("agent").message, model: "claude-opus-4-5" } })]);
     await setup.write("agent-worktree", [record("worktree-agent", { cwd: "C:\\work\\orbit-worktree", isSidechain: true, costUSD: 4 })]);
     const recorder = await setup.open();
-    const shown = recorder.list(new URLSearchParams({ agents: "1" }));
-    const hidden = recorder.list(new URLSearchParams());
+    const shown = recorder.queries.list(new URLSearchParams({ agents: "1" }));
+    const hidden = recorder.queries.list(new URLSearchParams());
     expect(shown).toMatchObject({ total: 4, hiddenAgents: 0, sessionsWithUsage: 4, usage: { requests: 4, costUSD: 15 }, hiddenAgentUsage: emptyUsage() });
     expect(hidden).toMatchObject({ total: 2, hiddenAgents: 2, sessionsWithUsage: 4, usage: { requests: 4, costUSD: 15 }, hiddenAgentUsage: { requests: 2, costUSD: 6, totalTokens: 3800 } });
     expect(hidden.items.map(session => session.isAgent)).toEqual([false, false]);
@@ -523,17 +523,17 @@ describe("indexed usage", () => {
     expect(hidden.modelUsage).toEqual(shown.modelUsage);
     expect(hidden.directories.map(directory => directory.cwd).toSorted()).toEqual(["C:\\work\\orbit", "C:\\work\\orbit-worktree", "C:\\work\\other"]);
     expect(hidden.modelUsage.map(row => row.model).toSorted()).toEqual(["claude-opus-4-5", "claude-sonnet-4-5"]);
-    const catalog = await recorder.catalog();
+    const catalog = await recorder.queries.catalog();
     for (const workspace of catalog.workspaces) {
-      for (const agents of ["0", "1"]) expect(recorder.list(new URLSearchParams({ workspace: workspace.id, agents })).usage).toEqual(workspace.usage);
+      for (const agents of ["0", "1"]) expect(recorder.queries.list(new URLSearchParams({ workspace: workspace.id, agents })).usage).toEqual(workspace.usage);
     }
-    const worktree = recorder.list(new URLSearchParams({ workspace: "C:\\work\\orbit-worktree" }));
+    const worktree = recorder.queries.list(new URLSearchParams({ workspace: "C:\\work\\orbit-worktree" }));
     expect(worktree).toMatchObject({ total: 0, hiddenAgents: 1, sessionsWithUsage: 1, usage: { requests: 1, costUSD: 4 } });
     expect(worktree.hiddenAgentUsage).toEqual(worktree.usage);
-    expect(recorder.list(new URLSearchParams({ q: "worktree-agent" }))).toMatchObject({ total: 0, hiddenAgents: 1, usage: { costUSD: 4 } });
-    expect(recorder.list(new URLSearchParams({ q: "no-such-request" }))).toMatchObject({ total: 0, hiddenAgents: 0, usage: emptyUsage(), hiddenAgentUsage: emptyUsage() });
-    expect(recorder.list(new URLSearchParams({ agents: "only" }))).toMatchObject({ total: 2, hiddenAgents: 0, sessionsWithUsage: 2, usage: { requests: 2, costUSD: 6 }, hiddenAgentUsage: emptyUsage() });
-    expect(recorder.list(new URLSearchParams({ agents: "only", cwd: "C:\\work\\orbit" })).usage.costUSD).toBe(2);
+    expect(recorder.queries.list(new URLSearchParams({ q: "worktree-agent" }))).toMatchObject({ total: 0, hiddenAgents: 1, usage: { costUSD: 4 } });
+    expect(recorder.queries.list(new URLSearchParams({ q: "no-such-request" }))).toMatchObject({ total: 0, hiddenAgents: 0, usage: emptyUsage(), hiddenAgentUsage: emptyUsage() });
+    expect(recorder.queries.list(new URLSearchParams({ agents: "only" }))).toMatchObject({ total: 2, hiddenAgents: 0, sessionsWithUsage: 2, usage: { requests: 2, costUSD: 6 }, hiddenAgentUsage: emptyUsage() });
+    expect(recorder.queries.list(new URLSearchParams({ agents: "only", cwd: "C:\\work\\orbit" })).usage.costUSD).toBe(2);
   });
 
   test("tracks missing pricing and does not treat recordings without usage as free", async () => {
@@ -541,7 +541,7 @@ describe("indexed usage", () => {
     await setup.write("session-a", [record("known"), record("unknown", { message: { model: "future", usage: { input_tokens: 42 } } })]);
     await setup.write("session-b", [{ type: "user", message: { content: "No usage data" } }]);
     const recorder = await setup.open();
-    const page = recorder.list(new URLSearchParams());
+    const page = recorder.queries.list(new URLSearchParams());
     expect(page.usage).toMatchObject({ requests: 2, unpricedRequests: 1, unratedRequests: 1, totalTokens: 1942 });
     expect(page.sessionsWithUsage).toBe(1);
     expect(page.total).toBe(2);
@@ -554,10 +554,10 @@ describe("indexed usage", () => {
     const recorder = await setup.open();
     await writeFile(file, JSON.stringify(record("replacement")) + "\n");
     await recorder.scan();
-    expect(recorder.list(new URLSearchParams()).usage.requests).toBe(1);
+    expect(recorder.queries.list(new URLSearchParams()).usage.requests).toBe(1);
     await rm(file);
     await recorder.scan();
-    expect(recorder.list(new URLSearchParams()).usage).toEqual(emptyUsage());
+    expect(recorder.queries.list(new URLSearchParams()).usage).toEqual(emptyUsage());
   });
 
   test("migrates existing indexes without touching sources, bookmarks or groups", async () => {
@@ -566,15 +566,15 @@ describe("indexed usage", () => {
     await setup.write("session-b", [record("two", { cwd: "C:\\work\\clone" })]);
     const original = await Bun.file(file).text();
     const before = await setup.open();
-    const id = before.list(new URLSearchParams()).items[0].id;
-    before.bookmark(id, true);
-    const group = before.saveGroup({ name: "Work", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
+    const id = before.queries.list(new URLSearchParams()).items[0].id;
+    before.queries.bookmark(id, true);
+    const group = before.queries.saveGroup({ name: "Work", paths: ["C:\\work\\orbit", "C:\\work\\clone"] });
     before.db.exec("DROP TABLE usage_records; PRAGMA user_version=2;");
     await before.close();
     const after = await setup.open();
-    expect(after.getSession(id)?.bookmarked).toBe(true);
-    expect(after.groups()[0].id).toBe(group.id);
-    expect(after.list(new URLSearchParams()).usage.requests).toBe(2);
+    expect(after.queries.getSession(id)?.bookmarked).toBe(true);
+    expect(after.queries.groups()[0].id).toBe(group.id);
+    expect(after.queries.list(new URLSearchParams()).usage.requests).toBe(2);
     expect(await Bun.file(file).text()).toBe(original);
   });
 
@@ -584,18 +584,18 @@ describe("indexed usage", () => {
     await setup.write("opus", [record("opus", { cwd: "C:\\work\\opus", message: { ...record("opus").message, model: "claude-opus-5" } })]);
     const original = await Bun.file(file).text();
     const first = await setup.open();
-    const items = first.list(new URLSearchParams()).items;
+    const items = first.queries.list(new URLSearchParams()).items;
     const sonnet = items.find(session => session.cwd === "C:\\work\\orbit")!, opus = items.find(session => session.cwd === "C:\\work\\opus")!;
-    first.bookmark(sonnet.id, true);
+    first.queries.bookmark(sonnet.id, true);
     first.db.exec("UPDATE usage_records SET cost=cost*10");
     await first.close();
     const current = await setup.open();
-    expect(current.getSession(sonnet.id)?.usage.costUSD).toBeCloseTo(sonnet.usage.costUSD * 10, 9);
+    expect(current.queries.getSession(sonnet.id)?.usage.costUSD).toBeCloseTo(sonnet.usage.costUSD * 10, 9);
     current.db.exec("UPDATE usage_records SET rates='earlier' WHERE model='claude-sonnet-4-5'");
     await current.close();
     const repriced = await setup.open();
-    expect(repriced.getSession(sonnet.id)).toMatchObject({ bookmarked: true, usage: sonnet.usage });
-    expect(repriced.getSession(opus.id)?.usage.costUSD).toBeCloseTo(opus.usage.costUSD * 10, 9);
+    expect(repriced.queries.getSession(sonnet.id)).toMatchObject({ bookmarked: true, usage: sonnet.usage });
+    expect(repriced.queries.getSession(opus.id)?.usage.costUSD).toBeCloseTo(opus.usage.costUSD * 10, 9);
     const stamps = repriced.db.query<{ model: string; rates: string }, []>("SELECT model, rates FROM usage_records ORDER BY model").all();
     expect(stamps).toEqual(["claude-opus-5", "claude-sonnet-4-5"].map(model => ({ model, rates: rateStamp(model) })));
     expect(await Bun.file(file).text()).toBe(original);
@@ -607,12 +607,12 @@ describe("indexed usage", () => {
     const file = await setup.write("session-a", [{ ...newer, message: { ...newer.message, model: "claude-sonnet-5-5" } }, { ...future, message: { ...future.message, model: "future-model" } }]);
     const original = await Bun.file(file).text();
     const before = await setup.open();
-    const expected = before.list(new URLSearchParams());
-    before.bookmark(expected.items[0].id, true);
+    const expected = before.queries.list(new URLSearchParams());
+    before.queries.bookmark(expected.items[0].id, true);
     before.db.exec("ALTER TABLE usage_records DROP COLUMN rates; ALTER TABLE usage_records DROP COLUMN unrated; UPDATE usage_records SET cost=NULL;");
     await before.close();
     const after = await setup.open();
-    const page = after.list(new URLSearchParams());
+    const page = after.queries.list(new URLSearchParams());
     expect(page.usage).toEqual(expected.usage);
     expect(page.usage).toMatchObject({ requests: 2, unpricedRequests: 1, unratedRequests: 1 });
     expect(page.items[0].bookmarked).toBe(true);
@@ -634,15 +634,15 @@ describe("indexed usage", () => {
       request("unnamed", top, { model: undefined }),
     ]);
     const recorder = await setup.open();
-    const page = recorder.list(new URLSearchParams());
+    const page = recorder.queries.list(new URLSearchParams());
     expect(page.usage).toMatchObject({
       requests: 8, unpricedRequests: 6, unratedRequests: 0, unratedIterationRequests: 1, unnamedRequests: 1, fastRequests: 1, tierRequests: 2, creditRequests: 1,
       inputTokens: 1000 * 8 + 500 * 2, outputTokens: 200 * 8 + 100 * 2,
     });
     expect(page.usage.costUSD).toBeCloseTo(readUsage(record("standard"), "source", "event")!.cost! + sample("claude-sonnet-4-5", top)!.cost! + (500 * 5 + 100 * 25) / 1e6, 12);
     expect(page.items[0].usage).toEqual(page.usage);
-    expect(recorder.getSession(page.items[0].id)?.usage).toEqual(page.usage);
-    expect((await recorder.catalog()).workspaces[0].usage).toEqual(page.usage);
+    expect(recorder.queries.getSession(page.items[0].id)?.usage).toEqual(page.usage);
+    expect((await recorder.queries.catalog()).workspaces[0].usage).toEqual(page.usage);
     // The advisor's share stays on the request's own model; the request without a model has its own row.
     const sonnet = page.modelUsage.find(row => row.model === "claude-sonnet-4-5")!;
     expect(sonnet.usage).toMatchObject({ requests: 7, unpricedRequests: 5, unratedIterationRequests: 1, unnamedRequests: 0, inputTokens: 8000 });
@@ -700,8 +700,8 @@ describe("indexed usage", () => {
     ]);
     const original = await Bun.file(file).text();
     const before = await setup.open();
-    const expected = before.list(new URLSearchParams());
-    before.bookmark(expected.items[0].id, true);
+    const expected = before.queries.list(new URLSearchParams());
+    before.queries.bookmark(expected.items[0].id, true);
     // As the previous rules left them: no reason column, an earlier stamp, the priority request at standard rates, and
     // the unrated model unmarked, as a build before `rates` left it.
     before.db.exec(`ALTER TABLE usage_records DROP COLUMN reason; UPDATE usage_records SET rates='revision-1';
@@ -709,10 +709,10 @@ describe("indexed usage", () => {
       UPDATE usage_records SET cost=0.003 WHERE request_key LIKE '%msg-priority%'`);
     await before.close();
     const opened = await Recorder.open(setup.data, setup.state, { scan: false });
-    expect(opened.list(new URLSearchParams()).usage).toMatchObject({ requests: 4, unpricedRequests: 3, unratedRequests: 1, fastRequests: 1, unnamedRequests: 1, tierRequests: 0, costUSD: 0.003 });
+    expect(opened.queries.list(new URLSearchParams()).usage).toMatchObject({ requests: 4, unpricedRequests: 3, unratedRequests: 1, fastRequests: 1, unnamedRequests: 1, tierRequests: 0, costUSD: 0.003 });
     await opened.close();
     const after = await setup.open();
-    const page = after.list(new URLSearchParams());
+    const page = after.queries.list(new URLSearchParams());
     expect(page.usage).toEqual(expected.usage);
     expect(page.usage).toMatchObject({ unpricedRequests: 4, unratedRequests: 1, fastRequests: 1, unnamedRequests: 1, tierRequests: 1, costUSD: 0 });
     expect(after.db.query<{ rates: string; model: string }, []>("SELECT rates, model FROM usage_records").all().every(row => currentRates(row.model, row.rates))).toBe(true);
@@ -720,7 +720,7 @@ describe("indexed usage", () => {
     // Any open fills a reason that is missing, not only the one that adds the column.
     after.db.exec("UPDATE usage_records SET reason=NULL WHERE model='future-model'");
     await after.close();
-    expect((await setup.open()).list(new URLSearchParams()).usage).toEqual(page.usage);
+    expect((await setup.open()).queries.list(new URLSearchParams()).usage).toEqual(page.usage);
     expect(await Bun.file(file).text()).toBe(original);
   });
 });
@@ -775,22 +775,22 @@ describe("Claude Code's recorded totals", () => {
     await mkdir(join(setup.project, "session-a", "subagents"), { recursive: true });
     await writeFile(join(setup.project, "session-a", "subagents", "agent-helper.jsonl"), JSON.stringify(record("agent", { isSidechain: true })) + "\n");
     const recorder = await setup.open();
-    const page = recorder.list(new URLSearchParams());
+    const page = recorder.queries.list(new URLSearchParams());
     const costed = page.items.find(item => item.sessionId === "session-a" && !item.isAgent)!;
     expect(costed.recordedCost).toEqual({ costUSD: 1.25, startedAt: "", unknownModelCost: false, apiDurationMs: null, toolDurationMs: null,
       models: { "claude-sonnet-4-5": { inputTokens: 0, outputTokens: 200, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, webSearchRequests: 0, costUSD: 1.25 } } });
     expect(page.items.find(item => item.sessionId === "session-b")!.recordedCost).toBeNull();
     // The selection's total spans the same recordings as its usage: hidden subagents add nothing unless they carry one.
     expect(page).toMatchObject({ total: 2, hiddenAgents: 1, recordedCost: { costUSD: 1.25, recordings: 1 } });
-    expect(recorder.list(new URLSearchParams({ agents: "1" })).recordedCost).toEqual({ costUSD: 1.25, recordings: 1 });
-    expect(recorder.list(new URLSearchParams({ agents: "only" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
-    expect(recorder.list(new URLSearchParams({ cwd: "C:\work\elsewhere" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
+    expect(recorder.queries.list(new URLSearchParams({ agents: "1" })).recordedCost).toEqual({ costUSD: 1.25, recordings: 1 });
+    expect(recorder.queries.list(new URLSearchParams({ agents: "only" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
+    expect(recorder.queries.list(new URLSearchParams({ cwd: "C:\work\elsewhere" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
     // A later turn's total replaces the stored one, measured time included; a turn without one keeps it.
     await appendFile(file, [...turn("third", 2), costState(2, { totalAPIDuration: 450_000, totalToolDuration: 132_000 }), record("fourth")].map(value => JSON.stringify(value)).join("\n") + "\n");
     await recorder.scan();
-    expect(recorder.getSession(costed.id)?.recordedCost).toMatchObject({ costUSD: 2, apiDurationMs: 450_000, toolDurationMs: 132_000 });
-    expect(recorder.list(new URLSearchParams()).recordedCost).toEqual({ costUSD: 2, recordings: 1 });
+    expect(recorder.queries.getSession(costed.id)?.recordedCost).toMatchObject({ costUSD: 2, apiDurationMs: 450_000, toolDurationMs: 132_000 });
+    expect(recorder.queries.list(new URLSearchParams()).recordedCost).toEqual({ costUSD: 2, recordings: 1 });
     // The estimate still covers only the requests the recording holds.
-    expect(recorder.getSession(costed.id)?.usage.requests).toBe(4);
+    expect(recorder.queries.getSession(costed.id)?.usage.requests).toBe(4);
   });
 });

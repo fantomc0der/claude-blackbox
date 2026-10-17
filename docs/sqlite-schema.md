@@ -1,6 +1,6 @@
 # SQLite index schema
 
-claude-blackbox keeps one SQLite database, `index.sqlite`, in its state directory. It is the derived index of the Claude Code recordings the server reads, plus the user's bookmarks and workspace groups. Everything below is derived from `src/server/recorder.ts`, which owns the schema, the upgrade steps that complete on open, and every query, and from `src/server/migrations.ts`, which lists the versioned upgrade steps that run with the first scan, together with the normalization and usage helpers they call.
+claude-blackbox keeps one SQLite database, `index.sqlite`, in its state directory. It is the derived index of the Claude Code recordings the server reads, plus the user's bookmarks and workspace groups. Everything below is derived from `src/server/recorder.ts`, which owns the schema, the upgrade steps that complete on open, and the scan that fills the index, from `src/server/queries.ts`, which holds every query the HTTP routes serve and the bookmark and workspace group writes, and from `src/server/migrations.ts`, which lists the versioned upgrade steps that run with the first scan, together with the normalization and usage helpers they call.
 
 ## Overview
 

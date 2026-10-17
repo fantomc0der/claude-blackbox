@@ -57,14 +57,14 @@ test("a per-recording step applied on its own fills the one recording it is give
   await setup.write("versioned", [record("Versioned prompt", { version: "2.1.302" })]);
   await setup.write("plain", [record("Plain prompt", { version: "2.1.296" })]);
   const recorder = await setup.open();
-  const ids = Object.fromEntries(recorder.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
+  const ids = Object.fromEntries(recorder.queries.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
   // An index written before version 16 kept no Claude Code version.
   recorder.db.exec("DELETE FROM session_facets WHERE kind='version'; UPDATE sessions SET version=''");
   const step = migrationTo(16);
   if (!("each" in step)) throw new Error("Version 16 fills one recording at a time.");
   step.each(recorder.db)({ id: ids["Versioned prompt"], named: 0 });
-  expect(recorder.getSession(ids["Versioned prompt"])?.version).toBe("2.1.302");
-  expect(recorder.getSession(ids["Plain prompt"])?.version).toBe("");
+  expect(recorder.queries.getSession(ids["Versioned prompt"])?.version).toBe("2.1.302");
+  expect(recorder.queries.getSession(ids["Plain prompt"])?.version).toBe("");
   expect(recorder.db.query<{ value: string }, []>("SELECT value FROM session_facets WHERE kind='version'").all().map(row => row.value)).toEqual(["2.1.302"]);
   expect(markedForRereading(recorder)).toEqual([]);
   expect(storedVersion(recorder)).toBe(indexVersion);

@@ -118,7 +118,7 @@ jobs:
 
             Repository-specific checks:
             - Loopback HTTP boundary (`src/server/http.ts`): the hostname allowlist, Origin and Sec-Fetch-Site rejection, same-origin JSON-only mutations, asset path containment, and security headers. Any loosening is blocking, including loosening meant to simplify desktop integration.
-            - Source and state separation (`src/server/recorder.ts`, `src/server/cli.ts`): Claude recordings are never written. Bookmarks, groups, and the index live only in the state directory, which must never resolve inside the source directory after links are followed.
+            - Source and state separation (`src/server/recorder.ts`, `src/server/queries.ts`, `src/server/cli.ts`): Claude recordings are never written. Bookmarks, groups, and the index live only in the state directory, which must never resolve inside the source directory after links are followed.
             - Indexing (`src/server/jsonl.ts`, `normalize.ts`, `search.ts`, `usage.ts`, `facets.ts`): byte-offset incremental reads, partial trailing lines kept for the next scan, deletion and replacement reconciliation, parameterized FTS queries, a `user_version` bump when normalization changes, and unknown event types kept as raw records.
             - Untrusted transcript content (`src/client`): DOMPurify sanitization, remote-image blocking, bounded rendering and paging, and explicit attachment reveal. Recorded commands are never executed.
             - Solid 2 (`solid-js` and `@solidjs/web` pinned to the same prerelease, with a matching compiler plugin): split compute/apply effects, `onSettled`, keyed lists, and renderer-owned JSX types. Flag Solid 1 idioms and imports.

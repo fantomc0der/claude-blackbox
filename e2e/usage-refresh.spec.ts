@@ -28,7 +28,7 @@ test("usage keeps its layout focus scroll and values through background refreshe
       // The breakdown's own height and the list it sits in must not shift under the reader while totals refresh.
       const beforeBreakdown = (await breakdown.boundingBox())!.height;
       const beforeList = await body.evaluate(element => element.scrollHeight);
-      const listing = recorder.list(new URLSearchParams());
+      const listing = recorder.queries.list(new URLSearchParams());
       let updates = 0;
       await page.route("**/api/sessions?*", async route => {
         const data = structuredClone(listing);
@@ -68,7 +68,7 @@ test("slow usage refreshes finish during sustained live changes without request 
   let requests = 0;
   let aborted = 0;
   page.on("requestfailed", request => { if (request.url().includes("/api/sessions?")) aborted++; });
-  const listing = recorder.list(new URLSearchParams());
+  const listing = recorder.queries.list(new URLSearchParams());
   await page.route("**/api/sessions?*", async route => {
     requests++;
     await Bun.sleep(450);
