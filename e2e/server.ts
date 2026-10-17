@@ -209,6 +209,16 @@ await writeFile(join(folder, "request-copies.jsonl"), [
   requestBlob("copy-hash-3", { role: "user", content: "Request copy follow-up" }),
   apiRequest(60, ["copy-hash-3"]),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// When an API request fails for good, Claude Code records the failure itself as an `assistant` record with the
+// `<synthetic>` model, marked `isApiErrorMessage`; `No response requested.` is another stand-in it writes the same way.
+const standIn = (sequence: number, text: string, extra: Record<string, unknown> = {}) => ({ ...event(text, sequence, "assistant"), ...extra,
+  message: { role: "assistant", model: "<synthetic>", content: [{ type: "text", text }], usage: { input_tokens: 0, output_tokens: 0 } } });
+await writeFile(join(folder, "api-errors.jsonl"), [
+  event("API error verification", 0),
+  standIn(1, 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}', { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } }),
+  standIn(2, "No response requested."),
+  event("The login test passes after the retry.", 3, "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Claude Code 2.1.30x keeps its own session state in the recording: `last-prompt` and `atis-latch` after every turn,
 // without timestamps, a timestamped `queue-operation` holding a queued prompt, and settings such as `cost-state`. The
 // prompt's word Brackenfold is recorded once in the transcript and copied by three state records.

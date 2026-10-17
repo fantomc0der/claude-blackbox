@@ -7,7 +7,7 @@ import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
 import { sessionStateTypes } from "../shared/records";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string } from "./normalize";
+import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, rateStamp, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
@@ -217,7 +217,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 11) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 12) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -342,8 +342,8 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9, 10, and 11 steps below follow it
-    // in order for the same reason.
+    // its port, and before the recordings are compared with what was indexed; the version 9, 10, 11, and 12 steps below
+    // follow it in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
@@ -367,12 +367,21 @@ export class Recorder {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify([...sessionStateTypes]));
       this.db.exec("PRAGMA user_version=10");
     })();
-    // Version 11 tells the tool results that record a user's decision apart from failures and counts API error turns as
-    // errors. Every result an earlier build flagged is in a recording with an error, and every API error turn is an
-    // assistant record of the `<synthetic>` model, so only those recordings are re-read.
+    // Version 11 re-indexes only the recordings that hold Claude Code's own stand-ins for a model turn, which earlier
+    // builds counted as replies and never as errors. Finding them reads every event, so like version 8 it runs with the
+    // first scan. The stored model column is the key: Claude Code's own API-error check requires `message.model` to be
+    // `<synthetic>` alongside `isApiErrorMessage`, so this assumes every recorded API error carries that model. A
+    // recording read afresh does not depend on it, because `normalize()` reads `isApiErrorMessage` on its own.
     if (version < 11) this.db.transaction(() => {
-      this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE error=1 OR model='<synthetic>')");
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='assistant' AND model=?)").run(syntheticModel);
       this.db.exec("PRAGMA user_version=11");
+    })();
+    // Version 12 tells the tool results that record a user's decision apart from failures. Every result an earlier build
+    // flagged is in a recording with an error, so only those recordings are re-read; finding them reads every event, like
+    // version 8. API error turns already count as errors since version 11.
+    if (version < 12) this.db.transaction(() => {
+      this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE error=1)");
+      this.db.exec("PRAGMA user_version=12");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
@@ -441,7 +450,7 @@ export class Recorder {
             }
             if (inserted.changes) {
               const model = string(object(event.raw.message).model);
-              if (model !== "<synthetic>" && isFacetValue(model)) insertFacet.run(id, "model", model);
+              if (model !== syntheticModel && isFacetValue(model)) insertFacet.run(id, "model", model);
               if (isFacetValue(event.cwd, 2048)) insertFacet.run(id, "cwd", event.cwd);
               for (const name of toolNames) insertFacet.run(id, "tool", name);
               for (const block of event.blocks) {
@@ -464,7 +473,7 @@ export class Recorder {
           row.session_id = string(line.value.sessionId) || string(line.value.session_id) || row.session_id;
           row.branch = string(line.value.gitBranch) || row.branch;
           const model = string(object(line.value.message).model);
-          if (model && model !== "<synthetic>") row.model = model;
+          if (model && model !== syntheticModel) row.model = model;
           const explicit = string(line.value.customTitle) || string(line.value.aiTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
           if (explicit) { row.title = explicit.slice(0, 240); row.named = 1; }
           else if (!row.title || (!row.named && row.title.startsWith("Session "))) row.title = promptTitle(event) || row.title;

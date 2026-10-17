@@ -23,7 +23,8 @@ export interface ReplayEvent {
   timestamp: string;
   blocks: ContentBlock[];
   text: string;
-  category: "message" | "tool" | "thinking" | "hidden" | "system";
+  /** `synthetic` marks a record Claude Code wrote itself in place of a model turn, such as an API error. */
+  category: "message" | "tool" | "thinking" | "hidden" | "system" | "synthetic";
   toolNames: string[];
   /** A failure is recorded: a tool result marked `is_error` that is not a decision, a record marked `is_error` or
    *  `level: "error"`, or an API error turn. Only these count as errors. */

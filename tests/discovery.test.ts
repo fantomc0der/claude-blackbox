@@ -175,7 +175,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(11);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(12);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -264,11 +264,80 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(11);
+  expect(version()).toBe(12);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
   expect(after.getSession(copied.id)?.toolCount).toBe(1);
+});
+
+// When an API request fails for good, Claude Code records the failure itself as an `assistant` record marked
+// `isApiErrorMessage` with the error kind and HTTP status, the `<synthetic>` model, and zero usage. It writes other
+// stand-ins, such as `No response requested.`, the same way without the error marks.
+const standIn = (uuid: string, parentUuid: string, timestamp: string, text: string, extra: Record<string, unknown> = {}) => ({
+  type: "assistant", uuid, parentUuid, timestamp, cwd: "/synthetic/project", sessionId: "s1", ...extra,
+  message: { id: `synthetic-${uuid}`, model: "<synthetic>", role: "assistant", type: "message", stop_reason: "stop_sequence", content: [{ type: "text", text }],
+    usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+});
+const apiErrorText = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
+const apiError = (uuid: string, parentUuid: string, timestamp: string) => standIn(uuid, parentUuid, timestamp, apiErrorText, { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } });
+
+test("API error turns and other Claude Code stand-ins count as errors, never as Claude responses", async () => {
+  const setup = await fixture();
+  await setup.write("failed", [
+    { type: "user", uuid: "u1", parentUuid: null, timestamp: "2026-10-17T10:00:00Z", cwd: "/synthetic/project", sessionId: "s1", message: { role: "user", content: "Fix the flaky login test" } },
+    apiError("a1", "u1", "2026-10-17T10:00:05Z"),
+    standIn("a2", "a1", "2026-10-17T10:00:06Z", "No response requested."),
+    { type: "assistant", uuid: "a3", parentUuid: "a2", timestamp: "2026-10-17T10:00:07Z", cwd: "/synthetic/project", sessionId: "s1",
+      message: { id: "m1", model: "model-a", role: "assistant", content: [{ type: "text", text: "Login test fixed" }], usage: { input_tokens: 10, output_tokens: 5 } } },
+  ]);
+  const recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
+  expect([session.messageCount, session.errorCount, session.usage.requests, session.model]).toEqual([2, 1, 1, "model-a"]);
+  const all = events("kind=all");
+  expect(all.items.map(event => [event.role, event.category, event.error])).toEqual([["user", "message", false], ["assistant", "synthetic", true], ["assistant", "synthetic", false], ["assistant", "message", false]]);
+  expect(all.items[1].blocks).toEqual([{ type: "text", text: apiErrorText }]);
+  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 1, 2, 3]);
+  expect(events("kind=responses").items.map(event => event.sequence)).toEqual([3]);
+  expect(events("kind=all&errors=1").items.map(event => event.sequence)).toEqual([1]);
+  expect(recorder.timeline(session.id, new URLSearchParams("kind=all")).buckets.map(bucket => bucket.errors)).toEqual([1]);
+  expect(recorder.list(new URLSearchParams("errors=1")).items.map(item => item.id)).toEqual([session.id]);
+  expect(recorder.list(new URLSearchParams("q=Overloaded")).items[0]).toMatchObject({ matchCategory: "synthetic", matchRole: "assistant" });
+  const catalog = await recorder.catalog();
+  expect([catalog.messages, catalog.errors]).toEqual([2, 1]);
+});
+
+test("version 10 indexes re-index only the recordings that hold Claude Code's stand-ins", async () => {
+  const setup = await fixture();
+  await setup.write("failed", [record("Failed prompt"), apiError("a1", "u1", "2026-09-20T12:00:05Z")]);
+  await setup.write("quiet", [record("Quiet prompt"), standIn("a2", "u2", "2026-09-20T12:00:05Z", "No response requested.")]);
+  await setup.write("plain", [record("Plain prompt"), record("Reply", { type: "assistant", message: { model: "model-a", content: "Reply" } })]);
+  const before = await setup.open();
+  const sessions = before.list(new URLSearchParams()).items;
+  const named = (title: string) => sessions.find(item => item.title === title)!;
+  const failed = named("Failed prompt"), quiet = named("Quiet prompt"), plain = named("Plain prompt");
+  // Indexes written before version 11 read a stand-in as a reply with no error flag.
+  before.db.exec("UPDATE events SET category='message', error=0 WHERE type='assistant' AND model='<synthetic>'");
+  before.db.query("UPDATE sessions SET messages=2, errors=0 WHERE id IN (?,?)").run(failed.id, quiet.id);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=10");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const counts = (id: string) => { const session = after.getSession(id)!; return [session.messageCount, session.errorCount]; };
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(10);
+  expect([counts(failed.id), counts(quiet.id)]).toEqual([[2, 0], [2, 0]]);
+  await after.scan();
+  expect(version()).toBe(12);
+  expect([counts(failed.id), counts(quiet.id)]).toEqual([[1, 1], [1, 0]]);
+  expect(after.events(failed.id, new URLSearchParams("kind=all&errors=1")).items.map(event => event.sequence)).toEqual([1]);
+  expect(after.events(quiet.id, new URLSearchParams("kind=all")).items.map(event => event.category)).toEqual(["message", "synthetic"]);
+  expect(cwds(failed.id)).not.toContain("/synthetic/stale");
+  expect(cwds(quiet.id)).not.toContain("/synthetic/stale");
+  expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
 });
 
 test("version 8 indexes retitle recordings by Claude Code's first-prompt rules without rescanning them", async () => {
@@ -306,7 +375,7 @@ test("version 8 indexes retitle recordings by Claude Code's first-prompt rules w
   expect(version()).toBe(8);
   expect(titles().commandFirst).toBe("/clear clear");
   await after.scan();
-  expect(version()).toBe(11);
+  expect(version()).toBe(12);
   expect(titles()).toEqual({ commandFirst: "Add retries to the upload client", ideFirst: "Why does the upload client hang?", review: "/review PR 12",
     outputOnly: "Session output-o", named: "Custom title", plain: "Plain prompt" });
   for (const id of [ids.commandFirst, ids.ideFirst, ids.outputOnly, ids.named, ids.plain]) expect(cwds(id)).toEqual(["/synthetic/stale"]);
@@ -316,37 +385,32 @@ test("version 8 indexes retitle recordings by Claude Code's first-prompt rules w
 
 const denial = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
 const toolResult = (id: string, content: string, is_error = true) => record("", { message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error }] } });
-const apiErrorTurn = () => record("", { type: "assistant", isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 },
-  message: { id: "synthetic-1", model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "API Error: 529 Overloaded" }], usage: { input_tokens: 0, output_tokens: 0 } } });
 
-test("version 10 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
+test("version 11 indexes re-index only the recordings whose errors need telling apart from decisions", async () => {
   const setup = await fixture();
   await setup.write("denied", [record("Clean the install"), toolResult("rm-call", denial)]);
   await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
-  await setup.write("api-error", [record("Fix the flaky test"), apiErrorTurn()]);
   await setup.write("plain", [record("Plain prompt")]);
   const before = await setup.open();
   const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
-  // Indexes written before version 11 flagged every `is_error` result as an error and no API error turn.
+  // Indexes written before version 12 flagged every `is_error` result as an error.
   before.db.query("UPDATE events SET error=1, decision=0 WHERE session_id=?").run(sessions["Clean the install"]);
   before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions["Clean the install"]);
-  before.db.query("UPDATE events SET error=0 WHERE session_id=?").run(sessions["Fix the flaky test"]);
-  before.db.query("UPDATE sessions SET errors=0 WHERE id=?").run(sessions["Fix the flaky test"]);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
   before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
-  before.db.exec("PRAGMA user_version=10");
+  before.db.exec("PRAGMA user_version=11");
   await before.close();
   const after = await setup.open({ scan: false });
   const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
-  expect(version()).toBe(10);
+  expect(version()).toBe(11);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(11);
-  for (const title of ["Clean the install", "Run the tests", "Fix the flaky test"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
+  expect(version()).toBe(12);
+  for (const title of ["Clean the install", "Run the tests"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(0);
   expect(after.getSession(sessions["Run the tests"])?.errorCount).toBe(1);
-  expect(after.getSession(sessions["Fix the flaky test"])?.errorCount).toBe(1);
   expect(after.events(sessions["Clean the install"], new URLSearchParams("kind=all&errors=1")).items.map(event => [event.sequence, event.error, event.decision])).toEqual([[1, false, "denied"]]);
 });
 
@@ -430,7 +494,7 @@ test("version 9 indexes re-index only the recordings that hold session state rec
   expect(version()).toBe(9);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0, 1]);
   await after.scan();
-  expect(version()).toBe(11);
+  expect(version()).toBe(12);
   expect(cwds(stateful.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0]);

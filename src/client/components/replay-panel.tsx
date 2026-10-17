@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, flush, For, Show, untrack } fro
 import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, SessionFamily, SessionSummary, SummaryRecord } from "../../shared/types";
 import { stripAnsi } from "../../shared/ansi";
 import { isAbort, request } from "../lib/api";
-import { contentToText, getToolInput, isRecord, isToolResultEvent, requestMessageRuns, toolPreview, truncate } from "../lib/content";
+import { contentToText, getToolInput, isApiError, isRecord, isToolResultEvent, requestMessageRuns, toolPreview, truncate } from "../lib/content";
 import { dismissableDetails } from "../lib/dismissable";
 import { compact, dateTime, folderName, modelName, recordedRange, resumeCommand, searchHighlight, tokenCount, usageCost, withLocalDays } from "../lib/format";
 import { TokenBreakdown, UsageNote } from "./usage-panel";
@@ -43,7 +43,7 @@ function summaryRecord(summary: SessionSummary, id: string): SummaryRecord | und
 }
 
 function outlineLabel(event: ReplayEvent): string {
-  if (event.error) return "Error";
+  if (event.error) return isApiError(event) ? "API error" : "Error";
   if (event.decision) return decisionLabels[event.decision];
   if (event.toolNames.length) return [...new Set(event.toolNames)].join(" · ");
   if (isToolResultEvent(event)) return "Tool result";
