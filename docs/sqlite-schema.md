@@ -41,6 +41,118 @@ Resets and migrations preserve the user-owned tables by construction. No migrati
 
 Neither `bookmarks.session_id` nor `group_paths.path` declares a foreign key to `sessions`. A bookmark of a recording whose file disappears stays in the table as an orphan that no query returns (the catalog counts bookmarks through a join on `sessions`), and matches again if a recording with the same relative path returns. `saveGroup()` checks each path against `sessions.cwd` only at save time.
 
+## Entity relationships
+
+Solid lines are declared foreign keys, all with `ON DELETE CASCADE`. Dotted lines are relationships without a foreign key: `event_fts` follows `events` through its triggers, a call and its result share `(session_id, tool_id)`, a group path matches `sessions.cwd`, and a bookmark matches `sessions.id`.
+
+```mermaid
+erDiagram
+  sessions ||--o{ events : "session_id"
+  sessions ||--o{ usage_records : "session_id"
+  sessions ||--o{ session_facets : "session_id"
+  sessions ||--o{ tool_calls : "session_id"
+  sessions ||--o{ tool_results : "session_id"
+  events ||--o{ tool_calls : "event_row"
+  events ||--o{ tool_results : "event_row"
+  events ||..|| event_fts : "rowid, by triggers"
+  tool_calls |o..o| tool_results : "session_id, tool_id"
+  groups ||--o{ group_paths : "group_id"
+  group_paths |o..o{ sessions : "path = cwd"
+  sessions |o..o| bookmarks : "id = session_id"
+
+  sessions {
+    TEXT id PK "sha256 of relative path, 24 hex"
+    TEXT session_id
+    TEXT source UK "absolute recording path"
+    TEXT cwd
+    TEXT title
+    TEXT branch
+    TEXT model
+    TEXT started
+    TEXT updated
+    INTEGER events
+    INTEGER messages
+    INTEGER tools
+    INTEGER errors
+    INTEGER edits
+    INTEGER agent
+    INTEGER size
+    REAL mtime "0 marks for re-read"
+    INTEGER cursor
+    TEXT fingerprint "prefix checkpoint"
+    INTEGER warnings
+    INTEGER named
+    TEXT identity "device:inode"
+    TEXT tailprint "tail checkpoint"
+  }
+  events {
+    INTEGER rowid PK "reused after a re-index"
+    TEXT event_id UK "sessions.id-offset, stable"
+    TEXT session_id FK
+    INTEGER sequence
+    INTEGER offset
+    TEXT category
+    TEXT type
+    INTEGER error
+    TEXT tools
+    TEXT raw "whole record"
+    TEXT text "searchable text"
+    TEXT role
+    TEXT timestamp
+    TEXT model
+    TEXT cwd
+    INTEGER has_thinking
+    INTEGER has_tools
+  }
+  event_fts {
+    INTEGER rowid "events.rowid"
+    TEXT text "FTS5 external content"
+  }
+  usage_records {
+    TEXT session_id PK, FK
+    TEXT request_key PK
+    INTEGER input
+    INTEGER output
+    INTEGER cache_creation
+    INTEGER cache_read
+    REAL cost
+    INTEGER recorded
+    INTEGER sidechain
+    TEXT model
+    TEXT effort
+    TEXT rates
+    INTEGER unrated
+  }
+  tool_calls {
+    TEXT session_id PK, FK
+    TEXT tool_id PK
+    TEXT name
+    INTEGER event_row FK
+  }
+  tool_results {
+    TEXT session_id PK, FK
+    TEXT tool_id PK
+    TEXT raw "the tool_result block"
+    INTEGER event_row FK
+  }
+  session_facets {
+    TEXT session_id PK, FK
+    TEXT kind PK "model, cwd, or tool"
+    TEXT value PK
+  }
+  bookmarks {
+    TEXT session_id PK "no foreign key"
+  }
+  groups {
+    TEXT id PK
+    TEXT name
+  }
+  group_paths {
+    TEXT path PK "matches sessions.cwd"
+    TEXT group_id FK
+  }
+```
+
 ## Tables
 
 Types, constraints, and defaults below are exactly those in the `CREATE TABLE` statements and the `ALTER TABLE` migrations. A `Since` note marks a column that a later version added through `ALTER TABLE`; the current `CREATE TABLE` statements already include it for new indexes.
@@ -299,4 +411,4 @@ The existing migrations follow one pattern; a change should follow it too.
 - Put an index on any new column that joins or filters, in the constructor if the column can arrive through `ALTER TABLE`, and remember that a foreign key with `ON DELETE CASCADE` needs an index on the child column for the cascade to stay fast.
 - Keep heavy work out of the constructor when it would delay port binding. Anything that reads every event belongs at the start of `reconcile()`, gated on the stored version like the version 8 step, so `cli.ts` can bind the port first.
 - Add a migration test in `tests/discovery.test.ts` next to the existing `version N indexes ...` tests: index synthetic recordings into a fresh state directory, rewrite the database into the older shape (drop the new table or columns, write the old values, set `PRAGMA user_version` to the old number), close, reopen, and assert the upgraded rows, the final `user_version`, and that bookmarks and the source files are untouched. For a step that runs at scan time, open with `scan: false`, assert the version is still the old one, then call `scan()`.
-- Update this document and the data flow paragraph in `docs/architecture.md`.
+- Update this document, including its entity relationship diagram, and the data flow paragraph in `docs/architecture.md`.
