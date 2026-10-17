@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, RecordedCost, RecordedCostTotal, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { compareVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
+import { newestVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -429,6 +429,24 @@ export class Recorder {
     return { ...row, source: path, identity: stored };
   }
 
+  /**
+   * Runs one upgrade step's `fill` for every recording not already marked for re-reading, whose next read derives the
+   * same values afresh, each recording in its own transaction through `events_session`. The scan runs after the server
+   * has bound its port, so the step yields to the event loop after every 20 ms of work to keep the server answering;
+   * yielding after every recording would add over a millisecond each on Windows. False when a shutdown stopped it; its
+   * writes are idempotent, so the next scan repeats the step from the start.
+   */
+  private async upgradeEach(fill: (session: { id: string; named: number }) => void): Promise<boolean> {
+    const step = this.db.transaction(fill);
+    let slice = performance.now();
+    for (const session of this.db.query<{ id: string; named: number }, []>("SELECT id, named FROM sessions WHERE mtime!=0").all()) {
+      if (this.stopped) return false;
+      step(session);
+      if (performance.now() - slice >= 20) { await Bun.sleep(0); slice = performance.now(); }
+    }
+    return true;
+  }
+
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
@@ -498,37 +516,47 @@ export class Recorder {
     })();
     // Version 16 keeps the Claude Code version a recording's records name and counts the records this build does not
     // recognize. The stored records hold both, so each recording is filled where it is instead of being re-read: one
-    // statement reads every event's `version` and another every event's type and subtype, like version 8. The second also
-    // finds the recordings holding a record of a type version 16 first reads as a note but an earlier build read as
-    // content, which kept the content in its searchable text, and marks only those for re-reading.
-    if (version < 16) this.db.transaction(() => {
+    // statement reads its events' `version` and another their type and subtype, which reads every event like version 8.
+    // The second also finds a record of a type version 16 first reads as a note but an earlier build read as content,
+    // which kept the content in its searchable text, and marks only those recordings for re-reading. So is a recording
+    // holding a record these statements need but SQLite's JSON parser rejects, which `JSON.parse` accepts, such as one
+    // nested more than 1000 levels deep.
+    if (version < 16) {
       const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
-      const latest = new Map<string, { version: string; sequence: number }>();
-      for (const row of this.db.query<{ id: string; version: unknown; sequence: number }, []>(`SELECT session_id AS id,
-        json_extract(raw,'$.version') AS version, max(sequence) AS sequence FROM events WHERE instr(raw,'"version":')>0 GROUP BY id, version`).all()) {
-        const recorded = recordedVersion(row.version);
-        if (!isFacetValue(recorded)) continue;
-        insertFacet.run(row.id, "version", recorded);
-        if ((latest.get(row.id)?.sequence ?? -1) < row.sequence) latest.set(row.id, { version: recorded, sequence: row.sequence });
-      }
-      const unrecognized = new Map<string, number>();
-      const stale = new Set<string>();
-      for (const row of this.db.query<{ id: string; type: string; subtype: unknown; records: number; stale: number }, [string]>(`SELECT session_id AS id, type,
-        CASE type WHEN 'system' THEN json_extract(raw,'$.subtype') WHEN 'attachment' THEN json_extract(raw,'$.attachment.type') END AS subtype,
-        count(*) AS records, max(CASE WHEN type IN (SELECT value FROM json_each(?)) THEN json_type(raw,'$.message.content') IN ('text','array')
+      const versions = this.db.query<{ version: unknown; sequence: number; invalid: number }, [string]>(`SELECT
+        CASE WHEN json_valid(raw) THEN json_extract(raw,'$.version') END AS version, max(sequence) AS sequence, max(NOT json_valid(raw)) AS invalid
+        FROM events WHERE session_id=? AND instr(raw,'"version":')>0 GROUP BY 1`);
+      const kinds = this.db.query<{ type: string; subtype: unknown; records: number; invalid: number; stale: number }, [string, string]>(`SELECT type,
+        CASE WHEN type='system' AND json_valid(raw) THEN json_extract(raw,'$.subtype')
+          WHEN type='attachment' AND json_valid(raw) THEN json_extract(raw,'$.attachment.type') END AS subtype, count(*) AS records,
+        max(CASE WHEN type IN ('system','attachment') OR type IN (SELECT value FROM json_each(?1)) THEN NOT json_valid(raw) ELSE 0 END) AS invalid,
+        max(CASE WHEN type IN (SELECT value FROM json_each(?1)) AND json_valid(raw) THEN json_type(raw,'$.message.content') IN ('text','array')
           OR json_type(raw,'$.content') IN ('text','array') OR json_type(raw,'$.summary')='text' ELSE 0 END) AS stale
-        FROM events GROUP BY id, type, subtype`).all(JSON.stringify(version16NoteTypes))) {
-        const kind = unrecognizedKind(row.type, row.subtype);
-        if (kind !== null) unrecognized.set(row.id, (unrecognized.get(row.id) ?? 0) + row.records);
-        if (kind) insertFacet.run(row.id, "unrecognized", kind);
-        if (row.stale) stale.add(row.id);
-      }
+        FROM events WHERE session_id=?2 GROUP BY type, 2`);
+      const notes = JSON.stringify(version16NoteTypes);
       const update = this.db.query("UPDATE sessions SET version=?, unrecognized=? WHERE id=?");
-      for (const { id } of this.db.query<{ id: string }, []>("SELECT id FROM sessions").all()) update.run(latest.get(id)?.version ?? "", unrecognized.get(id) ?? 0, id);
       const reset = this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
-      for (const id of stale) reset.run(id);
+      const filled = await this.upgradeEach(({ id }) => {
+        let latest = { version: "", sequence: -1 }, unrecognized = 0, reread = false;
+        for (const row of versions.all(id)) {
+          reread ||= Boolean(row.invalid);
+          const recorded = recordedVersion(row.version);
+          if (!isFacetValue(recorded)) continue;
+          insertFacet.run(id, "version", recorded);
+          if (latest.sequence < row.sequence) latest = { version: recorded, sequence: row.sequence };
+        }
+        for (const row of kinds.all(notes, id)) {
+          reread ||= Boolean(row.invalid || row.stale);
+          const kind = unrecognizedKind(row.type, row.subtype);
+          if (kind !== null) unrecognized += row.records;
+          if (kind) insertFacet.run(id, "unrecognized", kind);
+        }
+        update.run(latest.version, unrecognized, id);
+        if (reread) reset.run(id);
+      });
+      if (!filled) return [];
       this.db.exec("PRAGMA user_version=16");
-    })();
+    }
     // Version 17 reads Claude Code's `toolDenialKind` before a result's message, tells its interruptions and
     // cancellations apart from its denials, never counts its API retry banner as an error, counts a recording's API error
     // turns and decided records apart from its errors, and titles a recording by Claude Code's own precedence, agent name
@@ -541,30 +569,39 @@ export class Recorder {
     // shown, so only three groups of recordings are re-read: those holding a flagged or decided record with a
     // `toolDenialKind`, whose stored results lack the kind `normalize()` now copies onto them; those holding a failure
     // whose record carries part of a message version 17 first reads as a decision; and those holding a flagged `system`
-    // record of subtype `api_error`, which no 2.1.302 recording holds.
-    if (version < 17) this.db.transaction(() => {
-      const counts = new Map(this.db.query<{ id: string; apiErrors: number; decisions: number }, []>(`SELECT session_id AS id,
-        sum(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 THEN json_type(raw,'$.isApiErrorMessage')='true' ELSE 0 END) AS apiErrors,
-        sum(decision) AS decisions FROM events WHERE error=1 OR decision=1 GROUP BY id`).all().map(row => [row.id, row]));
+    // record of subtype `api_error`, which no 2.1.302 recording holds. A recording holding an API error record SQLite's
+    // JSON parser rejects is re-read too, as in version 16.
+    if (version < 17) {
+      const counts = this.db.query<{ apiErrors: number | null; decisions: number | null; invalid: number | null }, [string]>(`SELECT
+        sum(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 AND json_valid(raw) THEN json_type(raw,'$.isApiErrorMessage')='true' ELSE 0 END) AS apiErrors,
+        sum(decision) AS decisions, max(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 THEN NOT json_valid(raw) ELSE 0 END) AS invalid
+        FROM events WHERE session_id=? AND (error=1 OR decision=1)`);
+      const titleRecords = this.db.query<{ type: string; raw: string }, [string, number]>(`SELECT type, raw FROM events WHERE session_id=?1
+        AND (type IN ('agent-name','custom-title','ai-title','summary') OR (?2 AND (instr(raw,'"agentName":')>0 OR instr(raw,'"customTitle":')>0 OR instr(raw,'"aiTitle":')>0)))
+        ORDER BY sequence`);
+      const decided = this.db.query<{ found: number }, [string, string]>(`SELECT EXISTS (SELECT 1 FROM events WHERE session_id=?1 AND (error=1 OR decision=1)
+        AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?2) WHERE instr(events.raw,value)>0))
+          OR (error=1 AND type='system' AND instr(raw,'"subtype":"api_error"')>0))) AS found`);
       const fill = this.db.query("UPDATE sessions SET api_errors=?, decisions=? WHERE id=?");
-      for (const { id } of this.db.query<{ id: string }, []>("SELECT id FROM sessions").all()) fill.run(counts.get(id)?.apiErrors ?? 0, counts.get(id)?.decisions ?? 0, id);
-      const titles = new Map<string, { title: string; rank: number }>();
-      for (const row of this.db.query<{ id: string; type: string; raw: string }, []>(`SELECT e.session_id AS id, e.type, e.raw FROM events e
-        JOIN sessions s ON s.id=e.session_id WHERE s.mtime!=0 AND (e.type IN ('agent-name','custom-title','ai-title','summary')
-          OR (s.named>0 AND (instr(e.raw,'"agentName":')>0 OR instr(e.raw,'"customTitle":')>0 OR instr(e.raw,'"aiTitle":')>0)))
-        ORDER BY e.session_id, e.sequence`).iterate()) {
-        let explicit: ReturnType<typeof explicitTitle> = null;
-        try { explicit = explicitTitle(row.type, object(JSON.parse(row.raw))); } catch { continue; }
-        if (explicit && explicit.rank >= (titles.get(row.id)?.rank ?? 0)) titles.set(row.id, explicit);
-      }
       const retitle = this.db.query("UPDATE sessions SET title=?, named=? WHERE id=?");
-      for (const [id, { title, rank }] of titles) retitle.run(title, rank, id);
-      this.db.query(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE (error=1 OR decision=1)
-        AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?) WHERE instr(events.raw,value)>0))
-          OR (error=1 AND type='system' AND instr(raw,'"subtype":"api_error"')>0)))`)
-        .run(JSON.stringify(version17DecisionTexts));
+      const reset = this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
+      const texts = JSON.stringify(version17DecisionTexts);
+      const filled = await this.upgradeEach(({ id, named }) => {
+        const count = counts.get(id)!;
+        if (count.invalid) { reset.run(id); return; }
+        fill.run(count.apiErrors ?? 0, count.decisions ?? 0, id);
+        let title: ReturnType<typeof explicitTitle> = null;
+        for (const row of titleRecords.all(id, Number(named > 0))) {
+          let explicit: ReturnType<typeof explicitTitle> = null;
+          try { explicit = explicitTitle(row.type, object(JSON.parse(row.raw))); } catch { continue; }
+          if (explicit && explicit.rank >= (title?.rank ?? 0)) title = explicit;
+        }
+        if (title) retitle.run(title.title, title.rank, id);
+        if (decided.get(id, texts)!.found) reset.run(id);
+      });
+      if (!filled) return [];
       this.db.exec("PRAGMA user_version=17");
-    })();
+    }
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -1369,11 +1406,13 @@ export class Recorder {
 
   async catalog(): Promise<Catalog> {
     if (!this.catalogFacets) {
-      const models = this.facetValues("model"), tools = this.facetValues("tool"), versions = this.facetValues("version");
+      const models = this.facetValues("model"), tools = this.facetValues("tool");
       const efforts = this.db.query<{ effort: string }, [number]>("SELECT DISTINCT effort FROM usage_records WHERE effort IS NOT NULL ORDER BY effort LIMIT ?").all(facetLimit + 1);
+      // Every distinct version is read before the limit applies, so the newest stay listed however many there are.
+      const versions = newestVersions(this.db.query<{ value: string }, []>("SELECT DISTINCT value FROM session_facets WHERE kind='version'").all().map(row => row.value), facetLimit);
       this.catalogFacets = {
         models: models.values, toolsUsed: tools.values, efforts: efforts.slice(0, facetLimit).map(row => row.effort),
-        versions: versions.values.sort((left, right) => compareVersions(right, left)), unrecognizedKinds: this.facetValues("unrecognized").values,
+        versions: versions.values, unrecognizedKinds: this.facetValues("unrecognized").values,
         facetsLimited: models.limited || tools.limited || efforts.length > facetLimit || versions.limited,
       };
     }

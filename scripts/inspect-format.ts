@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { readJsonLines } from "../src/server/jsonl";
 import { object } from "../src/server/normalize";
 import { normalizeModel, readUsage } from "../src/server/usage";
-import { compareVersions, recordedVersion } from "../src/shared/records";
+import { compareVersions, recordedVersion, recordPolicy } from "../src/shared/records";
 
 export { compareVersions };
 
@@ -30,9 +30,6 @@ const mapKeyLimit = 32;
 
 /** Records carry more top-level fields than nested objects; those from Claude Code 2.1.269 to 2.1.302 have at most 27. */
 const recordKeyLimit = 64;
-
-/** Record types that carry a conversation turn and are expected to name the Claude Code version that wrote them. */
-export const transcriptTypes = ["user", "assistant", "system", "attachment", "progress"] as const;
 
 const tokenFields = ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] as const;
 
@@ -328,7 +325,8 @@ export async function censusFormat(dataDir: string, source: DataDirSource = "--d
         bumpKeys(entry.keys, raw, recordKeyLimit);
         if (raw.version === undefined) {
           entry.withoutVersion++;
-          if ((transcriptTypes as readonly string[]).includes(type)) bump(withoutVersion, type);
+          // Transcript records carry a conversation turn and are expected to name the Claude Code version that wrote them.
+          if (recordPolicy.get(type) === "transcript") bump(withoutVersion, type);
         } else {
           const version = versionLabel(raw.version);
           const known = versions.get(version) ?? versions.set(version, { records: 0, recordings: 0 }).get(version)!;

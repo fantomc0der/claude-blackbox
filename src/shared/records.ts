@@ -95,8 +95,8 @@ export function unrecognizedKind(type: string, subtype: unknown): string | null 
   return typeof subtype === "string" && recordName.test(subtype) ? `${type}:${subtype}` : "";
 }
 
-// Claude Code writes the version that wrote a record, such as `2.1.302`, on its transcript records and API requests; a
-// resumed or forked copy keeps the version of its original.
+// Claude Code writes the version that wrote a record, such as `2.1.302`, on its transcript records and its `api-request`
+// and `api-request-shape` records; a resumed or forked copy keeps the version of its original.
 const versionPattern = /^(\d{1,4})\.(\d{1,5})\.(\d{1,6})(?:-([0-9A-Za-z.-]{1,32}))?(?:\+[0-9A-Za-z.-]{1,32})?$/;
 
 /** The record's Claude Code version when it has the shape of one, or "". */
@@ -126,6 +126,12 @@ export function compareVersions(a: string, b: string): number {
     if (!pNumber && p !== q) return p < q ? -1 : 1;
   }
   return a.localeCompare(b);
+}
+
+/** The newest `limit` of these versions, newest first, and whether older ones were left out. */
+export function newestVersions(versions: readonly string[], limit: number): { values: string[]; limited: boolean } {
+  const sorted = [...versions].sort((left, right) => compareVersions(right, left));
+  return { values: sorted.slice(0, limit), limited: sorted.length > limit };
 }
 
 // Claude Code's own schema bounds every recorded duration and count as a finite non-negative number no greater than

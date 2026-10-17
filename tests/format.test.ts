@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { activeTimeSummary, duration, errorBreakdown, errorSummary, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, stoppedTools, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
-import { compareVersions, noteFiling, recordedDuration, recordedVersion, recordPolicy, recordSubtype, thinkingMeasure, turnDuration, unrecognizedKind } from "../src/shared/records";
+import { compareVersions, newestVersions, noteFiling, recordedDuration, recordedVersion, recordPolicy, recordSubtype, thinkingMeasure, turnDuration, unrecognizedKind } from "../src/shared/records";
 
 test("measured times read in the two largest units", () => {
   expect(duration(0)).toBe("0s");
@@ -90,6 +90,9 @@ test("Claude Code versions are read only in the shape of a version and order by 
   expect(["2.1.302", "2.1.10-beta.2", "1.0.0+build.5"].map(recordedVersion)).toEqual(["2.1.302", "2.1.10-beta.2", "1.0.0+build.5"]);
   expect(["v2.1.302", "2.1", "latest", "2.1.302 (Claude Code)", 2.1, null].map(recordedVersion)).toEqual(Array(6).fill(""));
   expect(["2.1.99", "2.1.302", "2.1.302-beta.1", "1.0.0"].sort(compareVersions)).toEqual(["1.0.0", "2.1.99", "2.1.302-beta.1", "2.1.302"]);
+  // A list cut to a limit keeps the newest, which string order would put last.
+  expect(newestVersions(["2.1.99", "10.0.0", "2.1.302", "2.1.302-beta.1", "1.0.0"], 3)).toEqual({ values: ["10.0.0", "2.1.302", "2.1.302-beta.1"], limited: true });
+  expect(newestVersions(["2.1.9", "2.1.10"], 3)).toEqual({ values: ["2.1.10", "2.1.9"], limited: false });
 });
 
 test("search highlights use the term the server matched records with", () => {

@@ -1,16 +1,16 @@
 import { expect, test } from "./harness";
 
 // The fixture's records name Claude Code 2.1.296 and then 2.1.302, and its last record is of a type this build does not
-// know. The demo recordings name 1.0.0, and each holds a system record of a subtype no Claude Code writes.
+// know. The demo recordings name 1.0.0.
 test("the library filters by Claude Code version and the index status counts unrecognized records", async ({ page }) => {
   const catalog = await (await page.request.get("/api/catalog")).json();
-  expect(catalog.unrecognizedKinds).toEqual(expect.arrayContaining(["system:synthetic-demo-observation", "type:future-record"]));
+  expect([catalog.unrecognizedRecords, catalog.unrecognizedKinds]).toEqual([1, ["type:future-record"]]);
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/");
   const unrecognized = page.locator(".index-unrecognized");
   await expect(unrecognized).toBeVisible();
-  await expect(unrecognized).toContainText(`${catalog.unrecognizedRecords} unrecognized records`);
-  await expect(unrecognized).toHaveAttribute("title", /^\d+ unrecognized records\. Records of kinds this build does not recognize\. A newer Claude Code may have changed its recording format\. .*Raw event.* Kinds: .*type:future-record/);
+  await expect(unrecognized).toHaveAttribute("title", "1 unrecognized record. Records of kinds this build does not recognize. A different Claude Code version may have changed its recording format. These records still appear under All events, where Raw event shows each one in full. Kinds: type:future-record.");
+  await expect(unrecognized).toContainText("1 unrecognized record.");
 
   await page.locator(".filter-popover > summary").click();
   const versions = page.getByRole("combobox", { name: "Claude Code version" });

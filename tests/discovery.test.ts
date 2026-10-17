@@ -3,6 +3,7 @@ import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
+import { facetLimit } from "../src/server/facets";
 import { dateBound, numericBound } from "../src/server/search";
 import { removeTestDirectory } from "./helpers";
 import { withSelectedOption } from "../src/client/lib/filter-options";
@@ -629,6 +630,35 @@ test("records are filed by Claude Code's policy, unrecognized kinds are counted,
   expect((await recorder.catalog()).versions[0]).toBe("2.1.303");
 });
 
+test("a rewritten recording keeps no version or unrecognized record it no longer holds", async () => {
+  const setup = await fixture();
+  const formats = await setup.write("formats", formatRecords());
+  const recorder = await setup.open();
+  const id = recorder.list(new URLSearchParams()).items[0].id;
+  const facets = () => recorder.db.query<{ facet: string }, [string]>(`SELECT kind || '=' || value AS facet FROM session_facets
+    WHERE session_id=? AND kind IN ('version','unrecognized') ORDER BY facet`).all(id).map(row => row.facet);
+  expect(facets()).toEqual(["unrecognized=attachment:future_reminder", "unrecognized=system:future_notice", "unrecognized=type:future-record", "version=2.1.296", "version=2.1.302"]);
+  // A file no longer than the one indexed is read again from its start.
+  await writeFile(formats, JSON.stringify(record("Rewritten prompt", { version: "2.1.278" })) + "\n");
+  await recorder.scan();
+  expect(recorder.getSession(id)).toMatchObject({ version: "2.1.278", unrecognizedCount: 0 });
+  expect(facets()).toEqual(["version=2.1.278"]);
+  expect(await recorder.catalog()).toMatchObject({ versions: ["2.1.278"], unrecognizedRecords: 0, unrecognizedKinds: [] });
+  await writeFile(formats, JSON.stringify(record("Unversioned prompt")) + "\n");
+  await recorder.scan();
+  expect(recorder.getSession(id)).toMatchObject({ version: "", unrecognizedCount: 0 });
+  expect(facets()).toEqual([]);
+});
+
+test("the catalog lists the newest Claude Code versions however many the recordings name", async () => {
+  const setup = await fixture();
+  // In string order every 1.0.x version sorts before 9.0.0, which a limit taken in that order would leave out.
+  await setup.write("versions", [...Array.from({ length: facetLimit + 5 }, (_, index) => record(`Prompt ${index}`, { version: `1.0.${index}` })), record("Newest", { version: "9.0.0" })]);
+  const catalog = await (await setup.open()).catalog();
+  expect([catalog.versions.length, catalog.facetsLimited]).toEqual([facetLimit, true]);
+  expect(catalog.versions.slice(0, 3)).toEqual(["9.0.0", `1.0.${facetLimit + 4}`, `1.0.${facetLimit + 3}`]);
+});
+
 test("version 12 indexes re-index only the recordings that hold Claude Code's running total", async () => {
   const setup = await fixture();
   await setup.write("costed", [record("Price the work"), sessionState("cost-state", { totalCostUSD: 1.27, modelUsage: { "claude-opus-5[1m]": { outputTokens: 300, costUSD: 1.27 } } })]);
@@ -780,6 +810,31 @@ test("version 15 indexes fill the Claude Code version and unrecognized records i
   expect(cwds(ids.formats)).toEqual(["/synthetic/stale"]);
   expect(cwds(ids.plain)).toEqual(["/synthetic/stale"]);
   expect(cwds(ids.summarized).sort()).toEqual(["", "/synthetic/project"]);
+});
+
+// `JSON.parse` reads a record nested more than 1000 levels deep, and the scan stores it, but SQLite's JSON functions
+// throw on it. An upgrade that needs such a record re-reads its recording instead of failing every later scan.
+test("version 15 and 16 indexes re-read a recording holding a record SQLite's JSON parser rejects", async () => {
+  for (const from of [15, 16]) {
+    const setup = await fixture();
+    const nested = JSON.parse("[".repeat(1200) + "]".repeat(1200));
+    await setup.write("deep", [record("Deeply nested", { version: "2.1.296" }), record("", { type: "assistant", version: "2.1.302", isApiErrorMessage: true, error: "unknown",
+      nested, message: { model: "<synthetic>", content: [{ type: "text", text: "API Error: overloaded" }] } })]);
+    await setup.write("plain", [record("Plain prompt", { version: "2.1.278" })]);
+    const before = await setup.open();
+    const ids = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.source.replace(/\.jsonl$/, "").split(/[\\/]/).at(-1), session.id]));
+    before.db.exec(from === 15 ? "DELETE FROM session_facets WHERE kind IN ('version','unrecognized'); UPDATE sessions SET version='', unrecognized=0, api_errors=0" : "UPDATE sessions SET api_errors=0");
+    before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+    before.db.exec(`PRAGMA user_version=${from}`);
+    await before.close();
+    const after = await setup.open({ scan: false });
+    const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+    await after.scan();
+    expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(17);
+    expect([cwds(ids.deep), cwds(ids.plain)]).toEqual([["/synthetic/project"], ["/synthetic/stale"]]);
+    expect(after.getSession(ids.deep)).toMatchObject({ version: "2.1.302", errorCount: 1, apiErrorCount: 1 });
+    expect(after.getSession(ids.plain)).toMatchObject({ version: "2.1.278", errorCount: 0 });
+  }
 });
 
 test("version 9 indexes re-index only the recordings that hold session state records", async () => {

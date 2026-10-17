@@ -3,6 +3,8 @@ import type { Catalog, IndexProgress } from "../../shared/types";
 import { tokenCount } from "../lib/format";
 import { Icon } from "./icon";
 
+const shownKinds = 5;
+
 export function IndexStatus(props: { catalog: Catalog | null; progress: IndexProgress | null; refreshing: boolean; refresh: () => void }) {
   const failed = () => props.progress?.phase === "error";
   const working = () => props.refreshing || props.progress?.phase === "discovering" || props.progress?.phase === "indexing";
@@ -28,12 +30,13 @@ export function IndexStatus(props: { catalog: Catalog | null; progress: IndexPro
   const idle = () => !!props.progress && !visible() && !failed();
   // Records whose type or subtype this build does not know are flagged by a glyph after the idle count, which keeps the
   // count on the label's line and the footer at its height; the count and explanation are its tooltip and hidden text.
-  // Nothing shows while there are none.
+  // Nothing shows while there are none, and the tooltip names a few kinds and counts the rest.
   const unrecognized = () => props.catalog?.unrecognizedRecords ?? 0;
+  const kinds = () => props.catalog?.unrecognizedKinds ?? [];
   const unrecognizedDetail = () => [`${tokenCount(unrecognized())} unrecognized ${unrecognized() === 1 ? "record" : "records"}.`,
-    "Records of kinds this build does not recognize. A newer Claude Code may have changed its recording format.",
+    "Records of kinds this build does not recognize. A different Claude Code version may have changed its recording format.",
     "These records still appear under All events, where Raw event shows each one in full.",
-    props.catalog?.unrecognizedKinds.length ? `Kinds: ${props.catalog.unrecognizedKinds.join(", ")}.` : ""].filter(Boolean).join(" ");
+    kinds().length ? `Kinds: ${kinds().slice(0, shownKinds).join(", ")}${kinds().length > shownKinds ? `, and ${kinds().length - shownKinds} more` : ""}.` : ""].filter(Boolean).join(" ");
   return <div class={['index-status', { 'index-failed': failed(), 'index-idle': idle() }]}>
     <div class="index-progress" role={visible() && !failed() ? "progressbar" : undefined} aria-label={visible() && !failed() ? "Recording index" : undefined}
       aria-describedby="recording-index-help"
