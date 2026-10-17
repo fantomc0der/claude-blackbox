@@ -212,12 +212,15 @@ await writeFile(join(folder, "request-copies.jsonl"), [
   apiRequest(60, ["copy-hash-3"]),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // When an API request fails for good, Claude Code records the failure itself as an `assistant` record with the
-// `<synthetic>` model, marked `isApiErrorMessage`; `No response requested.` is another stand-in it writes the same way.
+// `<synthetic>` model, marked `isApiErrorMessage` with the kind, a cause code, and the HTTP status; `No response
+// requested.` is another stand-in it writes the same way. The retry banner before it is error-level, which 2.1.302 only
+// shows on screen, but it is not an error.
 const standIn = (sequence: number, text: string, extra: Record<string, unknown> = {}) => ({ ...event(text, sequence, "assistant"), ...extra,
   message: { role: "assistant", model: "<synthetic>", content: [{ type: "text", text }], usage: { input_tokens: 0, output_tokens: 0 } } });
 await writeFile(join(folder, "api-errors.jsonl"), [
   event("API error verification", 0),
-  standIn(1, 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}', { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } }),
+  { type: "system", subtype: "api_error", level: "error", error: { status: 429 }, retryInMs: 4210, retryAttempt: 2, maxRetries: 10, uuid: "browser-retry", cwd: "/synthetic/browser-tests", timestamp: "2026-01-01T00:00:00Z" },
+  standIn(1, 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Usage limit reached"}}', { isApiErrorMessage: true, error: "rate_limit", apiError: "usage_limit_reached", apiErrorStatus: 429 }),
   standIn(2, "No response requested."),
   event("The login test passes after the retry.", 3, "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
@@ -341,19 +344,22 @@ await writeFile(join(folder, "overview-files.jsonl"), [
   overviewText("The overview files are ready.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
-// messages, plus one genuine failure: the Errors tab labels each, and only the failure counts as an error.
+// messages, plus one genuine failure: the Errors tab labels each, and only the failure counts as an error. The
+// rejection and the cancellation carry the kinds Claude Code 2.1.30x files beside those messages; the hook stop and the
+// interruption carry none, as an older recording's would. The Marrowgate recording's cancellation carries none either.
 const decisionCall = (sequence: number, id: string, name: string, input: Record<string, unknown>) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "tool_use", id, name, input }], model: "claude-sonnet-4-5" } });
 const decisionResult = (sequence: number, id: string, content: string, is_error = true) => ({ ...event("", sequence), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error }] } });
+const kindResult = (sequence: number, id: string, content: string, toolDenialKind: string) => ({ ...decisionResult(sequence, id, content), toolDenialKind });
 await writeFile(join(folder, "decisions.jsonl"), [
   event("Thornquill decision verification", 0),
   decisionCall(1, "decision-denied", "Bash", { command: "rm -rf node_modules" }),
-  decisionResult(2, "decision-denied", "\nThe user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nKeep the install, just prune the cache."),
+  kindResult(2, "decision-denied", "\nThe user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nKeep the install, just prune the cache.", "user-rejected"),
   decisionCall(3, "decision-hook", "Bash", { command: "git push --force origin main" }),
   decisionResult(4, "decision-hook", "Execution stopped by PreToolUse hook: protected branch"),
   decisionCall(5, "decision-interrupted", "Bash", { command: "sleep 600" }),
   decisionResult(6, "decision-interrupted", "[Request interrupted by user for tool use]"),
   decisionCall(7, "decision-edit", "Edit", { file_path: "/synthetic/browser-tests/src/config.ts", old_string: "a", new_string: "b" }),
-  decisionResult(8, "decision-edit", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."),
+  kindResult(8, "decision-edit", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", "cancelled"),
   decisionCall(9, "decision-failed", "Bash", { command: "bun test tests/decisions.test.ts" }),
   decisionResult(10, "decision-failed", "<tool_use_error>Exit code 1\n1 fail</tool_use_error>"),
   event("Stopping here until you decide.", 11, "assistant"),
@@ -362,6 +368,32 @@ await writeFile(join(folder, "denial-only.jsonl"), [
   { ...event("Marrowgate denial verification", 0), uuid: "denial-only-0" },
   { ...decisionCall(1, "denial-only-call", "Bash", { command: "rm -rf dist" }), uuid: "denial-only-1" },
   { ...decisionResult(2, "denial-only-call", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."), uuid: "denial-only-2" },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Claude Code 2.1.30x files every decided result by kind beside it. A permission rule's denial in a hook's own words
+// says nothing a message rule knows, so only its kind keeps it from reading as a failure, even where Tools shows the
+// result stored apart from its record inside its call's card.
+await writeFile(join(folder, "decision-kinds.jsonl"), [
+  event("Galeharrow decision kinds verification", 0),
+  decisionCall(1, "kind-auto", "Bash", { command: "git push --force origin main" }),
+  kindResult(2, "kind-auto", "Permission for this action was denied by the Claude Code auto mode classifier. Reason: Force push to main.", "automode-blocked"),
+  decisionCall(3, "kind-unreviewed", "Bash", { command: "terraform apply" }),
+  kindResult(4, "kind-unreviewed", "The API told auto mode's safety classifier (opus) to wait 30s from now, so auto mode cannot determine the safety of Bash until then.", "automode-unavailable"),
+  decisionCall(5, "kind-rule", "Bash", { command: "bun run deploy" }),
+  kindResult(6, "kind-rule", "Deploys are frozen until Monday.", "permission-rule"),
+  decisionCall(7, "kind-hook", "Bash", { command: "rm -rf dist" }),
+  kindResult(8, "kind-hook", "Hook PreToolUse:Bash denied this tool", "permission-rule"),
+  decisionCall(9, "kind-interrupted", "Bash", { command: "sleep 600" }),
+  kindResult(10, "kind-interrupted", "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]", "interrupted"),
+  decisionCall(11, "kind-cancelled", "Bash", { command: "bun test" }),
+  kindResult(12, "kind-cancelled", "[Tool call not completed: an approval request expired with no answer, so the action awaiting approval did not run. Nobody refused it, so this is not the user's decision; ask again if it is still needed.]", "cancelled"),
+  event("Waiting for the review.", 13, "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Claude Code names the version that wrote a record on its transcript records, here a session resumed under a newer
+// version, and a newer Claude Code may write a record type this build does not know.
+await writeFile(join(folder, "format-versions.jsonl"), [
+  { ...event("Quillmere format verification", 0), version: "2.1.296" },
+  { ...event("The recording format checks out.", 1, "assistant"), version: "2.1.302" },
+  { type: "future-record", sessionId: "format-versions", version: "2.1.302" },
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");

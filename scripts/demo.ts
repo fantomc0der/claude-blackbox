@@ -723,9 +723,9 @@ function buildRecords(session: DemoSession, sessionIndex: number): JsonRecord[] 
       ),
     ),
     record(session, sessionIndex, 21, "system", {
-      subtype: "synthetic-demo-observation",
-      detail: "This intentionally unknown system event exercises generic transcript rendering.",
-      message: { role: "system", content: "Synthetic demo event: preserve this record even when its subtype is unfamiliar." },
+      subtype: "informational",
+      content: "Synthetic demo event: an informational note Claude Code keeps beside the transcript.",
+      level: "info",
     }),
   );
 

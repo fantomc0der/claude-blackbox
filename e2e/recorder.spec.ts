@@ -777,14 +777,14 @@ test("session details preserve context and keyboard access without shifting the 
 const shownProvenance = (page: Page) => page.locator(".replay-provenance .provenance-value").evaluateAll(elements => elements.filter(element => element.getClientRects().length).map(element => ({ text: element.textContent, clipped: element.scrollWidth > element.clientWidth + 1 })));
 const oneLine = (page: Page) => page.locator(".replay-provenance").evaluate(element => element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) + 1 && element.scrollWidth <= element.clientWidth + 1);
 
-test("the provenance strip names folder, branch, recorded span and model in split and full layouts", async ({ page }) => {
+test("the provenance strip names folder, branch, recorded span, model, and Claude Code version in split and full layouts", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/");
   await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
   await expect(page.locator(".replay-provenance")).toBeVisible();
   const facts = async (model: boolean) => {
     const shown = await shownProvenance(page);
-    expect(shown.map(value => value.text)).toEqual(["orbit-auth", "feat/auth-delight", expect.stringMatching(/\d{4}/), ...(model ? ["Sonnet 4.5"] : [])]);
+    expect(shown.map(value => value.text)).toEqual(["orbit-auth", "feat/auth-delight", expect.stringMatching(/\d{4}/), ...(model ? ["Sonnet 4.5", "Claude Code 1.0.0"] : [])]);
     expect(await oneLine(page)).toBe(true);
   };
   await facts(true);
@@ -801,7 +801,8 @@ test("the provenance strip names folder, branch, recorded span and model in spli
   await expect(overview).not.toContainText("/synthetic/workspaces/orbit-auth");
   await page.getByRole("button", { name: "Show library" }).click();
 
-  // A phone-width pane keeps folder, branch and days on the line; times and the model stay in Session actions.
+  // A phone-width pane keeps folder, branch and days on the line; times, the model, and the Claude Code version stay in
+  // Session actions.
   await page.setViewportSize({ width: 390, height: 844 });
   await facts(false);
   await page.setViewportSize({ width: 320, height: 640 });

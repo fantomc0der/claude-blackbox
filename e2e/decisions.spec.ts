@@ -19,7 +19,7 @@ test("the Errors tab labels each tool the user stopped and counts only the failu
   expect(session.errorCount).toBe(1);
   const results = page.locator(".replay-event-tool-result");
   await expect(results).toHaveCount(5);
-  await expect(results.locator(".replay-decision-label")).toHaveText(["Permission denied", "Stopped by hook", "Interrupted", "Permission denied"]);
+  await expect(results.locator(".replay-decision-label")).toHaveText(["Permission denied", "Stopped by hook", "Interrupted", "Cancelled"]);
   await expect(results.locator(".replay-error-label")).toHaveText(["Error"]);
   await expect(page.locator(".replay-event-decision")).toHaveCount(4);
   await expect(page.locator(".replay-event-error")).toHaveCount(1);
@@ -35,7 +35,12 @@ test("the Errors tab labels each tool the user stopped and counts only the failu
   await expect(page.locator(".replay-find > .replay-count")).toHaveText(/^5 of 12 records$/);
   const rail = page.getByRole("complementary", { name: "Recording overview" });
   await expect(rail.locator(".inspector-stats")).toContainText("1errors");
-  await expect(rail.getByRole("navigation", { name: "Events on this page" }).getByRole("button")).toHaveText([/^Permission denied/, /^Stopped by hook/, /^Interrupted/, /^Permission denied/, /^Error/]);
+  // The stopped tools never count as errors, but the count says how many there were.
+  await expect(rail.locator(".inspector-stats > div").nth(2)).toHaveAttribute("title", "1 error · 4 tools stopped");
+  await expect(rail.getByRole("navigation", { name: "Events on this page" }).getByRole("button")).toHaveText([/^Permission denied/, /^Stopped by hook/, /^Interrupted/, /^Cancelled/, /^Error/]);
+  await page.locator(".session-details > summary").click();
+  const details = page.getByRole("region", { name: "Session details" });
+  await expect(details.locator("dt", { hasText: /^Errors$/ }).locator("+ dd")).toHaveText("1 error · 4 tools stopped");
 }, wide);
 
 test("the Tools tab tints a stopped call apart from a failed one and names what stopped it", async ({ page }) => {
@@ -52,17 +57,17 @@ test("the Tools tab tints a stopped call apart from a failed one and names what 
   await expect(page.locator(".tool-card-error .tool-code header").nth(1)).toContainText("Command error");
 });
 
-test("a denied change is listed as denied, not as an error, in the files the recording changed", async ({ page }) => {
+test("a cancelled change is counted as stopped, not as an error, in the files the recording changed", async ({ page }) => {
   await openRecording(page, "Thornquill", stoppedTitle, "replayKind=conversation");
   const rail = page.getByRole("complementary", { name: "Recording overview" });
   await rail.getByLabel("Overview content").selectOption("files");
   const files = rail.getByRole("navigation", { name: "Files changed in this recording" });
-  const row = files.getByRole("button", { name: /^config\.ts in src, 1 change, 1 denied\. Show the change\.$/ });
-  await expect(row).toContainText("1 denied");
+  const row = files.getByRole("button", { name: /^config\.ts in src, 1 change, 1 stopped\. Show the change\.$/ });
+  await expect(row).toContainText("1 stopped");
   await expect(row).not.toContainText("error");
 }, wide);
 
-test("a recording whose only error flag is a denial is not a recording with errors", async ({ page }) => {
+test("a recording whose only error flag is a cancellation is not a recording with errors", async ({ page }) => {
   const listing = await (await page.request.get("/api/sessions?q=Marrowgate")).json();
   expect(listing.items.map((session: { title: string; errorCount: number }) => [session.title, session.errorCount])).toEqual([[deniedTitle, 0]]);
   const filtered = await (await page.request.get("/api/sessions?q=Marrowgate&errors=1")).json();
@@ -71,12 +76,35 @@ test("a recording whose only error flag is a denial is not a recording with erro
   const row = page.locator(".session-row");
   await expect(row).toHaveCount(1);
   await expect(row.locator(".session-symbol")).not.toHaveClass(/has-error/);
-  await expect(row.locator(".session-symbol")).toHaveAttribute("title", "Conversation");
+  await expect(row.locator(".session-symbol")).toHaveAttribute("title", "Conversation · 1 tool stopped");
   await row.click();
   await page.getByRole("button", { name: "Errors", exact: true }).click();
   await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator(".replay-event")).toHaveCount(1);
-  await expect(page.locator(".replay-decision-label")).toHaveText("Permission denied");
+  // Claude Code files its "doesn't want to take this action right now" message as a cancellation, not a denial.
+  await expect(page.locator(".replay-decision-label")).toHaveText("Cancelled");
+  await expect(page.locator(".replay-event .tool-status")).toHaveAttribute("aria-label", "Tool cancelled");
   await expect(page.locator(".replay-error-label")).toHaveCount(0);
   await expect(page.getByRole("complementary", { name: "Recording overview" }).locator(".inspector-stats")).toContainText("0errors");
+}, wide);
+
+test("the kind Claude Code filed names each stopped tool, on its own and inside its call", async ({ page }) => {
+  const labels = ["Blocked by auto mode", "Not reviewed by auto mode", "Permission denied", "Stopped by hook", "Interrupted", "Cancelled"];
+  const names = ["Tool denied by auto mode", "Tool not reviewed by auto mode", "Tool denied", "Tool blocked", "Tool interrupted", "Tool cancelled"];
+  const session = await openRecording(page, "Galeharrow", "Galeharrow decision kinds verification", "replayKind=all&replayErrors=1");
+  expect(session.errorCount).toBe(0);
+  const results = page.locator(".replay-event-tool-result");
+  await expect(results.locator(".replay-decision-label")).toHaveText(labels);
+  await expect(page.locator(".replay-error-label")).toHaveCount(0);
+  for (const [index, name] of names.entries()) await expect(results.nth(index).locator(".tool-status")).toHaveAttribute("aria-label", name);
+  await expect(results.nth(2).locator(".tool-content .tool-code header")).toContainText("Permission denied");
+  // Tools folds each result into its call's card from the stored result, which keeps the kind its record filed.
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
+  const cards = page.locator(".tool-card");
+  await expect(cards).toHaveCount(6);
+  await expect(page.locator(".tool-card-decision")).toHaveCount(6);
+  await expect(page.locator(".tool-card-error")).toHaveCount(0);
+  for (const [index, name] of names.entries()) await expect(cards.nth(index).locator(".tool-status")).toHaveAttribute("aria-label", name);
+  await expect(cards.nth(2).locator(".tool-code header").nth(1)).toContainText("Permission denied");
 }, wide);

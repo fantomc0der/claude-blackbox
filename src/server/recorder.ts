@@ -5,11 +5,11 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, RecordedCost, RecordedCostTotal, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { sessionStateTypes, turnDuration } from "../shared/records";
+import { newestVersions, recordedVersion, recordSubtype, turnDuration, unrecognizedKind } from "../shared/records";
 import { readJsonLines } from "./jsonl";
-import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
+import { displaySnippet, explicitTitle, hasReadableThinking, isApiError, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
-import { addUsage, emptyUsage, normalizeModel, rateStamp, readCostState, readUsage, usageColumns } from "./usage";
+import { addUsage, currentRates, emptyUsage, hasRates, normalizeModel, readCostState, readUsage, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
 import { addedDirectory, buildSummary, changeTools, contentBlocks, isAddDirCommand, placeSummary, recordText, summaryRecordIds, type SummaryCall, type SummaryRoot } from "./summary";
 
@@ -19,12 +19,32 @@ const callInputKeys = 32;
 const callInputLength = 2000;
 const timelineGranularities = [[16, 60_000], [15, 600_000], [13, 3_600_000], [10, 86_400_000]] as const;
 type TimelineRow = { at: string | null; count: number; first: number; last: number; errors: number };
+// The record types version 10 first indexed as session state, and the ones version 16 adds to them as bookkeeping or
+// state. Each step keeps its own list, so an index upgraded across both is re-read as each version decided.
+const version10StateTypes = [
+  "last-prompt", "atis-latch", "queue-operation", "cost-state", "mode", "permission-mode", "worktree-state",
+  "isolation-latch", "dev-mods", "memory-mode", "agent-name", "agent-color", "agent-setting", "tag",
+  "attribution-snapshot", "file-history-delta", "api-request-shape", "relocated", "continued-in", "fork-context-ref",
+  "observer-ref", "history-suppression", "ended-by-model", "content-replacement",
+];
+const version16NoteTypes = [
+  "file-history-snapshot", "frame-link", "artifact-comment-monitor", "summary", "custom-title", "ai-title", "pr-link",
+  "artifact-autoreact-ledger", "bridge-session",
+];
+// Parts of the messages version 17 first reads as decisions, as a stored record serializes them. An earlier build
+// flagged a result holding one as a failure.
+const version17DecisionTexts = [
+  "[Request interrupted by user]", "[Tool call did not complete:", "[Tool call interrupted:", "[Tool call result not in this copy:",
+  "[Tool call skipped:", "[Tool call not completed:", "Hook PreToolUse", "Permission for this command was denied",
+  "Permission for this action ", "auto mode's safety classifier", ", so auto mode cannot determine the safety of ", " was not reviewed",
+];
 
 interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
   started: string; updated: string; events: number; messages: number; tools: number; errors: number;
   edits: number; agent: number; size: number; mtime: number; cursor: number; fingerprint: string;
   warnings: number; named: number; identity: string; tailprint: string; turns: number; active_ms: number;
+  version: string; unrecognized: number; api_errors: number; decisions: number;
   group_id?: string; group_name?: string; bookmarked?: number;
   recorded_cost?: number | null; recorded_started?: string | null; recorded_unknown?: number | null; recorded_models?: string | null;
   recorded_api_ms?: number | null; recorded_tool_ms?: number | null;
@@ -62,7 +82,9 @@ const schema = `
     size INTEGER NOT NULL DEFAULT 0, mtime REAL NOT NULL DEFAULT 0, cursor INTEGER NOT NULL DEFAULT 0,
     fingerprint TEXT NOT NULL DEFAULT '', warnings INTEGER NOT NULL DEFAULT 0, named INTEGER NOT NULL DEFAULT 0,
     identity TEXT NOT NULL DEFAULT '', tailprint TEXT NOT NULL DEFAULT '',
-    turns INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0
+    turns INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0,
+    version TEXT NOT NULL DEFAULT '', unrecognized INTEGER NOT NULL DEFAULT 0,
+    api_errors INTEGER NOT NULL DEFAULT 0, decisions INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS events (
     rowid INTEGER PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -77,7 +99,7 @@ const schema = `
     request_key TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL,
     cache_creation INTEGER NOT NULL, cache_read INTEGER NOT NULL, cost REAL,
     recorded INTEGER NOT NULL, sidechain INTEGER NOT NULL,
-    model TEXT NOT NULL DEFAULT '', effort TEXT, rates TEXT NOT NULL DEFAULT '', unrated INTEGER NOT NULL DEFAULT 0,
+    model TEXT NOT NULL DEFAULT '', effort TEXT, rates TEXT NOT NULL DEFAULT '', unrated INTEGER NOT NULL DEFAULT 0, reason TEXT,
     PRIMARY KEY(session_id, request_key)
   );
   CREATE TABLE IF NOT EXISTS session_costs (
@@ -137,6 +159,11 @@ function toolCondition(column: string, tool: string): string {
 
 function boundedLabel(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 120) || "Untitled session";
+}
+
+/** The tool results among a record's blocks that record a decision, each of which `sessions.decisions` counts. */
+function decidedResults(blocks: ContentBlock[]): number {
+  return blocks.filter(block => resultDecision(block) !== null).length;
 }
 
 /** The `session_costs` row joined onto a session row, or null when the recording carries no `cost-state` record. */
@@ -231,7 +258,7 @@ export class Recorder {
   private stopped = false;
   private scanWarnings = 0;
   private workspaceUsage: Map<string, UsageSummary> | null = null;
-  private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "facetsLimited"> | null = null;
+  private catalogFacets: Pick<Catalog, "models" | "toolsUsed" | "efforts" | "versions" | "unrecognizedKinds" | "facetsLimited"> | null = null;
   private replayFacets = new Map<string, EventPage["facets"]>();
   private replayTimelines = new Map<string, { total: number; rows: TimelineRow[] }>();
   private replaySummaries = new Map<string, { total: number; summary: SessionSummary }>();
@@ -241,7 +268,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 15) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 17) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -250,6 +277,10 @@ export class Recorder {
     if (!fields.has("tailprint")) db.exec("ALTER TABLE sessions ADD COLUMN tailprint TEXT NOT NULL DEFAULT ''");
     if (!fields.has("turns")) db.exec("ALTER TABLE sessions ADD COLUMN turns INTEGER NOT NULL DEFAULT 0");
     if (!fields.has("active_ms")) db.exec("ALTER TABLE sessions ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0");
+    if (!fields.has("version")) db.exec("ALTER TABLE sessions ADD COLUMN version TEXT NOT NULL DEFAULT ''");
+    if (!fields.has("unrecognized")) db.exec("ALTER TABLE sessions ADD COLUMN unrecognized INTEGER NOT NULL DEFAULT 0");
+    if (!fields.has("api_errors")) db.exec("ALTER TABLE sessions ADD COLUMN api_errors INTEGER NOT NULL DEFAULT 0");
+    if (!fields.has("decisions")) db.exec("ALTER TABLE sessions ADD COLUMN decisions INTEGER NOT NULL DEFAULT 0");
     const costFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(session_costs)").all().map(row => row.name));
     if (!costFields.has("api_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN api_ms REAL");
     if (!costFields.has("tool_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN tool_ms REAL");
@@ -258,6 +289,17 @@ export class Recorder {
     if (!usageFields.has("effort")) db.exec("ALTER TABLE usage_records ADD COLUMN effort TEXT");
     if (!usageFields.has("rates")) db.exec("ALTER TABLE usage_records ADD COLUMN rates TEXT NOT NULL DEFAULT ''");
     if (!usageFields.has("unrated")) db.exec("ALTER TABLE usage_records ADD COLUMN unrated INTEGER NOT NULL DEFAULT 0");
+    if (!usageFields.has("reason")) db.exec("ALTER TABLE usage_records ADD COLUMN reason TEXT");
+    // An unpriced row an earlier build wrote without a reason gets the one its rules gave: no model, a model without
+    // rates, or else fast mode. A build before `rates` never marked a model without rates, so the current table decides
+    // for its rows. Each keeps that reason until the re-read that the rate-stamp check below schedules.
+    const unexplained = db.query<{ model: string; rates: string; unrated: number }, []>(
+      "SELECT DISTINCT model, rates, unrated FROM usage_records WHERE cost IS NULL AND reason IS NULL").all();
+    const explain = db.query("UPDATE usage_records SET reason=?, unrated=? WHERE cost IS NULL AND reason IS NULL AND model=? AND rates=? AND unrated=?");
+    for (const row of unexplained) {
+      const reason = !row.model ? "unnamed" : row.unrated || (!row.rates && !hasRates(row.model)) ? "model" : "fast";
+      explain.run(reason, Number(reason === "model"), row.model, row.rates, row.unrated);
+    }
     const eventFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(events)").all().map(row => row.name));
     for (const field of ["role", "timestamp", "model", "cwd"]) {
       if (!eventFields.has(field)) db.exec(`ALTER TABLE events ADD COLUMN ${field} TEXT NOT NULL DEFAULT ''`);
@@ -285,7 +327,7 @@ export class Recorder {
     // Unchanged recordings are never rescanned, so requests indexed with other rates or rules (or by a build that did
     // not stamp them) are re-indexed to keep every total on the bundled rates.
     const stale = db.query<{ model: string; rates: string }, []>("SELECT DISTINCT model, rates FROM usage_records").all()
-      .filter(row => row.rates !== rateStamp(row.model));
+      .filter(row => !currentRates(row.model, row.rates));
     if (stale.length) db.query(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT session_id FROM usage_records
       WHERE (model, rates) IN (VALUES ${stale.map(() => "(?,?)").join(",")}))`).run(...stale.flatMap(row => [row.model, row.rates]));
   }
@@ -403,10 +445,28 @@ export class Recorder {
     return { ...row, source: path, identity: stored };
   }
 
+  /**
+   * Runs one upgrade step's `fill` for every recording not already marked for re-reading, whose next read derives the
+   * same values afresh, each recording in its own transaction through `events_session`. The scan runs after the server
+   * has bound its port, so the step yields to the event loop after every 20 ms of work to keep the server answering;
+   * yielding after every recording would add over a millisecond each on Windows. False when a shutdown stopped it; its
+   * writes are idempotent, so the next scan repeats the step from the start.
+   */
+  private async upgradeEach(fill: (session: { id: string; named: number }) => void): Promise<boolean> {
+    const step = this.db.transaction(fill);
+    let slice = performance.now();
+    for (const session of this.db.query<{ id: string; named: number }, []>("SELECT id, named FROM sessions WHERE mtime!=0").all()) {
+      if (this.stopped) return false;
+      step(session);
+      if (performance.now() - slice >= 20) { await Bun.sleep(0); slice = performance.now(); }
+    }
+    return true;
+  }
+
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9 to 15 steps below follow it
+    // its port, and before the recordings are compared with what was indexed; the version 9 to 17 steps below follow it
     // in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
@@ -428,7 +488,7 @@ export class Recorder {
     // Version 10 re-indexes only the recordings holding Claude Code's session state records, which an earlier build read
     // as content with their prompt copies searchable; finding them reads every event, like version 8.
     if (version < 10) this.db.transaction(() => {
-      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify([...sessionStateTypes]));
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify(version10StateTypes));
       this.db.exec("PRAGMA user_version=10");
     })();
     // Version 11 re-indexes only the recordings that hold Claude Code's own stand-ins for a model turn, which earlier
@@ -470,6 +530,103 @@ export class Recorder {
       this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='relocated')");
       this.db.exec("PRAGMA user_version=15");
     })();
+    // Version 16 keeps the Claude Code version a recording's records name and counts the records this build does not
+    // recognize. The stored records hold both, so each recording is filled where it is instead of being re-read: one
+    // statement reads its events' `version` and another their type and subtype, which reads every event like version 8.
+    // The second also finds a record of a type version 16 first reads as a note but an earlier build read as content,
+    // which kept the content in its searchable text, and marks only those recordings for re-reading. So is a recording
+    // holding a record these statements need but SQLite's JSON parser rejects, which `JSON.parse` accepts, such as one
+    // nested more than 1000 levels deep.
+    if (version < 16) {
+      const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
+      const versions = this.db.query<{ version: unknown; sequence: number; invalid: number }, [string]>(`SELECT
+        CASE WHEN json_valid(raw) THEN json_extract(raw,'$.version') END AS version, max(sequence) AS sequence, max(NOT json_valid(raw)) AS invalid
+        FROM events WHERE session_id=? AND instr(raw,'"version":')>0 GROUP BY 1`);
+      const kinds = this.db.query<{ type: string; subtype: unknown; records: number; invalid: number; stale: number }, [string, string]>(`SELECT type,
+        CASE WHEN type='system' AND json_valid(raw) THEN json_extract(raw,'$.subtype')
+          WHEN type='attachment' AND json_valid(raw) THEN json_extract(raw,'$.attachment.type') END AS subtype, count(*) AS records,
+        max(CASE WHEN type IN ('system','attachment') OR type IN (SELECT value FROM json_each(?1)) THEN NOT json_valid(raw) ELSE 0 END) AS invalid,
+        max(CASE WHEN type IN (SELECT value FROM json_each(?1)) AND json_valid(raw) THEN json_type(raw,'$.message.content') IN ('text','array')
+          OR json_type(raw,'$.content') IN ('text','array') OR json_type(raw,'$.summary')='text' ELSE 0 END) AS stale
+        FROM events WHERE session_id=?2 GROUP BY type, 2`);
+      const notes = JSON.stringify(version16NoteTypes);
+      const update = this.db.query("UPDATE sessions SET version=?, unrecognized=? WHERE id=?");
+      const reset = this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
+      const filled = await this.upgradeEach(({ id }) => {
+        let latest = { version: "", sequence: -1 }, unrecognized = 0, reread = false;
+        for (const row of versions.all(id)) {
+          reread ||= Boolean(row.invalid);
+          const recorded = recordedVersion(row.version);
+          if (!isFacetValue(recorded)) continue;
+          insertFacet.run(id, "version", recorded);
+          if (latest.sequence < row.sequence) latest = { version: recorded, sequence: row.sequence };
+        }
+        for (const row of kinds.all(notes, id)) {
+          reread ||= Boolean(row.invalid || row.stale);
+          const kind = unrecognizedKind(row.type, row.subtype);
+          if (kind !== null) unrecognized += row.records;
+          if (kind) insertFacet.run(id, "unrecognized", kind);
+        }
+        update.run(latest.version, unrecognized, id);
+        if (reread) reset.run(id);
+      });
+      if (!filled) return [];
+      this.db.exec("PRAGMA user_version=16");
+    }
+    // Version 17 reads Claude Code's `toolDenialKind` before a result's message, tells its interruptions and
+    // cancellations apart from its denials, never counts its API retry banner as an error, counts a recording's API error
+    // turns and decided records apart from its errors, and titles a recording by Claude Code's own precedence, agent name
+    // first and summary before the first prompt, keeping the rank of the title's kind in `named`, where an earlier build
+    // kept 1 for any explicit title. The counts come from the records an earlier build flagged or decided, like version
+    // 12, each decided record parsed to count the results in it that record a decision, so every recording is filled
+    // where it is. A recording holding a title record, or titled explicitly by a field
+    // on another record, is retitled where it is from those stored records, like version 9. Finding a title field reads the
+    // explicitly titled recordings' events, and finding an `agentName` reads every recording's events, because Claude Code's
+    // transcript writer stamps a teammate's name on every record of its session and no earlier build read the field, so a
+    // `named` of 0 does not rule it out. One already marked for re-reading gets its title from that read. A
+    // decision an earlier build recognized stays a decision, and its label is read from the stored record whenever it is
+    // shown, so only three groups of recordings are re-read: those holding a flagged or decided record with a
+    // `toolDenialKind`, whose stored results lack the kind `normalize()` now copies onto them; those holding a failure
+    // whose record carries part of a message version 17 first reads as a decision; and those holding a flagged `system`
+    // record of subtype `api_error`, which no 2.1.302 recording holds. A recording holding an API error record SQLite's
+    // JSON parser rejects is re-read too, as in version 16.
+    if (version < 17) {
+      const counts = this.db.query<{ apiErrors: number | null; invalid: number | null }, [string]>(`SELECT
+        sum(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 AND json_valid(raw) THEN json_type(raw,'$.isApiErrorMessage')='true' ELSE 0 END) AS apiErrors,
+        max(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 THEN NOT json_valid(raw) ELSE 0 END) AS invalid
+        FROM events WHERE session_id=? AND error=1`);
+      const decidedRecords = this.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? AND decision=1");
+      const titleRecords = this.db.query<{ type: string; raw: string }, [string, number]>(`SELECT type, raw FROM events WHERE session_id=?1
+        AND (type IN ('agent-name','custom-title','ai-title','summary') OR instr(raw,'"agentName":')>0 OR (?2 AND (instr(raw,'"customTitle":')>0 OR instr(raw,'"aiTitle":')>0)))
+        ORDER BY sequence`);
+      const decided = this.db.query<{ found: number }, [string, string]>(`SELECT EXISTS (SELECT 1 FROM events WHERE session_id=?1 AND (error=1 OR decision=1)
+        AND (instr(raw,'"toolDenialKind":')>0 OR (error=1 AND EXISTS (SELECT 1 FROM json_each(?2) WHERE instr(events.raw,value)>0))
+          OR (error=1 AND type='system' AND instr(raw,'"subtype":"api_error"')>0))) AS found`);
+      const fill = this.db.query("UPDATE sessions SET api_errors=?, decisions=? WHERE id=?");
+      const retitle = this.db.query("UPDATE sessions SET title=?, named=? WHERE id=?");
+      const reset = this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
+      const texts = JSON.stringify(version17DecisionTexts);
+      const filled = await this.upgradeEach(({ id, named }) => {
+        const count = counts.get(id)!;
+        if (count.invalid) { reset.run(id); return; }
+        let decisions = 0;
+        for (const row of decidedRecords.all(id)) {
+          try { decisions += decidedResults(normalize(object(JSON.parse(row.raw)), id, 0, 0).blocks); }
+          catch { reset.run(id); return; }
+        }
+        fill.run(count.apiErrors ?? 0, decisions, id);
+        let title: ReturnType<typeof explicitTitle> = null;
+        for (const row of titleRecords.all(id, Number(named > 0))) {
+          let explicit: ReturnType<typeof explicitTitle> = null;
+          try { explicit = explicitTitle(row.type, object(JSON.parse(row.raw))); } catch { continue; }
+          if (explicit && explicit.rank >= (title?.rank ?? 0)) title = explicit;
+        }
+        if (title) retitle.run(title.title, title.rank, id);
+        if (decided.get(id, texts)!.found) reset.run(id);
+      });
+      if (!filled) return [];
+      this.db.exec("PRAGMA user_version=17");
+    }
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -517,7 +674,8 @@ export class Recorder {
           this.db.query("DELETE FROM session_costs WHERE session_id = ?").run(id);
           this.db.query("DELETE FROM session_facets WHERE session_id = ?").run(id);
           this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
-            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0,turns=0,active_ms=0 WHERE id=?`).run(id);
+            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0,turns=0,active_ms=0,version='',unrecognized=0,
+            api_errors=0,decisions=0 WHERE id=?`).run(id);
         })();
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id)!;
         // Claude Code files `cost-state` as last-wins, so the last one read replaces the stored total; a read that
@@ -530,28 +688,31 @@ export class Recorder {
           const insertResult = this.db.query("INSERT OR REPLACE INTO tool_results(session_id,tool_id,raw,event_row) VALUES (?,?,?,?)");
           const insertCall = this.db.query("INSERT OR REPLACE INTO tool_calls(session_id,tool_id,name,event_row) VALUES (?,?,?,?)");
           const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
-          const insertUsage = this.db.query(`INSERT INTO usage_records(session_id,request_key,input,output,cache_creation,cache_read,cost,recorded,sidechain,model,effort,rates,unrated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+          const insertUsage = this.db.query(`INSERT INTO usage_records(session_id,request_key,input,output,cache_creation,cache_read,cost,recorded,sidechain,model,effort,rates,unrated,reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(session_id,request_key) DO UPDATE SET input=excluded.input, output=excluded.output,
               cache_creation=excluded.cache_creation, cache_read=excluded.cache_read, cost=excluded.cost,
               recorded=excluded.recorded, sidechain=excluded.sidechain,
               model=CASE WHEN excluded.model='' THEN usage_records.model ELSE excluded.model END,
               rates=CASE WHEN excluded.model='' THEN usage_records.rates ELSE excluded.rates END,
-              unrated=CASE WHEN excluded.model='' THEN usage_records.unrated ELSE excluded.unrated END,
+              unrated=excluded.unrated, reason=excluded.reason,
               effort=coalesce(excluded.effort,usage_records.effort)
             WHERE excluded.sidechain < usage_records.sidechain OR (excluded.sidechain = usage_records.sidechain AND
               (excluded.input+excluded.output+excluded.cache_creation+excluded.cache_read > usage_records.input+usage_records.output+usage_records.cache_creation+usage_records.cache_read
               OR (excluded.input+excluded.output+excluded.cache_creation+excluded.cache_read = usage_records.input+usage_records.output+usage_records.cache_creation+usage_records.cache_read
                 AND (excluded.recorded > usage_records.recorded OR (excluded.recorded = usage_records.recorded AND coalesce(excluded.cost,-1) > coalesce(usage_records.cost,-1))))))`);
           const enrichEffort = this.db.query("UPDATE usage_records SET effort=? WHERE session_id=? AND request_key=? AND effort IS NULL");
+          const storedModel = this.db.query<{ model: string }, [string, string]>("SELECT model FROM usage_records WHERE session_id=? AND request_key=?");
           for (const event of events) {
             const toolNames = event.toolNames.filter(name => isFacetValue(name));
             const inserted = insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
               Number(event.error), toolNames.join("\n"), JSON.stringify(event.raw), event.text, event.role, event.timestamp,
               string(object(event.raw.message).model), event.cwd || "", Number(hasReadableThinking(event.blocks)),
               Number(event.blocks.some(block => block.type === "tool_use" || block.type === "tool_result")), Number(event.decision !== null));
-            const usage = readUsage(event.raw, id, event.id);
+            let usage = readUsage(event.raw, id, event.id);
+            // A copy of a request that names no model is read as the model an earlier copy in this recording named.
+            if (usage && !usage.model) usage = readUsage(event.raw, id, event.id, storedModel.get(id, usage.key)?.model);
             if (usage) {
-              insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain), usage.model, usage.effort, rateStamp(usage.model), Number(usage.unrated));
+              insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain), usage.model, usage.effort, usage.rates, Number(usage.reason === "model"), usage.reason);
               if (usage.effort) enrichEffort.run(usage.effort, id, usage.key);
             }
             if (inserted.changes) {
@@ -559,6 +720,10 @@ export class Recorder {
               if (model !== syntheticModel && isFacetValue(model)) insertFacet.run(id, "model", model);
               if (isFacetValue(event.cwd, 2048)) insertFacet.run(id, "cwd", event.cwd);
               for (const name of toolNames) insertFacet.run(id, "tool", name);
+              const version = recordedVersion(event.raw.version);
+              if (isFacetValue(version)) insertFacet.run(id, "version", version);
+              const unrecognized = unrecognizedKind(event.type, recordSubtype(event.type, event.raw));
+              if (unrecognized) insertFacet.run(id, "unrecognized", unrecognized);
               for (const block of event.blocks) {
                 if (block.type === "tool_result" && typeof block.tool_use_id === "string") insertResult.run(id, block.tool_use_id, JSON.stringify(block), inserted.lastInsertRowid);
                 if (block.type === "tool_use" && typeof block.id === "string" && isFacetValue(block.name || "Unknown tool")) insertCall.run(id, block.id, block.name || "Unknown tool", inserted.lastInsertRowid);
@@ -577,14 +742,20 @@ export class Recorder {
           row.messages += Number(event.category === "message");
           row.tools += event.toolNames.length;
           row.errors += Number(event.error);
+          row.api_errors += Number(isApiError(line.value));
+          row.decisions += decidedResults(event.blocks);
           row.edits ||= Number(event.toolNames.some(name => /^(edit|write|multiedit|notebookedit)$/i.test(name)));
           row.cwd ||= event.cwd || "";
           row.session_id = string(line.value.sessionId) || string(line.value.session_id) || row.session_id;
           row.branch = string(line.value.gitBranch) || row.branch;
           const model = string(object(line.value.message).model);
           if (model && model !== syntheticModel) row.model = model;
-          const explicit = string(line.value.customTitle) || string(line.value.aiTitle) || ((event.type === "ai-title" || event.type === "custom-title") ? string(line.value.title) : "");
-          if (explicit) { row.title = explicit.slice(0, 240); row.named = 1; }
+          row.version = recordedVersion(line.value.version) || row.version;
+          row.unrecognized += Number(unrecognizedKind(event.type, recordSubtype(event.type, line.value)) !== null);
+          // `named` keeps the rank of the explicit title the row holds, so the latest title of a kind replaces it and a
+          // title of a lower kind never does.
+          const explicit = explicitTitle(event.type, line.value);
+          if (explicit && explicit.rank >= row.named) { row.title = explicit.title; row.named = explicit.rank; }
           else if (!row.title || (!row.named && row.title.startsWith("Session "))) row.title = promptTitle(event) || row.title;
           if (event.timestamp) {
             if (!row.started || event.timestamp < row.started) row.started = event.timestamp;
@@ -598,11 +769,12 @@ export class Recorder {
           .run(id, recordedCost.costUSD, recordedCost.startedAt, Number(recordedCost.unknownModelCost), JSON.stringify(recordedCost.models), recordedCost.apiDurationMs, recordedCost.toolDurationMs);
         const stamp = new Date(info.mtimeMs).toISOString();
         this.db.query(`UPDATE sessions SET cwd=?,title=?,branch=?,model=?,started=?,updated=?,events=?,messages=?,tools=?,errors=?,
-          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=?,turns=?,active_ms=? WHERE id=?`).run(
+          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=?,turns=?,active_ms=?,
+          version=?,unrecognized=?,api_errors=?,decisions=? WHERE id=?`).run(
           row.cwd, row.title || `Session ${row.session_id.slice(0, 8)}`, row.branch, row.model, row.started || stamp, row.updated || stamp,
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
           await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true),
-          row.turns, row.active_ms, id);
+          row.turns, row.active_ms, row.version, row.unrecognized, row.api_errors, row.decisions, id);
         changed.push(id);
         // Let live clients see a long first index fill in instead of an empty library.
         if (performance.now() - publishedAt >= 1000) {
@@ -666,12 +838,14 @@ export class Recorder {
       workspace: row.group_name || pathName(row.cwd), groupId: row.group_id || null,
       branch: row.branch, model: row.model, startedAt: row.started, updatedAt: row.updated,
       eventCount: row.events, messageCount: row.messages, toolCount: row.tools, errorCount: row.errors,
+      apiErrorCount: row.api_errors, decisionCount: row.decisions,
       hasEdits: Boolean(row.edits), bookmarked: Boolean(row.bookmarked), isAgent: Boolean(row.agent),
       active: Date.now() - Date.parse(row.updated) < 120_000 && Date.now() - row.mtime < 120_000,
       source: relative(this.dataDir, row.source),
       usage: this.db.query<UsageSummary, [string]>(`SELECT ${usageColumns} FROM usage_records WHERE session_id=?`).get(row.id)!,
       recordedCost: recordedCostOf(row),
       activeTime: row.turns > 0 ? { durationMs: row.active_ms, turns: row.turns } : null,
+      version: row.version, unrecognizedCount: row.unrecognized,
     };
   }
 
@@ -868,6 +1042,10 @@ export class Recorder {
       if (effort) bindings.push(effort);
       if (model) bindings.push(model, normalizeModel(model));
     }
+    if (params.get("version")) {
+      conditions.push("EXISTS (SELECT 1 FROM session_facets version_facet WHERE version_facet.session_id=s.id AND version_facet.kind='version' AND version_facet.value=?)");
+      bindings.push(params.get("version")!);
+    }
     if (params.get("bookmarked") === "1") conditions.push("b.session_id IS NOT NULL");
     if (params.get("errors") === "1") conditions.push("s.errors>0");
     if (params.get("edits") === "1") conditions.push("s.edits>0");
@@ -998,8 +1176,8 @@ export class Recorder {
       OR EXISTS (SELECT 1 FROM tool_results result JOIN tool_calls call ON call.session_id=result.session_id AND call.tool_id=result.tool_id
         WHERE result.event_row=e.rowid AND lower(call.name) IN ('edit','write','multiedit','notebookedit')))`;
     else if (["message", "system"].includes(kind || "")) { filter += " AND e.category=?"; bindings.push(kind!); }
-    // The Errors view shows the tools the user, a permission rule, or a hook stopped beside the failures, each labelled;
-    // only the failures count toward a recording's errors and the activity strip's error bars.
+    // The Errors view shows the tools a decision stopped, or an interruption or cancellation ended, beside the failures,
+    // each labelled; only the failures count toward a recording's errors and the activity strip's error bars.
     if (params.get("errors") === "1") filter += " AND (e.error=1 OR e.decision=1)";
     if (params.get("q")) { filter += " AND instr(lower(e.text),lower(?))>0"; bindings.push(params.get("q")!.slice(0, 1000)); }
     for (const field of ["model", "cwd"]) {
@@ -1085,7 +1263,8 @@ export class Recorder {
   // Inputs are read from each call's own record, one record at a time, because a Write record carries the whole file it
   // wrote. A result's error flag is found in SQL for the same reason: a Read result carries the whole file it read. The
   // stored result is serialized JSON, where a quote inside recorded text is always escaped, so the flag cannot be faked.
-  // Only a flagged result travels, to tell a failure from a decision the user, a permission rule, or a hook made.
+  // Only a flagged result travels, to tell a failure from a decision, an interruption, or a cancellation; the record's
+  // `toolDenialKind` travels with it, copied onto the stored result by `normalize()`.
   private summaryData(id: string): SessionSummary {
     const record = (row: { id: string; timestamp: string }): SummaryRecord => ({ id: row.id, position: null, timestamp: row.timestamp });
     const roots: Array<SummaryRoot & { sequence: number }> = this.db.query<{ cwd: string; id: string; sequence: number; timestamp: string }, [string, string]>(
@@ -1257,10 +1436,16 @@ export class Recorder {
     if (!this.catalogFacets) {
       const models = this.facetValues("model"), tools = this.facetValues("tool");
       const efforts = this.db.query<{ effort: string }, [number]>("SELECT DISTINCT effort FROM usage_records WHERE effort IS NOT NULL ORDER BY effort LIMIT ?").all(facetLimit + 1);
-      this.catalogFacets = { models: models.values, toolsUsed: tools.values, efforts: efforts.slice(0, facetLimit).map(row => row.effort), facetsLimited: models.limited || tools.limited || efforts.length > facetLimit };
+      // Every distinct version is read before the limit applies, so the newest stay listed however many there are.
+      const versions = newestVersions(this.db.query<{ value: string }, []>("SELECT DISTINCT value FROM session_facets WHERE kind='version'").all().map(row => row.value), facetLimit);
+      this.catalogFacets = {
+        models: models.values, toolsUsed: tools.values, efforts: efforts.slice(0, facetLimit).map(row => row.effort),
+        versions: versions.values, unrecognizedKinds: this.facetValues("unrecognized").values,
+        facetsLimited: models.limited || tools.limited || efforts.length > facetLimit || versions.limited,
+      };
     }
-    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number }, []>(
-      "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings FROM sessions").get()!;
+    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number; unrecognizedRecords: number }, []>(
+      "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings,coalesce(sum(unrecognized),0) AS unrecognizedRecords FROM sessions").get()!;
     const sources = this.db.query<{ cwd: string; count: number; mainCount: number }, []>("SELECT cwd,count(*) AS count,sum(CASE WHEN agent=0 THEN 1 ELSE 0 END) AS mainCount FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
     const groups = this.groups();
     if (!this.workspaceUsage) {

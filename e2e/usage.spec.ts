@@ -1,6 +1,6 @@
 import { expect, test } from "./harness";
 import { recorder } from "./server";
-import { compact, tokenCount, usageCost } from "../src/client/lib/format";
+import { compact, pricingGap, tokenCount, usageCost } from "../src/client/lib/format";
 import { DEMO_HERO_TITLE } from "../tests/fixtures";
 import AxeBuilder from "@axe-core/playwright";
 
@@ -105,6 +105,19 @@ test("model matrix preserves unknown prices and missing effort instead of presen
   await expect(page.locator(".usage-summary .usage-unrated")).toBeVisible();
   await page.setViewportSize({ width: 320, height: 640 });
   expect(await matrix.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+});
+
+test("the usage note states why requests on another service tier or with a fallback credit have no estimate", async ({ page }) => {
+  const listing = recorder.list(new URLSearchParams({ q: DEMO_HERO_TITLE }));
+  const usage = { ...listing.usage, requests: listing.usage.requests + 3, unpricedRequests: 3, unratedRequests: 0, unratedIterationRequests: 0, unnamedRequests: 0, fastRequests: 0, tierRequests: 2, creditRequests: 1 };
+  await page.route(/\/api\/sessions(?:\?|$)/, route => route.fulfill({ json: { ...listing, usage } }));
+  await page.goto(`/?q=${encodeURIComponent(DEMO_HERO_TITLE)}`);
+  const summary = page.getByLabel("Usage and estimated cost");
+  await expect(summary).toContainText(`${usageCost(usage)} est.`);
+  await summary.click();
+  const note = page.locator(".usage-note p.usage-warning");
+  await expect(note).toHaveText(pricingGap(usage, []));
+  await expect(note).toContainText("2 used a service tier other than standard, which this version of Claude Blackbox has no rates for. 1 presented a fallback credit, so the API decides what it is billed.");
 });
 
 test("model expense matrix stays accessible and fits narrow screens in both themes", async ({ page }) => {

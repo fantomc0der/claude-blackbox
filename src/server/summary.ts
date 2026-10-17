@@ -16,7 +16,8 @@ export interface SummaryRoot { path: string; added: boolean; record: SummaryReco
 
 /**
  * One Edit, Write, MultiEdit, NotebookEdit, or Read call, with the path its input names as recorded. `error` means its
- * result was a failure; `decision` means the user, a permission rule, or a hook stopped it before it ran.
+ * result was a failure; `decision` means a decision stopped it, or an interruption or cancellation ended it, as
+ * `resultDecision()` reads its result.
  */
 export interface SummaryCall { tool: string; path: string; cwd: string; error: boolean; decision: Decision | null; record: SummaryRecord }
 
@@ -143,7 +144,7 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): Sessio
     else folder.working ??= root.record;
   }
 
-  const changed = new Map<string, { path: string; count: number; errors: number; denied: number; changes: SummaryChange[] }>();
+  const changed = new Map<string, { path: string; count: number; errors: number; stopped: number; changes: SummaryChange[] }>();
   const read = new Map<string, { path: string; reads: number; record: SummaryRecord }>();
   for (const call of calls) {
     const path = resolveRecorded(call.path, call.cwd);
@@ -157,10 +158,10 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): Sessio
       continue;
     }
     let entry = changed.get(key);
-    if (!entry) changed.set(key, entry = { path, count: 0, errors: 0, denied: 0, changes: [] });
+    if (!entry) changed.set(key, entry = { path, count: 0, errors: 0, stopped: 0, changes: [] });
     entry.count++;
     if (call.error) entry.errors++;
-    if (call.decision) entry.denied++;
+    if (call.decision) entry.stopped++;
     if (entry.changes.length < changeLimit) entry.changes.push({ ...call.record, tool: call.tool, error: call.error, decision: call.decision });
     else limited = true;
   }

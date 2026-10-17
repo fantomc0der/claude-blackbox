@@ -3,12 +3,17 @@ import { apiErrorLabel, boundedDiff, contentToText, imageMeta, mentions, mention
 import type { ReplayEvent } from "../src/shared/types";
 
 describe("replay content helpers", () => {
-  test("labels an API error with the recorded kind and HTTP status when they are usable", () => {
-    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } } })).toBe("API error · rate limit · HTTP 529");
+  test("labels an API error with the recorded kind, cause, and HTTP status when they are usable", () => {
+    // Claude Code 2.1.302 writes the cause as a string code and the status beside it.
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "rate_limit", apiError: "usage_limit_reached", apiErrorStatus: 429 } })).toBe("API error · rate limit · usage limit reached · HTTP 429");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "server_error", apiErrorStatus: 529 } })).toBe("API error · server error · HTTP 529");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "max_output_tokens", apiError: "max_output_tokens" } })).toBe("API error · max output tokens");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "unknown", apiError: "no_response" } })).toBe("API error · no response");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "rate_limit", apiError: "Rate limit hit, retry later", apiErrorStatus: "429" } })).toBe("API error · rate limit");
     expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "billing_error" } })).toBe("API error · billing error");
-    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "unknown", apiError: { status: 500 } } })).toBe("API error · HTTP 500");
-    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "", apiError: { status: "529" } } })).toBe("API error");
-    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: 7, apiError: { status: 9000 } } })).toBe("API error");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "unknown", apiErrorStatus: 500 } })).toBe("API error · HTTP 500");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "", apiErrorStatus: "529" } })).toBe("API error");
+    expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: 7, apiErrorStatus: 9000 } })).toBe("API error");
     expect(apiErrorLabel({ raw: { isApiErrorMessage: true, error: "x".repeat(80), apiError: 529 } })).toBe(`API error · ${"x".repeat(39)}…`);
   });
 

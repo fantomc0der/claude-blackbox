@@ -26,6 +26,26 @@ export function measuredTime(recorded: RecordedCost): string {
 
 export const measuredTimeNote = "The tracker behind Claude Code's running total also measures the time its API requests took, retries included, and the time its tools ran, over the same requests the total counts.";
 
+const counted = (count: number, one: string, many: string) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
+
+/** A recording's errors with the API errors among them named, as `3 errors (1 API error)` or `2 API errors`; empty when it has none. */
+export function errorBreakdown(session: Pick<Session, "errorCount" | "apiErrorCount">): string {
+  const { errorCount: errors, apiErrorCount: apiErrors } = session;
+  if (!errors) return "";
+  if (apiErrors === errors) return counted(apiErrors, "API error", "API errors");
+  return apiErrors ? `${counted(errors, "error", "errors")} (${counted(apiErrors, "API error", "API errors")})` : counted(errors, "error", "errors");
+}
+
+/** The tool calls a decision stopped, one for each result that records it, which never count as errors, as `2 tools stopped`; empty when none was. */
+export function stoppedTools(session: Pick<Session, "decisionCount">): string {
+  return session.decisionCount ? counted(session.decisionCount, "tool stopped", "tools stopped") : "";
+}
+
+/** A recording's errors and stopped tools together, as `3 errors (1 API error) · 2 tools stopped`; empty when it has neither. */
+export function errorSummary(session: Pick<Session, "errorCount" | "apiErrorCount" | "decisionCount">): string {
+  return [errorBreakdown(session), stoppedTools(session)].filter(Boolean).join(" · ");
+}
+
 /** How long the model thought on a reasoning step, with the thinking tokens the API reported for it when it did. */
 export function thinkingSummary(measure: { durationMs: number; tokens: number | null }): string {
   return `thought for ${duration(measure.durationMs)}${measure.tokens !== null ? ` (${tokenCount(measure.tokens)} thinking tokens)` : ""}`;
@@ -63,16 +83,27 @@ export function tokenCount(value: number): string {
 
 const modelList = new Intl.ListFormat("en", { type: "conjunction" });
 
-/** Explains which requests have no estimate and why: a model this build has no rates for, which a later release can
- *  price, or else fast mode without a known rate or no recorded model. `unratedModels` names the former when known. */
+/** Explains which requests have no estimate and why, one sentence per reason. A recorded model this build has no rates
+ *  for is one a later release can price, so the note says how many requests that covers; `unratedModels` names those
+ *  models when known. An advisor or fallback step is not promised a price, since the reason also covers an advisor
+ *  that named no model. */
 export function pricingGap(usage: UsageSummary, unratedModels: string[]): string {
-  const unrated = usage.unratedRequests, other = usage.unpricedRequests - unrated, several = unratedModels.length > 1;
-  const unratedText = (subject: string) => `${subject} ${unrated === 1 ? "uses" : "use"} ${several ? "models" : "a model"} this version of Claude Blackbox has no rates for yet${unratedModels.length ? `: ${modelList.format(unratedModels)}` : ""}.`;
-  const otherText = (subject: string) => `${subject} used fast mode without a known rate for ${other === 1 ? "its" : "their"} model, or recorded no model.`;
+  const unrated = usage.unratedRequests, several = unratedModels.length > 1;
+  const reasons: [number, (subject: string) => string][] = [
+    [unrated, subject => `${subject} ${unrated === 1 ? "uses" : "use"} ${several ? "models" : "a model"} this version of Claude Blackbox has no rates for yet${unratedModels.length ? `: ${modelList.format(unratedModels)}` : ""}.`],
+    [usage.unratedIterationRequests, subject => `${subject} ran an advisor or fallback step on a model this version of Claude Blackbox has no rates for, or an advisor that named no model.`],
+    [usage.fastRequests, subject => `${subject} used fast mode without a known rate for ${usage.fastRequests === 1 ? "its" : "their"} model.`],
+    [usage.unnamedRequests, subject => `${subject} recorded no model.`],
+    [usage.tierRequests, subject => `${subject} used a service tier other than standard, which this version of Claude Blackbox has no rates for.`],
+    [usage.creditRequests, subject => `${subject} presented a fallback credit, so the API decides what ${usage.creditRequests === 1 ? "it is" : "they are"} billed.`],
+  ];
+  const stated = reasons.filter(([count]) => count > 0);
   const share = `${tokenCount(usage.unpricedRequests)} of ${tokenCount(usage.requests)} requests`;
-  const reasons = unrated && other ? `${share} have no estimate. ${unratedText(tokenCount(unrated))} ${otherText(tokenCount(other))}` : unrated ? unratedText(share) : otherText(share);
-  const update = unrated ? `, and a release that adds ${several ? "their" : "its"} rates will price ${unrated === 1 ? "it" : "them"}` : "";
-  return `Cost is incomplete: ${reasons} ${usage.unpricedRequests === 1 ? "Its" : "Their"} tokens are still included${update}.`;
+  const text = stated.length === 1 && stated[0][0] === usage.unpricedRequests ? stated[0][1](share)
+    : [`${share} ${usage.unpricedRequests === 1 ? "has" : "have"} no estimate.`, ...stated.map(([count, reason]) => reason(tokenCount(count)))].join(" ");
+  const priced = unrated === usage.unpricedRequests ? unrated === 1 ? "it" : "them" : `${tokenCount(unrated)} of them`;
+  const update = unrated ? `, and a release that adds ${several ? "their" : "its"} rates will price ${priced}` : "";
+  return `Cost is incomplete: ${text} ${usage.unpricedRequests === 1 ? "Its" : "Their"} tokens are still included${update}.`;
 }
 
 export function effortName(effort: string | null): string {

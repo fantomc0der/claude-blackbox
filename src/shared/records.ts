@@ -1,16 +1,138 @@
-// Claude Code 2.1.30x keeps its own session state in the recording file next to the transcript. Its writer files these
-// record types as state ("last-wins" or "boundary-cleared"), not as transcript records: none carries a message, most
-// carry no timestamp, and two repeat a prompt that a user record already holds (`last-prompt.lastPrompt`, written after
-// every turn, and `queue-operation.content`). The index gives them no blocks, and the replay shows each as a note.
-export const sessionStateTypes: ReadonlySet<string> = new Set([
-  "last-prompt", "atis-latch", "queue-operation", "cost-state", "mode", "permission-mode", "worktree-state",
-  "isolation-latch", "dev-mods", "memory-mode", "agent-name", "agent-color", "agent-setting", "tag",
-  "attribution-snapshot", "file-history-delta", "api-request-shape", "relocated", "continued-in", "fork-context-ref",
-  "observer-ref", "history-suppression", "ended-by-model", "content-replacement",
+/**
+ * How Claude Code files a record type: `transcript` for the conversation, `bookkeeping` for the records it keeps to
+ * rebuild a session (its "boundary-cleared" and "accumulate" types), and `state` for its session state, where only the
+ * latest record of a type counts (its "last-wins" types).
+ */
+export type RecordFiling = "transcript" | "bookkeeping" | "state";
+
+// Claude Code 2.1.302 prunes a recording by these filings, and treats a type it does not list as "accumulate".
+// `progress` is boundary-cleared there and never persisted, but older versions wrote it beside the conversation, so it
+// is read as transcript. A `summary` record is last-wins per `leafUuid`. Bookkeeping and state records carry no message,
+// most carry no timestamp, and two repeat a prompt a user record already holds (`last-prompt.lastPrompt`, written after
+// every turn, and `queue-operation.content`).
+const filings: ReadonlyArray<readonly [RecordFiling, readonly string[]]> = [
+  ["transcript", ["user", "assistant", "system", "attachment", "progress"]],
+  ["bookkeeping", [
+    "file-history-snapshot", "file-history-delta", "last-prompt", "continued-in", "api-request-shape", "api-request-blob",
+    "api-request", "content-replacement", "fork-context-ref", "frame-link", "artifact-comment-monitor", "memory-mode",
+  ]],
+  ["state", [
+    "summary", "custom-title", "ended-by-model", "ai-title", "tag", "relocated", "agent-name", "agent-color",
+    "agent-setting", "pr-link", "artifact-autoreact-ledger", "bridge-session", "history-suppression", "attribution-snapshot",
+    "mode", "permission-mode", "isolation-latch", "dev-mods", "atis-latch", "worktree-state", "cost-state",
+    "queue-operation", "observer-ref",
+  ]],
+];
+
+/** The filing of every record type Claude Code 2.1.302 writes, keyed by type. This build does not recognize any other. */
+export const recordPolicy: ReadonlyMap<string, RecordFiling> = new Map(filings.flatMap(([filing, types]) => types.map(type => [type, filing] as const)));
+
+// An API request and the message copies stored just before it are bookkeeping, but the replay folds the copies into the
+// request's card, so neither reads as a note.
+const requestTypes: ReadonlySet<string> = new Set(["api-request", "api-request-blob"]);
+
+/**
+ * The filing of a record that the index gives no blocks, and so no message or tool count, and that the replay shows as a
+ * one-line note: every bookkeeping and state record but an API request and its message copies. Null for any other.
+ */
+export function noteFiling(type: string): "bookkeeping" | "state" | null {
+  const filing = recordPolicy.get(type);
+  return (filing === "bookkeeping" || filing === "state") && !requestTypes.has(type) ? filing : null;
+}
+
+/** The `system` subtypes Claude Code 2.1.302 knows. It writes all but `api_error`, which it only shows on screen. */
+export const systemSubtypes: ReadonlySet<string> = new Set([
+  "informational", "permission_retry", "bridge_status", "cloud_session_status", "scheduled_task_fire", "stop_hook_summary",
+  "turn_duration", "away_summary", "memory_saved", "agents_killed", "local_command", "compact_boundary", "file_snapshot",
+  "rewind_stand_in", "model_refusal_fallback", "model_refusal_no_fallback", "model_fallback", "model_consent_fallback",
+  "api_error",
 ]);
 
-export function isSessionState(type: string): boolean {
-  return sessionStateTypes.has(type);
+/** The `attachment.type` values Claude Code 2.1.302 knows. */
+export const attachmentTypes: ReadonlySet<string> = new Set([
+  "poll_events", "directory", "edited_text_file", "at_mention_reference", "compact_file_reference", "pdf_reference",
+  "selected_lines_in_ide", "selected_lines_in_diff", "opened_file_in_ide", "plan_file_reference", "nested_memory",
+  "withheld_memory", "read_truncation_notice", "dir_sync_notice", "bash_output_audience_note", "unknown_command_fallback",
+  "agent_mention", "peer_mention", "skill_mention", "skill_listing", "dynamic_skill", "output_style",
+  "critical_system_reminder", "plan_mode_exit", "auto_mode_exit", "token_usage", "total_tokens_reminder",
+  "output_limit_note", "silent_turn_reminder", "elapsed_time_reminder", "batching_reminder", "secondary_reminder",
+  "budget_usd", "output_token_usage", "hook_blocking_error", "hook_additional_context", "inlined_image_paths",
+  "hook_stopped_continuation", "prefix_delta", "thread_state", "date_change", "sandbox_instructions",
+  "artifact_opening_prefetch", "environment", "model", "output_style_instructions", "session_context",
+  "coordinator_context", "context_sections", "prompt_snapshot", "prompt_render_point", "thinking_stripped",
+  "advisor_stripped", "thinking_drop", "credential_org", "deferred_tools_record", "instructions", "date", "fork_briefing",
+  "language", "ultrathink_effort", "workflow_keyword_request", "ultra_effort_enter", "ultra_effort_exit",
+  "tool_host_result_lines", "tool_hosts_correction", "tool_hosts_notice", "remote_session_change", "advisor_tool",
+  "workflow_size_guideline_change", "cowork_memory_context", "account_memory_recall", "already_read_file",
+  "async_hook_response_batch", "batching_reminder_sent", "secondary_reminder_sent", "command_permissions",
+  "edited_image_file", "hook_cancelled", "hook_error_during_execution", "hook_non_blocking_error", "hook_system_message",
+  "hook_permission_decision", "hook_deferred_tool", "goal_status", "session_cron_carry", "structured_output",
+  "max_turns_reached", "teammate_shutdown_batch", "file", "invoked_skills", "todo_reminder", "task_reminder",
+  "tool_search_usage_reminder", "relevant_memories", "queued_command", "diagnostics", "plan_mode", "plan_mode_reentry",
+  "attention_budget", "auto_mode", "mcp_resource", "task_status", "async_hook_response", "hook_success",
+  "context_efficiency", "deferred_tools_delta", "agent_listing_delta", "memory_update", "mcp_instructions_delta",
+  "mcp_dropped_tools_delta", "teammate_mailbox", "team_context", "proactivity",
+]);
+
+/** The subtype of a `system` record (`subtype`) or an `attachment` record (`attachment.type`); undefined for others. */
+export function recordSubtype(type: string, raw: Record<string, unknown>): unknown {
+  return type === "system" ? raw.subtype : type === "attachment" ? objectOf(raw.attachment).type : undefined;
+}
+
+// Names taken from recorded records become facet values only in this shape, so recorded content never does.
+const recordName = /^[a-z0-9_.-]{1,40}$/;
+
+/**
+ * Null when this build recognizes a record: its type is in `recordPolicy` and a `system` or `attachment` subtype, when
+ * it has one, is in the known set. Otherwise the kind it counts under: `type:<type>`, `system:<subtype>`, or
+ * `attachment:<type>`, or "" when the name does not have the shape of an identifier. A subtype read from SQL with
+ * `json_extract()` gives the same answer as the value read from the parsed record.
+ */
+export function unrecognizedKind(type: string, subtype: unknown): string | null {
+  if (!recordPolicy.has(type)) return recordName.test(type) ? `type:${type}` : "";
+  const known = type === "system" ? systemSubtypes : type === "attachment" ? attachmentTypes : null;
+  if (!known || subtype === undefined || subtype === null || (typeof subtype === "string" && known.has(subtype))) return null;
+  return typeof subtype === "string" && recordName.test(subtype) ? `${type}:${subtype}` : "";
+}
+
+// Claude Code writes the version that wrote a record, such as `2.1.302`, on its transcript records (the `progress`
+// records older versions persisted among them) and its `api-request` and `api-request-shape` records; a resumed or forked
+// copy keeps the version of its original.
+const versionPattern = /^(\d{1,4})\.(\d{1,5})\.(\d{1,6})(?:-([0-9A-Za-z.-]{1,32}))?(?:\+[0-9A-Za-z.-]{1,32})?$/;
+
+/** The record's Claude Code version when it has the shape of one, or "". */
+export function recordedVersion(value: unknown): string {
+  return typeof value === "string" && versionPattern.test(value) ? value : "";
+}
+
+/** Semantic version order, prereleases before their release, and anything that is not a version after every version. */
+export function compareVersions(a: string, b: string): number {
+  const x = versionPattern.exec(a), y = versionPattern.exec(b);
+  if (!x || !y) return x ? -1 : y ? 1 : a.localeCompare(b);
+  for (let part = 1; part <= 3; part++) {
+    const difference = Number(x[part]) - Number(y[part]);
+    if (difference) return difference;
+  }
+  if (x[4] === y[4]) return a.localeCompare(b);
+  if (x[4] === undefined) return 1;
+  if (y[4] === undefined) return -1;
+  const left = x[4].split("."), right = y[4].split(".");
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const p = left[index], q = right[index];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    const pNumber = /^\d+$/.test(p), qNumber = /^\d+$/.test(q);
+    if (pNumber && qNumber && Number(p) !== Number(q)) return Number(p) - Number(q);
+    if (pNumber !== qNumber) return pNumber ? -1 : 1;
+    if (!pNumber && p !== q) return p < q ? -1 : 1;
+  }
+  return a.localeCompare(b);
+}
+
+/** The newest `limit` of these versions, newest first, and whether older ones were left out. */
+export function newestVersions(versions: readonly string[], limit: number): { values: string[]; limited: boolean } {
+  const sorted = [...versions].sort((left, right) => compareVersions(right, left));
+  return { values: sorted.slice(0, limit), limited: sorted.length > limit };
 }
 
 // Claude Code's own schema bounds every recorded duration and count as a finite non-negative number no greater than
@@ -33,6 +155,19 @@ export function turnDuration(raw: Record<string, unknown>): number | null {
   if (raw.type !== "system" || raw.subtype !== "turn_duration") return null;
   const duration = recordedDuration(raw.durationMs);
   return duration !== null && Number.isSafeInteger(duration) ? duration : 0;
+}
+
+/**
+ * Claude Code shows a `system` record of subtype `api_error` while it waits to retry a failed API request, with the
+ * attempt in `retryAttempt`, the limit in `maxRetries`, and the wait in `retryInMs`; 2.1.302 never writes one to a
+ * recording. Its `level` is `error`, but the request it retries can still succeed, and one that fails for good is
+ * recorded as an API error turn, so a retry is never an error itself. Returns what it carries, each null when it is
+ * not a count or a duration, or null for any other record.
+ */
+export function apiRetry(raw: Record<string, unknown>): { attempt: number | null; limit: number | null; waitMs: number | null } | null {
+  if (raw.type !== "system" || raw.subtype !== "api_error") return null;
+  const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  return { attempt: count(raw.retryAttempt), limit: count(raw.maxRetries), waitMs: recordedDuration(raw.retryInMs) };
 }
 
 /**

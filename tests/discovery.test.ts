@@ -3,6 +3,7 @@ import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Recorder } from "../src/server/recorder";
+import { facetLimit } from "../src/server/facets";
 import { dateBound, numericBound } from "../src/server/search";
 import { removeTestDirectory } from "./helpers";
 import { withSelectedOption } from "../src/client/lib/filter-options";
@@ -175,7 +176,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(15);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(17);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -185,10 +186,11 @@ test("version 6 indexes clean terminal styling out of stored titles without resc
   await setup.write("named", [record("Prompt", { customTitle: "Custom  title" })]);
   const before = await setup.open();
   const sessions = before.list(new URLSearchParams()).items;
-  const session = sessions.find(item => item.title.startsWith("Added"))!, named = sessions.find(item => item.title === "Custom  title")!;
+  const session = sessions.find(item => item.title.startsWith("Added"))!, named = sessions.find(item => item.title === "Custom title")!;
   expect(session.title).toBe("Added C:\\code\\app as a working directory · /permissions");
-  // Indexes written before version 7 stored the escape bytes the terminal recorded.
+  // Indexes written before version 7 stored the escape bytes the terminal recorded, and an explicit title as recorded.
   before.db.query("UPDATE sessions SET title=? WHERE id=?").run(styled, session.id);
+  before.db.query("UPDATE sessions SET title=? WHERE id=?").run("Custom  title", named.id);
   before.db.exec("PRAGMA user_version=6");
   await before.close();
   const after = await setup.open({ scan: false });
@@ -264,7 +266,7 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
@@ -272,15 +274,19 @@ test("version 7 indexes re-index only the recordings that hold API request messa
 });
 
 // When an API request fails for good, Claude Code records the failure itself as an `assistant` record marked
-// `isApiErrorMessage` with the error kind and HTTP status, the `<synthetic>` model, and zero usage. It writes other
-// stand-ins, such as `No response requested.`, the same way without the error marks.
+// `isApiErrorMessage` with the error kind and HTTP status, the `<synthetic>` model, and zero usage; 2.1.302 writes an
+// overload answered with 529 as server_error. It writes other stand-ins, such as `No response requested.`, the same way
+// without the error marks.
 const standIn = (uuid: string, parentUuid: string, timestamp: string, text: string, extra: Record<string, unknown> = {}) => ({
   type: "assistant", uuid, parentUuid, timestamp, cwd: "/synthetic/project", sessionId: "s1", ...extra,
   message: { id: `synthetic-${uuid}`, model: "<synthetic>", role: "assistant", type: "message", stop_reason: "stop_sequence", content: [{ type: "text", text }],
     usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
 });
 const apiErrorText = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
-const apiError = (uuid: string, parentUuid: string, timestamp: string) => standIn(uuid, parentUuid, timestamp, apiErrorText, { isApiErrorMessage: true, error: "rate_limit", apiError: { status: 529 } });
+const apiError = (uuid: string, parentUuid: string, timestamp: string) => standIn(uuid, parentUuid, timestamp, apiErrorText, { isApiErrorMessage: true, error: "server_error", apiErrorStatus: 529 });
+// Claude Code shows this banner while it waits to retry a request; 2.1.302 never writes it, but a version that did
+// would write it at the error level.
+const apiRetry = (uuid: string, timestamp: string) => ({ type: "system", subtype: "api_error", level: "error", error: { status: 529 }, retryInMs: 4210, retryAttempt: 1, maxRetries: 10, uuid, timestamp, cwd: "/synthetic/project", sessionId: "s1" });
 
 test("API error turns and other Claude Code stand-ins count as errors, never as Claude responses", async () => {
   const setup = await fixture();
@@ -290,22 +296,31 @@ test("API error turns and other Claude Code stand-ins count as errors, never as 
     standIn("a2", "a1", "2026-10-17T10:00:06Z", "No response requested."),
     { type: "assistant", uuid: "a3", parentUuid: "a2", timestamp: "2026-10-17T10:00:07Z", cwd: "/synthetic/project", sessionId: "s1",
       message: { id: "m1", model: "model-a", role: "assistant", content: [{ type: "text", text: "Login test fixed" }], usage: { input_tokens: 10, output_tokens: 5 } } },
+    apiRetry("r1", "2026-10-17T10:00:08Z"),
+    // A stand-in last of all still leaves the recording's model at the last model that answered.
+    standIn("a4", "a3", "2026-10-17T10:00:09Z", "No response requested."),
   ]);
   const recorder = await setup.open();
   const session = recorder.list(new URLSearchParams()).items[0];
   const events = (query: string) => recorder.events(session.id, new URLSearchParams(query));
   expect([session.messageCount, session.errorCount, session.usage.requests, session.model]).toEqual([2, 1, 1, "model-a"]);
+  expect([session.apiErrorCount, session.decisionCount]).toEqual([1, 0]);
   const all = events("kind=all");
-  expect(all.items.map(event => [event.role, event.category, event.error])).toEqual([["user", "message", false], ["assistant", "synthetic", true], ["assistant", "synthetic", false], ["assistant", "message", false]]);
+  expect(all.items.map(event => [event.role, event.category, event.error])).toEqual([
+    ["user", "message", false], ["assistant", "synthetic", true], ["assistant", "synthetic", false], ["assistant", "message", false],
+    ["system", "system", false], ["assistant", "synthetic", false],
+  ]);
   expect(all.items[1].blocks).toEqual([{ type: "text", text: apiErrorText }]);
-  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 1, 2, 3]);
+  expect(events("kind=conversation").items.map(event => event.sequence)).toEqual([0, 1, 2, 3, 5]);
   expect(events("kind=responses").items.map(event => event.sequence)).toEqual([3]);
   expect(events("kind=all&errors=1").items.map(event => event.sequence)).toEqual([1]);
   expect(recorder.timeline(session.id, new URLSearchParams("kind=all")).buckets.map(bucket => bucket.errors)).toEqual([1]);
   expect(recorder.list(new URLSearchParams("errors=1")).items.map(item => item.id)).toEqual([session.id]);
   expect(recorder.list(new URLSearchParams("q=Overloaded")).items[0]).toMatchObject({ matchCategory: "synthetic", matchRole: "assistant" });
+  // The `<synthetic>` model is no model, so neither the replay's nor the library's model filter offers it.
+  expect(all.facets.models).toEqual(["model-a"]);
   const catalog = await recorder.catalog();
-  expect([catalog.messages, catalog.errors]).toEqual([2, 1]);
+  expect([catalog.messages, catalog.errors, catalog.models]).toEqual([2, 1, ["model-a"]]);
 });
 
 test("version 10 indexes re-index only the recordings that hold Claude Code's stand-ins", async () => {
@@ -331,7 +346,7 @@ test("version 10 indexes re-index only the recordings that hold Claude Code's st
   expect(version()).toBe(10);
   expect([counts(failed.id), counts(quiet.id)]).toEqual([[2, 0], [2, 0]]);
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   expect([counts(failed.id), counts(quiet.id)]).toEqual([[1, 1], [1, 0]]);
   expect(after.events(failed.id, new URLSearchParams("kind=all&errors=1")).items.map(event => event.sequence)).toEqual([1]);
   expect(after.events(quiet.id, new URLSearchParams("kind=all")).items.map(event => event.category)).toEqual(["message", "synthetic"]);
@@ -375,7 +390,7 @@ test("version 8 indexes retitle recordings by Claude Code's first-prompt rules w
   expect(version()).toBe(8);
   expect(titles().commandFirst).toBe("/clear clear");
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   expect(titles()).toEqual({ commandFirst: "Add retries to the upload client", ideFirst: "Why does the upload client hang?", review: "/review PR 12",
     outputOnly: "Session output-o", named: "Custom title", plain: "Plain prompt" });
   for (const id of [ids.commandFirst, ids.ideFirst, ids.outputOnly, ids.named, ids.plain]) expect(cwds(id)).toEqual(["/synthetic/stale"]);
@@ -406,12 +421,64 @@ test("version 11 indexes re-index only the recordings whose errors need telling 
   expect(version()).toBe(11);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   for (const title of ["Clean the install", "Run the tests"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(0);
   expect(after.getSession(sessions["Run the tests"])?.errorCount).toBe(1);
-  expect(after.events(sessions["Clean the install"], new URLSearchParams("kind=all&errors=1")).items.map(event => [event.sequence, event.error, event.decision])).toEqual([[1, false, "denied"]]);
+  expect(after.events(sessions["Clean the install"], new URLSearchParams("kind=all&errors=1")).items.map(event => [event.sequence, event.error, event.decision])).toEqual([[1, false, "cancelled"]]);
+});
+
+// Claude Code 2.1.30x files a decided result's kind as `toolDenialKind` on the record that holds it.
+const kinded = (id: string, content: string, toolDenialKind: string) => record("", { toolDenialKind, message: { content: [{ type: "tool_result", tool_use_id: id, content, is_error: true }] } });
+const skipped = "[Tool call skipped: the turn ended to deliver the message that follows before this call ran. Nothing refused it; re-run it if still needed.]";
+
+test("version 16 indexes count API errors and decisions in place and re-index only the recordings whose results Claude Code filed by kind or version 17 first reads as decisions", async () => {
+  const setup = await fixture();
+  await setup.write("kinded", [record("Deploy the release"), kinded("deploy-call", "Deploys are frozen until Monday.", "permission-rule")]);
+  await setup.write("skipped", [record("Run the batch"), toolResult("batch-call", skipped)]);
+  await setup.write("retried", [record("Retry the request"), apiRetry("r1", "2026-09-20T12:00:05Z")]);
+  await setup.write("cancelled", [record("Clean the install"), toolResult("rm-call", denial)]);
+  await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
+  await setup.write("overloaded", [record("Fix the login test"), apiError("a1", "u1", "2026-09-20T12:00:05Z"), toolResult("rm-call", denial), toolResult("test-call", "1 fail")]);
+  await setup.write("twice", [record("Clean twice"), record("", { message: { content: [
+    { type: "tool_result", tool_use_id: "rm-1", content: denial, is_error: true }, { type: "tool_result", tool_use_id: "rm-2", content: denial, is_error: true },
+  ] } })]);
+  const before = await setup.open();
+  const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
+  before.bookmark(sessions["Deploy the release"], true);
+  // Indexes written before version 17 read no kind, so a rule's denial in its own words, and a skipped call, were failures,
+  // and the stored result kept no kind; a retry banner was an error for its level.
+  for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) {
+    before.db.query("UPDATE events SET error=1, decision=0 WHERE session_id=? AND sequence=1").run(sessions[title]);
+    before.db.query("UPDATE sessions SET errors=1 WHERE id=?").run(sessions[title]);
+  }
+  before.db.exec("UPDATE tool_results SET raw=json_remove(raw,'$.toolDenialKind')");
+  // Nor did they count API errors or decisions apart.
+  before.db.exec("ALTER TABLE sessions DROP COLUMN api_errors; ALTER TABLE sessions DROP COLUMN decisions");
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=16");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  const decided = (title: string) => after.events(sessions[title], new URLSearchParams("kind=all&errors=1")).items.map(event => [event.error, event.decision]);
+  expect(version()).toBe(16);
+  expect(after.getSession(sessions["Deploy the release"])?.errorCount).toBe(1);
+  await after.scan();
+  expect(version()).toBe(17);
+  for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
+  expect(after.getSession(sessions["Retry the request"])?.errorCount).toBe(0);
+  // A decision an earlier build recognized keeps its flag and takes its new label from the stored record, unread.
+  for (const title of ["Clean the install", "Run the tests", "Fix the login test", "Clean twice"]) expect(cwds(sessions[title])).toEqual(["/synthetic/stale"]);
+  expect(["Deploy the release", "Run the batch", "Clean the install", "Run the tests"].map(title => after.getSession(sessions[title])?.errorCount)).toEqual([0, 0, 0, 1]);
+  // The counts are filled from the stored flags, read or not, with every stopped result in a decided record counted.
+  const counts = (title: string) => { const session = after.getSession(sessions[title])!; return [session.errorCount, session.apiErrorCount, session.decisionCount]; };
+  expect(["Deploy the release", "Clean the install", "Run the tests", "Fix the login test", "Clean twice"].map(counts)).toEqual([[0, 0, 1], [0, 0, 1], [1, 0, 0], [2, 1, 1], [0, 0, 2]]);
+  expect(["Deploy the release", "Run the batch", "Clean the install", "Run the tests"].map(decided)).toEqual([[[false, "denied"]], [[false, "cancelled"]], [[false, "cancelled"]], [[true, null]]]);
+  expect(after.results(sessions["Deploy the release"], ["deploy-call"])["deploy-call"]).toMatchObject({ is_error: true, toolDenialKind: "permission-rule" });
+  expect(after.getSession(sessions["Deploy the release"])?.bookmarked).toBe(true);
 });
 
 test("an API request's copies of an /add-dir command and its output add no folder", async () => {
@@ -433,6 +500,49 @@ test("an API request's copies of an /add-dir command and its output add no folde
 // first two copy the prompt a user record holds.
 const sessionState = (type: string, fields: Record<string, unknown> = {}) => ({ type, sessionId: "synthetic", ...fields });
 const turnState = (prompt: string) => [sessionState("last-prompt", { lastPrompt: prompt, leafUuid: "leaf" }), sessionState("atis-latch", { atis: "" })];
+
+test("version 16 indexes retitle recordings by Claude Code's title precedence without rescanning them", async () => {
+  const setup = await fixture();
+  await setup.write("summarized", [sessionState("summary", { summary: "Earlier work on the Larkspur parser", leafUuid: "leaf" }), record("Summarized prompt")]);
+  await setup.write("agent", [record("Review the release"), sessionState("custom-title", { customTitle: "Release" }), sessionState("agent-name", { agentName: "Release reviewer" })]);
+  await setup.write("renamed", [record("Fix it"), sessionState("custom-title", { customTitle: "Custom" }), sessionState("ai-title", { aiTitle: "Generated" })]);
+  await setup.write("legacy", [record("Prompt", { customTitle: "Custom on a prompt" })]);
+  // Claude Code's transcript writer stamps a teammate's `agentName` on every record of its session, with no `agent-name` record.
+  await setup.write("teammate", [record("Teammate prompt", { agentName: "Harbor teammate", teamName: "harbor" }), record("Second teammate prompt", { agentName: "Harbor teammate", teamName: "harbor" })]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const before = await setup.open();
+  const ids: Record<string, string> = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.source.replace(/\.jsonl$/, "").split(/[\\/]/).at(-1), session.id]));
+  before.bookmark(ids.agent, true);
+  // Indexes written before version 17 ignored agent names and summaries, let the latest custom or AI title win, and kept 1
+  // for any explicit title.
+  const stored = before.db.query("UPDATE sessions SET title=?, named=? WHERE id=?");
+  stored.run("Summarized prompt", 0, ids.summarized);
+  stored.run("Release", 1, ids.agent);
+  stored.run("Generated", 1, ids.renamed);
+  stored.run("Custom on a prompt", 1, ids.legacy);
+  stored.run("Teammate prompt", 0, ids.teammate);
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=16");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const titles = () => Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, after.getSession(id)!.title]));
+  const named = () => Object.fromEntries(after.db.query<{ id: string; named: number }, []>("SELECT id, named FROM sessions").all().map(row => [Object.keys(ids).find(key => ids[key] === row.id), row.named]));
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(16);
+  expect(titles().agent).toBe("Release");
+  await after.scan();
+  expect(version()).toBe(17);
+  expect(titles()).toEqual({ summarized: "Earlier work on the Larkspur parser", agent: "Release reviewer", renamed: "Custom", legacy: "Custom on a prompt", teammate: "Harbor teammate", plain: "Plain prompt" });
+  expect(named()).toEqual({ summarized: 1, agent: 4, renamed: 3, legacy: 3, teammate: 4, plain: 0 });
+  for (const id of Object.values(ids)) expect(cwds(id)).toEqual(["/synthetic/stale"]);
+  expect(after.getSession(ids.agent)?.bookmarked).toBe(true);
+  // The stored rank keeps a later AI title from replacing a custom title an earlier build kept as 1.
+  await appendFile(join(setup.folder, "legacy.jsonl"), JSON.stringify(sessionState("ai-title", { aiTitle: "Generated later" })) + "\n");
+  await after.scan();
+  expect(titles().legacy).toBe("Custom on a prompt");
+});
 
 test("session state records index as notes without blocks or their copies of the prompt", async () => {
   const setup = await fixture();
@@ -475,6 +585,84 @@ test("session state records index as notes without blocks or their copies of the
   expect([session.startedAt, session.updatedAt]).toEqual(["2026-09-20T11:59:59.000Z", "2026-09-20T12:00:02.000Z"]);
 });
 
+// Claude Code names the version that wrote a record on its transcript records. A newer Claude Code may write a record
+// type, a `system` subtype, or an `attachment` type this build does not know, and its type can be any string.
+const formatRecords = () => [
+  record("Check the recording format", { version: "2.1.296" }),
+  sessionState("file-history-snapshot", { messageId: "m1", snapshot: { messageId: "m1", trackedFileBackups: {} }, isSnapshotUpdate: false }),
+  sessionState("summary", { summary: "Earlier work on the Larkspur parser", leafUuid: "leaf" }),
+  record("", { type: "assistant", version: "2.1.302", timestamp: "2026-09-20T12:00:01Z", message: { model: "model-a", content: [{ type: "text", text: "Checked" }] } }),
+  sessionState("future-record", { version: "2.1.302", content: "Pinecrest arrives in a future record" }),
+  sessionState("system", { subtype: "future_notice", version: "2.1.302", timestamp: "2026-09-20T12:00:02Z", content: "A notice from a newer Claude Code", level: "info" }),
+  sessionState("attachment", { version: "2.1.302", timestamp: "2026-09-20T12:00:03Z", attachment: { type: "future_reminder" } }),
+  sessionState("Rename the helper"),
+  sessionState("system", { subtype: "turn_duration", durationMs: 1000, version: "latest", timestamp: "2026-09-20T12:00:04Z" }),
+];
+
+test("records are filed by Claude Code's policy, unrecognized kinds are counted, and the Claude Code version is indexed", async () => {
+  const setup = await fixture();
+  const formats = await setup.write("formats", formatRecords());
+  await setup.write("plain", [record("Plain prompt", { version: "2.1.278" })]);
+  const recorder = await setup.open();
+  const session = (name: string) => recorder.list(new URLSearchParams()).items.find(item => item.source.endsWith(`${name}.jsonl`))!;
+  const checked = session("formats");
+  // The last version named wins, as the model does, and a value without the shape of a version is ignored.
+  expect([checked.version, checked.unrecognizedCount, session("plain").version, session("plain").unrecognizedCount]).toEqual(["2.1.302", 4, "2.1.278", 0]);
+  // Bookkeeping and state add no blocks, messages, or tool calls; unrecognized records keep their system cards.
+  const all = recorder.events(checked.id, new URLSearchParams("kind=all"));
+  expect(all.items.map(event => [event.type, event.category, event.blocks.length])).toEqual([
+    ["user", "message", 1], ["file-history-snapshot", "system", 0], ["summary", "system", 0], ["assistant", "message", 1],
+    ["future-record", "system", 1], ["system", "system", 1], ["attachment", "system", 0], ["Rename the helper", "system", 0], ["system", "system", 0],
+  ]);
+  expect([checked.eventCount, checked.messageCount, checked.toolCount]).toEqual([9, 2, 0]);
+  expect(recorder.events(checked.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0, 3]);
+  expect(all.items[4].text).toContain("Pinecrest");
+  // A `summary` exists nowhere else, so its text stays searchable.
+  expect(all.items[2].text).toContain("Larkspur");
+  expect(recorder.list(new URLSearchParams("q=Larkspur")).items.map(item => item.id)).toEqual([checked.id]);
+  // Only kinds with the shape of an identifier are named; the record whose type is free text still counts.
+  const catalog = await recorder.catalog();
+  expect([catalog.versions, catalog.unrecognizedRecords, catalog.unrecognizedKinds]).toEqual([
+    ["2.1.302", "2.1.296", "2.1.278"], 4, ["attachment:future_reminder", "system:future_notice", "type:future-record"],
+  ]);
+  const matching = (version: string) => recorder.list(new URLSearchParams({ version })).items.map(item => item.id);
+  expect([matching("2.1.296"), matching("2.1.278"), matching("latest")]).toEqual([[checked.id], [session("plain").id], []]);
+  // An appended record adds to the count, and a newer version replaces the stored one.
+  await appendFile(formats, JSON.stringify(sessionState("future-record", { version: "2.1.303" })) + "\n");
+  await recorder.scan();
+  expect(recorder.getSession(checked.id)).toMatchObject({ version: "2.1.303", unrecognizedCount: 5 });
+  expect((await recorder.catalog()).versions[0]).toBe("2.1.303");
+});
+
+test("a rewritten recording keeps no version or unrecognized record it no longer holds", async () => {
+  const setup = await fixture();
+  const formats = await setup.write("formats", formatRecords());
+  const recorder = await setup.open();
+  const id = recorder.list(new URLSearchParams()).items[0].id;
+  const facets = () => recorder.db.query<{ facet: string }, [string]>(`SELECT kind || '=' || value AS facet FROM session_facets
+    WHERE session_id=? AND kind IN ('version','unrecognized') ORDER BY facet`).all(id).map(row => row.facet);
+  expect(facets()).toEqual(["unrecognized=attachment:future_reminder", "unrecognized=system:future_notice", "unrecognized=type:future-record", "version=2.1.296", "version=2.1.302"]);
+  // A file no longer than the one indexed is read again from its start.
+  await writeFile(formats, JSON.stringify(record("Rewritten prompt", { version: "2.1.278" })) + "\n");
+  await recorder.scan();
+  expect(recorder.getSession(id)).toMatchObject({ version: "2.1.278", unrecognizedCount: 0 });
+  expect(facets()).toEqual(["version=2.1.278"]);
+  expect(await recorder.catalog()).toMatchObject({ versions: ["2.1.278"], unrecognizedRecords: 0, unrecognizedKinds: [] });
+  await writeFile(formats, JSON.stringify(record("Unversioned prompt")) + "\n");
+  await recorder.scan();
+  expect(recorder.getSession(id)).toMatchObject({ version: "", unrecognizedCount: 0 });
+  expect(facets()).toEqual([]);
+});
+
+test("the catalog lists the newest Claude Code versions however many the recordings name", async () => {
+  const setup = await fixture();
+  // In string order every 1.0.x version sorts before 9.0.0, which a limit taken in that order would leave out.
+  await setup.write("versions", [...Array.from({ length: facetLimit + 5 }, (_, index) => record(`Prompt ${index}`, { version: `1.0.${index}` })), record("Newest", { version: "9.0.0" })]);
+  const catalog = await (await setup.open()).catalog();
+  expect([catalog.versions.length, catalog.facetsLimited]).toEqual([facetLimit, true]);
+  expect(catalog.versions.slice(0, 3)).toEqual(["9.0.0", `1.0.${facetLimit + 4}`, `1.0.${facetLimit + 3}`]);
+});
+
 test("version 12 indexes re-index only the recordings that hold Claude Code's running total", async () => {
   const setup = await fixture();
   await setup.write("costed", [record("Price the work"), sessionState("cost-state", { totalCostUSD: 1.27, modelUsage: { "claude-opus-5[1m]": { outputTokens: 300, costUSD: 1.27 } } })]);
@@ -494,7 +682,7 @@ test("version 12 indexes re-index only the recordings that hold Claude Code's ru
   expect(version()).toBe(12);
   expect(after.getSession(sessions["Price the work"])?.recordedCost).toBeNull();
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Price the work"])).toMatchObject({ bookmarked: true, recordedCost: { costUSD: 1.27, models: { "claude-opus-5": { outputTokens: 300, costUSD: 1.27 } } } });
@@ -559,7 +747,7 @@ test("version 13 indexes re-index only the recordings that hold turn durations o
   expect(after.getSession(sessions["Time the work"])?.activeTime).toBeNull();
   expect(after.getSession(sessions["Price the work"])?.recordedCost).toMatchObject({ costUSD: 1.27, apiDurationMs: null, toolDurationMs: null });
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   expect(cwds(sessions["Time the work"])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
@@ -587,11 +775,70 @@ test("version 14 indexes re-index only the recordings that Claude Code relocated
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT cwd FROM events WHERE session_id=? ORDER BY sequence").all(id).map(row => row.cwd);
   expect(version()).toBe(14);
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   expect(cwds(sessions["Move to a worktree"])).toEqual(["/synthetic/project", worktree, worktree]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale", "/synthetic/stale"]);
   expect(after.getSession(sessions["Move to a worktree"])).toMatchObject({ bookmarked: true, cwd: "/synthetic/project" });
   expect(after.events(sessions["Move to a worktree"], new URLSearchParams(`kind=all&cwd=${encodeURIComponent(worktree)}`)).items.map(item => item.type)).toEqual(["relocated", "user"]);
+});
+
+test("version 15 indexes fill the Claude Code version and unrecognized records in place", async () => {
+  const setup = await fixture();
+  await setup.write("formats", formatRecords().filter(entry => entry.type !== "summary"));
+  await setup.write("plain", [record("Plain prompt", { version: "2.1.278" }), sessionState("attachment", { version: "2.1.278", attachment: { type: "hook_success" } })]);
+  await setup.write("summarized", [sessionState("summary", { summary: "Earlier work on the Larkspur parser", leafUuid: "leaf" }), record("Summarized prompt")]);
+  const before = await setup.open();
+  const ids = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.source.replace(/\.jsonl$/, "").split(/[\\/]/).at(-1), session.id]));
+  before.bookmark(ids.formats, true);
+  // Indexes written before version 16 kept no version and counted no unrecognized records.
+  before.db.exec("DELETE FROM session_facets WHERE kind IN ('version','unrecognized'); UPDATE sessions SET version='', unrecognized=0");
+  // A re-index rewrites every event of a recording, so a marked column shows which recordings it reached.
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=15");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(15);
+  expect(after.getSession(ids.formats)).toMatchObject({ version: "", unrecognizedCount: 0 });
+  await after.scan();
+  expect(version()).toBe(17);
+  expect(after.getSession(ids.formats)).toMatchObject({ bookmarked: true, version: "2.1.302", unrecognizedCount: 4 });
+  expect(after.getSession(ids.plain)).toMatchObject({ version: "2.1.278", unrecognizedCount: 0 });
+  const catalog = await after.catalog();
+  expect([catalog.versions, catalog.unrecognizedRecords, catalog.unrecognizedKinds]).toEqual([
+    ["2.1.302", "2.1.296", "2.1.278"], 4, ["attachment:future_reminder", "system:future_notice", "type:future-record"],
+  ]);
+  expect(after.list(new URLSearchParams("version=2.1.296")).items.map(item => item.id)).toEqual([ids.formats]);
+  // Both are filled where they are; only a recording whose `summary` an earlier build read as content is re-read.
+  expect(cwds(ids.formats)).toEqual(["/synthetic/stale"]);
+  expect(cwds(ids.plain)).toEqual(["/synthetic/stale"]);
+  expect(cwds(ids.summarized).sort()).toEqual(["", "/synthetic/project"]);
+});
+
+// `JSON.parse` reads a record nested more than 1000 levels deep, and the scan stores it, but SQLite's JSON functions
+// throw on it. An upgrade that needs such a record re-reads its recording instead of failing every later scan.
+test("version 15 and 16 indexes re-read a recording holding a record SQLite's JSON parser rejects", async () => {
+  for (const from of [15, 16]) {
+    const setup = await fixture();
+    const nested = JSON.parse("[".repeat(1200) + "]".repeat(1200));
+    await setup.write("deep", [record("Deeply nested", { version: "2.1.296" }), record("", { type: "assistant", version: "2.1.302", isApiErrorMessage: true, error: "unknown",
+      nested, message: { model: "<synthetic>", content: [{ type: "text", text: "API Error: overloaded" }] } })]);
+    await setup.write("plain", [record("Plain prompt", { version: "2.1.278" })]);
+    const before = await setup.open();
+    const ids = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.source.replace(/\.jsonl$/, "").split(/[\\/]/).at(-1), session.id]));
+    before.db.exec(from === 15 ? "DELETE FROM session_facets WHERE kind IN ('version','unrecognized'); UPDATE sessions SET version='', unrecognized=0, api_errors=0" : "UPDATE sessions SET api_errors=0");
+    before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+    before.db.exec(`PRAGMA user_version=${from}`);
+    await before.close();
+    const after = await setup.open({ scan: false });
+    const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+    await after.scan();
+    expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(17);
+    expect([cwds(ids.deep), cwds(ids.plain)]).toEqual([["/synthetic/project"], ["/synthetic/stale"]]);
+    expect(after.getSession(ids.deep)).toMatchObject({ version: "2.1.302", errorCount: 1, apiErrorCount: 1 });
+    expect(after.getSession(ids.plain)).toMatchObject({ version: "2.1.278", errorCount: 0 });
+  }
 });
 
 test("version 9 indexes re-index only the recordings that hold session state records", async () => {
@@ -613,7 +860,7 @@ test("version 9 indexes re-index only the recordings that hold session state rec
   expect(version()).toBe(9);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0, 1]);
   await after.scan();
-  expect(version()).toBe(15);
+  expect(version()).toBe(17);
   expect(cwds(stateful.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0]);
@@ -729,7 +976,7 @@ test("facet queries reuse bounded caches and index changes invalidate only chang
     expect(facetQueries()).toBe(initial);
     expect((await recorder.catalog()).models).toContain("model-new");
     expect(recorder.events(sessions[0].id, new URLSearchParams()).facets.models).toContain("model-new");
-    expect(facetQueries()).toBe(initial + 5);
+    expect(facetQueries()).toBe(initial + 7);
     await writeFile(source, JSON.stringify(record("Replacement")) + "\n");
     await recorder.scan();
     expect((await recorder.catalog()).models).toEqual(["model-b"]);

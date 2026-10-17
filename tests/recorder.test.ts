@@ -345,23 +345,57 @@ describe("recording index", () => {
     const recorder = await fixtureData.open();
     const sessions = recorder.list(new URLSearchParams()).items;
     const mixed = sessions.find(session => session.title === "clean the install")!, denied = sessions.find(session => session.title === "just a denial")!;
-    // Only the failing test counts; the denial, the hook stop, and the interruption are the user's decisions.
+    // Only the failing test counts; the cancellation, the hook stop, and the interruption are not failures.
     expect([mixed.errorCount, denied.errorCount]).toEqual([1, 0]);
+    // They are counted apart, and so are the API errors among the errors, of which there are none here.
+    expect([mixed.decisionCount, denied.decisionCount, mixed.apiErrorCount]).toEqual([3, 1, 0]);
     expect(recorder.list(new URLSearchParams({ errors: "1" })).items.map(session => session.title)).toEqual(["clean the install"]);
     expect(recorder.list(new URLSearchParams({ sort: "errors" })).items.map(session => session.title)).toEqual(["clean the install", "just a denial"]);
     expect((await recorder.catalog()).errors).toBe(1);
     // The Errors view keeps every stopped tool beside the failure, each knowing which it is; the error constraint on
     // another view does the same.
     const errors = recorder.events(mixed.id, new URLSearchParams({ kind: "all", errors: "1" }));
-    expect(errors.items.map(event => [event.sequence, event.error, event.decision])).toEqual([[2, false, "denied"], [4, false, "blocked"], [6, false, "interrupted"], [8, true, null]]);
+    expect(errors.items.map(event => [event.sequence, event.error, event.decision])).toEqual([[2, false, "cancelled"], [4, false, "blocked"], [6, false, "interrupted"], [8, true, null]]);
     expect(recorder.events(mixed.id, new URLSearchParams({ kind: "tool", errors: "1" })).total).toBe(4);
-    expect(recorder.events(denied.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.decision)).toEqual(["denied"]);
+    expect(recorder.events(denied.id, new URLSearchParams({ kind: "all", errors: "1" })).items.map(event => event.decision)).toEqual(["cancelled"]);
     expect(recorder.matches(mixed.id, new URLSearchParams({ kind: "all", errors: "1", find: "user" })).items.map(item => item.sequence)).toEqual([2, 6]);
     // The activity strip's error share counts failures only.
     const timeline = recorder.timeline(mixed.id, new URLSearchParams({ kind: "all" }));
     expect(timeline.buckets.map(bucket => [bucket.count, bucket.errors])).toEqual([[9, 1]]);
     expect(recorder.timeline(mixed.id, new URLSearchParams({ kind: "all", errors: "1" })).buckets.map(bucket => [bucket.count, bucket.errors])).toEqual([[4, 1]]);
     expect(recorder.db.query<{ error: number; decision: number }, [string]>("SELECT sum(error) AS error, sum(decision) AS decision FROM events WHERE session_id=?").get(mixed.id)).toEqual({ error: 1, decision: 3 });
+  });
+
+  test("counts API error turns and each stopped tool result apart from the errors, across appended reads", async () => {
+    const fixtureData = await fixture();
+    const apiError = (at: string) => fixtureData.record([], { type: "assistant", timestamp: at, isApiErrorMessage: true, error: "server_error", apiErrorStatus: 529,
+      message: { role: "assistant", model: "<synthetic>", content: [{ type: "text", text: "API Error: 529 Overloaded" }] } });
+    const results = (at: string, extra: Record<string, unknown>, ...contents: string[]) =>
+      fixtureData.record(contents.map((content, index) => ({ type: "tool_result", tool_use_id: `${at}-${index}`, content, is_error: true })), { timestamp: at, ...extra });
+    const cancel = "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.";
+    const lost = "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown.]";
+    // Claude Code files every call a shutdown cut short in one record, so two stopped results share it.
+    await writeFile(fixtureData.file, [
+      fixtureData.record("retry the deploy", { timestamp: "2026-10-17T10:00:00Z" }),
+      apiError("2026-10-17T10:00:01Z"),
+      results("2026-10-17T10:00:02Z", { toolDenialKind: "interrupted" }, lost, lost),
+      results("2026-10-17T10:00:03Z", {}, "1 fail"),
+    ].join("\n") + "\n");
+    const recorder = await fixtureData.open();
+    const counts = () => { const session = recorder.list(new URLSearchParams()).items[0]; return [session.errorCount, session.apiErrorCount, session.decisionCount]; };
+    expect(counts()).toEqual([2, 1, 2]);
+    const firstRow = () => recorder.db.query<{ rowid: number }, []>("SELECT rowid FROM events ORDER BY sequence LIMIT 1").get()!.rowid;
+    const before = firstRow();
+    // An appended read adds to the stored counts instead of starting them over; a record with a failure and a stopped
+    // result counts in both.
+    await appendFile(fixtureData.file, [
+      apiError("2026-10-17T10:01:00Z"),
+      results("2026-10-17T10:01:01Z", {}, cancel),
+      results("2026-10-17T10:01:02Z", {}, cancel, "1 fail"),
+    ].join("\n") + "\n");
+    await recorder.scan();
+    expect(counts()).toEqual([4, 2, 4]);
+    expect(firstRow()).toBe(before);
   });
 
   test("indexes tool-only content, supports phrase/exclusion and combined filters", async () => {

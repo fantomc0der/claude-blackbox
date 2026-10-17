@@ -29,8 +29,9 @@ export interface ReplayEvent {
   /** A failure is recorded: a tool result marked `is_error` that is not a decision, a record marked `is_error` or
    *  `level: "error"`, or an API error turn. Only these count as errors. */
   error: boolean;
-  /** The first decision among the record's tool results: a tool that never ran because the user, a permission rule, or
-   *  a hook stopped it. Shown with the errors, but never counted as one. */
+  /** The first decision among the record's tool results: a tool that never ran, or never finished, because the user, a
+   *  permission rule, a hook, or the auto mode classifier stopped it, or because it was interrupted or cancelled. Shown
+   *  with the errors, but never counted as one. */
   decision: Decision | null;
   parentId?: string;
   uuid?: string;
@@ -47,10 +48,21 @@ export interface UsageSummary {
   totalTokens: number;
   costUSD: number;
   requests: number;
+  /** Requests without an estimate. The six counts below divide them by reason. */
   unpricedRequests: number;
-  /** The part of `unpricedRequests` naming a model without bundled rates; the rest used fast mode without a known rate
-   *  or recorded no model. */
+  /** Requests naming a model without bundled rates. */
   unratedRequests: number;
+  /** Requests whose advisor named no model or ran on a model without bundled rates, or whose fallback hop ran on a
+   *  model without bundled rates. A hop that names no model is never charged, so it is no reason. */
+  unratedIterationRequests: number;
+  /** Requests that recorded no model. */
+  unnamedRequests: number;
+  /** Requests in fast mode on a model without a known fast rate. */
+  fastRequests: number;
+  /** Requests on a service tier other than standard, which has no bundled rates. */
+  tierRequests: number;
+  /** Requests that presented a fallback credit, whose billing the API decides. */
+  creditRequests: number;
   recordedCostRequests: number;
 }
 
@@ -128,7 +140,12 @@ export interface Session {
   eventCount: number;
   messageCount: number;
   toolCount: number;
+  /** Records with a failure: tool failures, API error turns, and other flagged records. */
   errorCount: number;
+  /** The API error turns among `errorCount`. */
+  apiErrorCount: number;
+  /** Tool results that record a decision, each counted once, which never count as errors. */
+  decisionCount: number;
   hasEdits: boolean;
   bookmarked: boolean;
   active: boolean;
@@ -137,6 +154,10 @@ export interface Session {
   usage: UsageSummary;
   recordedCost: RecordedCost | null;
   activeTime: ActiveTime | null;
+  /** The last Claude Code version named on the recording's records, such as `2.1.302`, or "" when none names one. */
+  version: string;
+  /** Records whose type, or `system` or `attachment` subtype, this build does not recognize. */
+  unrecognizedCount: number;
   snippet?: string;
   matchEventId?: string;
   matchCategory?: ReplayEvent["category"];
@@ -177,7 +198,13 @@ export interface Catalog {
   models: string[];
   toolsUsed: string[];
   efforts: string[];
+  /** Every Claude Code version named on indexed records, newest first. */
+  versions: string[];
   facetsLimited: boolean;
+  /** Records across every recording whose kind this build does not recognize. */
+  unrecognizedRecords: number;
+  /** Those records' kinds, such as `type:foo` or `system:bar`, when the name has the shape of an identifier. */
+  unrecognizedKinds: string[];
   groups: WorkspaceGroup[];
   dataDir: string;
   indexedAt: string;
@@ -264,15 +291,17 @@ export interface SummaryRecord { id: string; position: number | null; timestamp:
 
 /**
  * One Edit, Write, MultiEdit, or NotebookEdit call. `error` means its recorded result was a failure; `decision` means
- * the call never ran because the user, a permission rule, or a hook stopped it.
+ * the call never ran, or never finished, because of a decision the user, a permission rule, a hook, or the auto mode
+ * classifier made, or because it was interrupted or cancelled.
  */
 export interface SummaryChange extends SummaryRecord { tool: string; error: boolean; decision: Decision | null }
 
 /**
  * A changed file. `display` is the path relative to its folder, or the whole path when no folder contains it. `count`,
- * `errors`, and `denied` cover every recorded change, even when `changes` stops at its limit.
+ * `errors`, and `stopped`, the changes a decision stopped, cover every recorded change, even when `changes` stops at its
+ * limit.
  */
-export interface SummaryFile { path: string; display: string; count: number; errors: number; denied: number; changes: SummaryChange[] }
+export interface SummaryFile { path: string; display: string; count: number; errors: number; stopped: number; changes: SummaryChange[] }
 
 /**
  * A file the recording read but never changed, pointing at its first read. `folder` is its containing folder or

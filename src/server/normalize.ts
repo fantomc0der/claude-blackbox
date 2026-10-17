@@ -1,6 +1,6 @@
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { isSessionState } from "../shared/records";
+import { apiRetry, noteFiling } from "../shared/records";
 import type { ContentBlock, ReplayEvent } from "../shared/types";
 
 export function object(value: unknown): Record<string, unknown> {
@@ -42,9 +42,10 @@ export const requestMessageType = "api-request-blob";
 const copiedBlocks = new Set(["tool_use", "tool_result", "thinking", "redacted_thinking"]);
 
 // When an API request fails for good, or a turn ends without a reply, Claude Code writes an `assistant` record itself:
-// `message.model` is `<synthetic>`, an API error also carries `isApiErrorMessage: true` with the error kind and HTTP
-// status, and its text is the error or a stand-in such as `No response requested.`. None of it is model output, so such
-// a record is never a message, and an API error is an error.
+// `message.model` is `<synthetic>`, an API error also carries `isApiErrorMessage: true` with the error kind in `error`,
+// a cause in `apiError`, and the HTTP status, when there was one, in `apiErrorStatus`, and its text is the error or a
+// stand-in such as `No response requested.`. None of it is model output, so such a record is never a message, and an
+// API error is an error.
 export const syntheticModel = "<synthetic>";
 
 export function isApiError(raw: Record<string, unknown>): boolean {
@@ -61,12 +62,12 @@ function requestMessageText(message: Record<string, unknown>): string {
   return Array.isArray(message.content) ? searchable(message.content.filter(entry => !copiedBlocks.has(string(object(entry).type)))) : "";
 }
 
-// A session state record's prompt copy is held by the user record it repeats, so it is left out of the searchable text;
-// the rest of the record, such as a permission mode or a worktree path, stays searchable and in `raw`.
-const copiedStateFields: Record<string, readonly string[]> = { "last-prompt": ["lastPrompt"], "queue-operation": ["content"] };
+// A bookkeeping or state record's prompt copy is held by the user record it repeats, so it is left out of the searchable
+// text; the rest of the record, such as a permission mode, a worktree path, or a `summary`, stays searchable and in `raw`.
+const copiedNoteFields: Record<string, readonly string[]> = { "last-prompt": ["lastPrompt"], "queue-operation": ["content"] };
 
-function sessionStateText(type: string, raw: Record<string, unknown>): string {
-  const copied = copiedStateFields[type];
+function noteText(type: string, raw: Record<string, unknown>): string {
+  const copied = copiedNoteFields[type];
   return searchable(copied ? Object.fromEntries(Object.entries(raw).filter(([key]) => !copied.includes(key))) : raw);
 }
 
@@ -82,8 +83,8 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
   const type = string(raw.type) || "unknown";
   const role = (type === "user" || type === "assistant") && raw.isMeta !== true && raw.isCompactSummary !== true ? type : "system";
   const copy = type === requestMessageType;
-  const state = isSessionState(type);
-  const content = copy || state ? undefined : message.content ?? raw.content;
+  const note = noteFiling(type) !== null;
+  const content = copy || note ? undefined : message.content ?? raw.content;
   let blocks: ContentBlock[] = [];
   if (typeof content === "string") blocks = [{ type: "text", text: content }];
   else if (Array.isArray(content)) blocks = content.map(entry => {
@@ -91,14 +92,24 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     const block = object(entry);
     return { ...block, type: string(block.type) || "unknown" } as ContentBlock;
   });
-  if (!blocks.length && !state && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
-  const text = copy ? requestMessageText(message) : state ? sessionStateText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
+  if (!blocks.length && !note && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
+  const text = copy ? requestMessageText(message) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
+  // Claude Code 2.1.30x writes a decided result's kind as `toolDenialKind` beside the result, on the record that holds
+  // it, and when it loads a user rejection the session's shutdown cut short, marked `interruptedByShutdown`, it files
+  // that as an interruption. Once the searchable text is taken, the kind is copied onto each flagged result, so a result
+  // kept or shown apart from its record, as `tool_results` stores it, still knows how it was decided.
+  if (typeof raw.toolDenialKind === "string") {
+    const kind = raw.toolDenialKind === "user-rejected" && raw.interruptedByShutdown === true ? "interrupted" : raw.toolDenialKind;
+    blocks = blocks.map(block => block.type === "tool_result" && block.is_error === true ? { ...block, toolDenialKind: kind } : block);
+  }
   const tools = blocks.filter(block => block.type === "tool_use");
   const hasTools = blocks.some(block => block.type === "tool_use" || block.type === "tool_result");
   const hasText = blocks.some(block => block.type === "text" && block.text?.trim());
   const stamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(string(raw.timestamp));
-  // A result Claude Code marked `is_error` because the user, a permission rule, or a hook stopped the tool records a
-  // decision, not a failure; only the remaining `is_error` results, error-level records, and API error turns are errors.
+  // A result Claude Code marked `is_error` because the user, a permission rule, a hook, or the auto mode classifier
+  // stopped the tool, or because the call was interrupted or cancelled, records a decision, not a failure; only the
+  // remaining `is_error` results, error-level records, and API error turns are errors. Claude Code's API retry banner is
+  // error-level but never an error, should a version write one.
   const decisions = blocks.map(resultDecision);
   return {
     id: `${sourceId}-${offset}`,
@@ -111,7 +122,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     text,
     category: role === "system" ? "system" : isStandIn(raw) ? "synthetic" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
     toolNames: tools.map(block => block.name || "Unknown tool"),
-    error: blocks.some((block, index) => block.is_error === true && !decisions[index]) || raw.is_error === true || raw.level === "error" || isApiError(raw),
+    error: blocks.some((block, index) => block.is_error === true && !decisions[index]) || raw.is_error === true || (raw.level === "error" && !apiRetry(raw)) || isApiError(raw),
     decision: decisions.find(decision => decision !== null) ?? null,
     parentId: string(raw.parentUuid) || undefined,
     uuid: string(raw.uuid) || undefined,
@@ -183,6 +194,33 @@ export function promptTitle(event: ReplayEvent): string {
   const shell = /^<bash-input>([\s\S]*?)<\/bash-input>/.exec(text);
   if (shell) return shell[1].trim() ? titleText(`! ${shell[1]}`) : "";
   return titleText(text.replace(attachedContext, " ").replace(/<[^>]+>/g, " "));
+}
+
+/**
+ * The explicit title a record gives its recording, as one line cut to 240 characters, with the rank of its kind; null
+ * when it gives none. Claude Code's `--resume` picker titles a session by its agent name (4), else its custom title
+ * from `/rename` (3), else its AI title (2), else its summary (1), else its first prompt, each the latest record of its
+ * kind; 2.1.302 writes no `summary` records but still honors the ones older versions wrote. The name fields are read
+ * from any record that carries them, a `title` from a `custom-title` or `ai-title` record, and a summary only from a
+ * `summary` record.
+ */
+export function explicitTitle(type: string, raw: Record<string, unknown>): { title: string; rank: number } | null {
+  const candidates: ReadonlyArray<readonly [number, string]> = [
+    [4, string(raw.agentName)],
+    [3, string(raw.customTitle) || (type === "custom-title" ? string(raw.title) : "")],
+    [2, string(raw.aiTitle) || (type === "ai-title" ? string(raw.title) : "")],
+    // The latest summary wins without a `leafUuid` check, because the listing `claude --resume` shows takes its title
+    // from Claude Code's lite reader, which reads the last line of the file's tail that holds `"type":"summary"`; only
+    // its full conversation loader keys summaries by `leafUuid`. A summary whose `leafUuid` names no record in this
+    // recording therefore still titles it. The index reads the whole file, so it also takes a summary written before
+    // the tail the lite reader looks at.
+    [1, type === "summary" ? string(raw.summary) : ""],
+  ];
+  for (const [rank, value] of candidates) {
+    const title = stripAnsi(value).replace(/\s+/g, " ").trim().slice(0, 240);
+    if (title) return { title, rank };
+  }
+  return null;
 }
 
 export function pathName(path: string): string {

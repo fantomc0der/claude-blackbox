@@ -43,7 +43,7 @@ export function Sidebar(props: { catalog: Catalog | null; indexing: IndexProgres
     props.navigate({ workspace: null, cwd: null, bookmarked: null, days: null, session: null, event: null, offset: null, ...values });
     props.close();
   };
-  const reset = () => select({ ...Object.fromEntries(["q", "errors", "edits", "model", "effort", "effortMissing", "tool", "branch", "after", "before", "agents", "active", "pricing", "minCost", "maxCost", "minTokens", "maxTokens", "minRecords", "maxRecords"].map(key => [key, null])) });
+  const reset = () => select({ ...Object.fromEntries(["q", "errors", "edits", "model", "effort", "effortMissing", "version", "tool", "branch", "after", "before", "agents", "active", "pricing", "minCost", "maxCost", "minTokens", "maxTokens", "minRecords", "maxRecords"].map(key => [key, null])) });
   const all = () => !props.params.get("workspace") && !props.params.get("bookmarked") && !props.params.get("days");
   return <aside class="sidebar" aria-label="Workspace navigation" inert={props.hidden}>
     <a class="brand" href="/" onClick={event => { event.preventDefault(); reset(); }}><span class="brand-mark"><Icon name="box" size={23} /></span><span>blackbox<small>FOR CLAUDE CODE</small></span></a>

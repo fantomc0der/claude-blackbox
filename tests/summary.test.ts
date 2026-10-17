@@ -140,21 +140,22 @@ describe("recording summary grouping", () => {
   test("counts every change and error even when a file lists only its first changes", () => {
     const calls = Array.from({ length: 150 }, (_, index) => call(`e${index}`, "Edit", "/work/busy.ts", index % 50 === 0, "/work"));
     const summary = buildSummary([{ path: "/work", added: false, record: record("cwd") }], calls);
-    expect(summary.folders[0].files[0]).toMatchObject({ display: "busy.ts", count: 150, errors: 3, denied: 0 });
+    expect(summary.folders[0].files[0]).toMatchObject({ display: "busy.ts", count: 150, errors: 3, stopped: 0 });
     expect(summary.folders[0].files[0].changes).toHaveLength(100);
     expect(summary.limited).toBe(true);
   });
 
-  test("counts a change the user stopped as denied rather than as an error, and a stopped read as no read", () => {
+  test("counts a change a decision stopped apart from an error, and a stopped read as no read", () => {
     const summary = buildSummary([{ path: "/work", added: false, record: record("cwd") }], [
       call("e1", "Edit", "/work/app.ts", false, "/work", "denied"),
       call("e2", "Edit", "/work/app.ts", true, "/work"),
       call("e3", "Write", "/work/app.ts", false, "/work", "blocked"),
+      call("e4", "Edit", "/work/app.ts", false, "/work", "cancelled"),
       call("r1", "Read", "/work/config.ts", false, "/work", "interrupted"),
       call("r2", "Read", "/work/notes.md", false, "/work"),
     ]);
-    expect(summary.folders[0].files.map(file => [file.display, file.count, file.errors, file.denied, file.changes.map(change => [change.tool, change.error, change.decision])]))
-      .toEqual([["app.ts", 3, 1, 2, [["Edit", false, "denied"], ["Edit", true, null], ["Write", false, "blocked"]]]]);
+    expect(summary.folders[0].files.map(file => [file.display, file.count, file.errors, file.stopped, file.changes.map(change => [change.tool, change.error, change.decision])]))
+      .toEqual([["app.ts", 4, 1, 3, [["Edit", false, "denied"], ["Edit", true, null], ["Write", false, "blocked"], ["Edit", false, "cancelled"]]]]);
     expect(summary.read.map(file => file.display)).toEqual(["notes.md"]);
   });
 

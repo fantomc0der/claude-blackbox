@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
-import { activeTimeSummary, duration, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
+import { activeTimeSummary, duration, errorBreakdown, errorSummary, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, stoppedTools, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
-import { recordedDuration, thinkingMeasure, turnDuration } from "../src/shared/records";
+import { compareVersions, newestVersions, noteFiling, recordedDuration, recordedVersion, recordPolicy, recordSubtype, thinkingMeasure, turnDuration, unrecognizedKind } from "../src/shared/records";
 
 test("measured times read in the two largest units", () => {
   expect(duration(0)).toBe("0s");
@@ -21,6 +21,17 @@ test("measured times read in the two largest units", () => {
   expect(measuredTime({ ...recorded, apiDurationMs: null, toolDurationMs: null })).toBe("");
   expect(thinkingSummary({ durationMs: 12_340, tokens: 1840 })).toBe("thought for 12s (1,840 thinking tokens)");
   expect(thinkingSummary({ durationMs: 400, tokens: null })).toBe("thought for <1s");
+});
+
+test("a recording's errors name the API errors among them, and the tools a decision stopped stand apart", () => {
+  const counts = (errorCount: number, apiErrorCount: number, decisionCount: number) => ({ errorCount, apiErrorCount, decisionCount });
+  expect(errorSummary(counts(3, 1, 2))).toBe("3 errors (1 API error) · 2 tools stopped");
+  expect(errorSummary(counts(1, 0, 1))).toBe("1 error · 1 tool stopped");
+  expect(errorSummary(counts(2, 2, 0))).toBe("2 API errors");
+  expect(errorSummary(counts(1200, 0, 0))).toBe(`${(1200).toLocaleString()} errors`);
+  expect(errorSummary(counts(0, 0, 4))).toBe("4 tools stopped");
+  expect(errorSummary(counts(0, 0, 0))).toBe("");
+  expect([errorBreakdown(counts(0, 0, 4)), stoppedTools(counts(5, 2, 0))]).toEqual(["", ""]);
 });
 
 // Claude Code's own schema bounds a recorded duration as a finite non-negative number up to 1e15, and its loader rewrites
@@ -48,6 +59,40 @@ test("a reasoning step's measured time comes with its thinking tokens when the A
   expect(thinkingMeasure(thought(12_340, { output_tokens_details: "none" }))).toEqual({ durationMs: 12_340, tokens: null });
   for (const bad of [0, -1, 1.5, Number.NaN, "12340", undefined, null]) expect(thinkingMeasure(thought(bad))).toBeNull();
   expect(thinkingMeasure({ type: "assistant", message: { usage: { output_tokens_details: { thinking_tokens: 1840 } } } })).toBeNull();
+});
+
+test("record types are filed as Claude Code files them, and only bookkeeping and state read as notes", () => {
+  expect(["user", "progress", "last-prompt", "api-request", "summary", "cost-state", "future-record"].map(type => recordPolicy.get(type) ?? null))
+    .toEqual(["transcript", "transcript", "bookkeeping", "bookkeeping", "state", "state", null]);
+  // An API request and its message copies are bookkeeping, but the replay shows them as a request card.
+  expect(["last-prompt", "file-history-snapshot", "api-request", "api-request-blob", "summary", "permission-mode", "system", "future-record", "constructor"].map(noteFiling))
+    .toEqual(["bookkeeping", "bookkeeping", null, null, "state", "state", null, null, null]);
+  expect(recordSubtype("system", { subtype: "turn_duration" })).toBe("turn_duration");
+  expect(recordSubtype("attachment", { attachment: { type: "hook_success" } })).toBe("hook_success");
+  expect(recordSubtype("attachment", { attachment: "hook_success" })).toBeUndefined();
+  expect(recordSubtype("user", { subtype: "turn_duration" })).toBeUndefined();
+});
+
+test("unrecognized records are named by kind only when the name has the shape of an identifier", () => {
+  for (const [type, subtype] of [["user", undefined], ["cost-state", undefined], ["system", "turn_duration"], ["system", "api_error"], ["attachment", "hook_success"], ["system", undefined], ["attachment", null]]) {
+    expect(unrecognizedKind(type as string, subtype)).toBeNull();
+  }
+  expect(unrecognizedKind("future-record", undefined)).toBe("type:future-record");
+  expect(unrecognizedKind("system", "future_notice")).toBe("system:future_notice");
+  expect(unrecognizedKind("attachment", "future_reminder")).toBe("attachment:future_reminder");
+  // Recorded content never becomes a name, though the record still counts.
+  for (const [type, subtype] of [["Rename the helper", undefined], ["system", "x".repeat(41)], ["system", "Future Notice"], ["system", 7], ["attachment", { type: "nested" }], ["attachment", '{"type":"nested"}']]) {
+    expect(unrecognizedKind(type as string, subtype)).toBe("");
+  }
+});
+
+test("Claude Code versions are read only in the shape of a version and order by their numbers", () => {
+  expect(["2.1.302", "2.1.10-beta.2", "1.0.0+build.5"].map(recordedVersion)).toEqual(["2.1.302", "2.1.10-beta.2", "1.0.0+build.5"]);
+  expect(["v2.1.302", "2.1", "latest", "2.1.302 (Claude Code)", 2.1, null].map(recordedVersion)).toEqual(Array(6).fill(""));
+  expect(["2.1.99", "2.1.302", "2.1.302-beta.1", "1.0.0"].sort(compareVersions)).toEqual(["1.0.0", "2.1.99", "2.1.302-beta.1", "2.1.302"]);
+  // A list cut to a limit keeps the newest, which string order would put last.
+  expect(newestVersions(["2.1.99", "10.0.0", "2.1.302", "2.1.302-beta.1", "1.0.0"], 3)).toEqual({ values: ["10.0.0", "2.1.302", "2.1.302-beta.1"], limited: true });
+  expect(newestVersions(["2.1.9", "2.1.10"], 3)).toEqual({ values: ["2.1.10", "2.1.9"], limited: false });
 });
 
 test("search highlights use the term the server matched records with", () => {
