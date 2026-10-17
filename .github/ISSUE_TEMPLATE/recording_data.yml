@@ -61,14 +61,18 @@ body:
     attributes:
       label: Record types in the recording
       description: |
-        Optional but very helpful. This prints only type names and counts, nothing from the content:
-        `grep -o '"type":"[a-zA-Z_-]*"' <session>.jsonl | sort | uniq -c`
+        Optional but very helpful. Either command prints each record's top-level `type` and how often it occurs, nothing from the content.
+        With [jq](https://jqlang.org/): `jq -r .type <session>.jsonl | sort | uniq -c`
+        With Bun: `bun -e 'const c={};for(const l of (await Bun.file(Bun.argv.at(-1)).text()).split("\n"))if(l.trim())try{const t=JSON.parse(l).type;c[t]=(c[t]??0)+1}catch{}console.log(c)' <session>.jsonl`
       render: text
       placeholder: |
-        82 "type":"assistant"
-        27 "type":"atis-latch"
-        26 "type":"last-prompt"
-        64 "type":"user"
+        125 assistant
+         35 atis-latch
+         83 attachment
+         34 last-prompt
+          8 queue-operation
+          2 system
+         87 user
   - type: textarea
     id: sample
     attributes:
