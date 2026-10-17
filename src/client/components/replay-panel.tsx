@@ -665,7 +665,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
                 <dt>Model</dt><dd>{modelName(session().model)}</dd>
                 <dt>Claude Code version</dt><dd>{session().version || "Not recorded"}</dd>
                 <dt>Activity</dt><dd>{session().messageCount} messages · {session().toolCount} tools</dd>
-                <dt>Errors</dt><dd>{errorBreakdown(session()) || "None"}<Show when={stoppedTools(session())}>{stopped => <> · {stopped()}</>}</Show></dd>
+                <dt>Errors</dt><dd>{errorBreakdown(session()) || "No errors"}<Show when={stoppedTools(session())}>{stopped => <> · {stopped()}</>}</Show></dd>
                 <dt>Active time</dt><dd title={activeTimeNote}><Show when={session().activeTime} fallback="Not recorded">{active => activeTimeSummary(active())}</Show></dd>
                 <Show when={session().recordedCost && measuredTime(session().recordedCost!)}>{measured => <><dt>Claude Code measured</dt><dd title={measuredTimeNote}>{measured()}</dd></>}</Show>
                 <dt>Est. API cost (this recording)</dt><dd>{usageCost(session().usage)}</dd>

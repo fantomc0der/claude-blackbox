@@ -95,10 +95,11 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
   if (!blocks.length && !note && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
   const text = copy ? requestMessageText(message) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
   // Claude Code 2.1.30x writes a decided result's kind as `toolDenialKind` beside the result, on the record that holds
-  // it. Once the searchable text is taken, the kind is copied onto each flagged result, so a result kept or shown apart
-  // from its record, as `tool_results` stores it, still knows how it was decided.
+  // it, and when it loads a user rejection the session's shutdown cut short, marked `interruptedByShutdown`, it files
+  // that as an interruption. Once the searchable text is taken, the kind is copied onto each flagged result, so a result
+  // kept or shown apart from its record, as `tool_results` stores it, still knows how it was decided.
   if (typeof raw.toolDenialKind === "string") {
-    const kind = raw.toolDenialKind;
+    const kind = raw.toolDenialKind === "user-rejected" && raw.interruptedByShutdown === true ? "interrupted" : raw.toolDenialKind;
     blocks = blocks.map(block => block.type === "tool_result" && block.is_error === true ? { ...block, toolDenialKind: kind } : block);
   }
   const tools = blocks.filter(block => block.type === "tool_use");
@@ -208,6 +209,11 @@ export function explicitTitle(type: string, raw: Record<string, unknown>): { tit
     [4, string(raw.agentName)],
     [3, string(raw.customTitle) || (type === "custom-title" ? string(raw.title) : "")],
     [2, string(raw.aiTitle) || (type === "ai-title" ? string(raw.title) : "")],
+    // The latest summary wins without a `leafUuid` check, because the listing `claude --resume` shows takes its title
+    // from Claude Code's lite reader, which reads the last line of the file's tail that holds `"type":"summary"`; only
+    // its full conversation loader keys summaries by `leafUuid`. A summary whose `leafUuid` names no record in this
+    // recording therefore still titles it. The index reads the whole file, so it also takes a summary written before
+    // the tail the lite reader looks at.
     [1, type === "summary" ? string(raw.summary) : ""],
   ];
   for (const [rank, value] of candidates) {

@@ -311,7 +311,7 @@ function TurnDurationNote(props: { event: ReplayEvent; durationMs: number; highl
 
 type ApiRetry = NonNullable<ReturnType<typeof apiRetry>>;
 
-const apiRetryDetail = "Claude Code shows this record while it waits to retry a failed API request, and 2.1.302 never writes it to a recording. The request it retries can still succeed, and one that fails for good is recorded as an API error turn, so a retry is not counted as an error. Raw event shows the record.";
+const apiRetryDetail = "Claude Code streams this retry banner to its UI while it waits to retry a failed API request. The request it retries can still succeed, and one that fails for good is recorded as an API error turn, so the index does not count a retry as an error. Raw event shows the record.";
 
 // A retry reads as a one-line note with its attempt and wait rather than as an error card. Like a turn's measured time,
 // its searchable text shows only when a highlighted term is in it.

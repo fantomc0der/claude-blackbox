@@ -161,6 +161,11 @@ function boundedLabel(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 120) || "Untitled session";
 }
 
+/** The tool results among a record's blocks that record a decision, each of which `sessions.decisions` counts. */
+function decidedResults(blocks: ContentBlock[]): number {
+  return blocks.filter(block => resultDecision(block) !== null).length;
+}
+
 /** The `session_costs` row joined onto a session row, or null when the recording carries no `cost-state` record. */
 function recordedCostOf(row: SourceRow): RecordedCost | null {
   if (typeof row.recorded_cost !== "number") return null;
@@ -562,7 +567,8 @@ export class Recorder {
     // turns and decided records apart from its errors, and titles a recording by Claude Code's own precedence, agent name
     // first and summary before the first prompt, keeping the rank of the title's kind in `named`, where an earlier build
     // kept 1 for any explicit title. The counts come from the records an earlier build flagged or decided, like version
-    // 12, so every recording is filled where it is. A recording holding a title record, or titled explicitly by a field
+    // 12, each decided record parsed to count the results in it that record a decision, so every recording is filled
+    // where it is. A recording holding a title record, or titled explicitly by a field
     // on another record, is retitled where it is from those stored records, like version 9; finding the fields reads the
     // explicitly titled recordings' events, and one already marked for re-reading gets its title from that read. A
     // decision an earlier build recognized stays a decision, and its label is read from the stored record whenever it is
@@ -572,10 +578,11 @@ export class Recorder {
     // record of subtype `api_error`, which no 2.1.302 recording holds. A recording holding an API error record SQLite's
     // JSON parser rejects is re-read too, as in version 16.
     if (version < 17) {
-      const counts = this.db.query<{ apiErrors: number | null; decisions: number | null; invalid: number | null }, [string]>(`SELECT
+      const counts = this.db.query<{ apiErrors: number | null; invalid: number | null }, [string]>(`SELECT
         sum(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 AND json_valid(raw) THEN json_type(raw,'$.isApiErrorMessage')='true' ELSE 0 END) AS apiErrors,
-        sum(decision) AS decisions, max(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 THEN NOT json_valid(raw) ELSE 0 END) AS invalid
-        FROM events WHERE session_id=? AND (error=1 OR decision=1)`);
+        max(CASE WHEN error=1 AND instr(raw,'"isApiErrorMessage":true')>0 THEN NOT json_valid(raw) ELSE 0 END) AS invalid
+        FROM events WHERE session_id=? AND error=1`);
+      const decidedRecords = this.db.query<{ raw: string }, [string]>("SELECT raw FROM events WHERE session_id=? AND decision=1");
       const titleRecords = this.db.query<{ type: string; raw: string }, [string, number]>(`SELECT type, raw FROM events WHERE session_id=?1
         AND (type IN ('agent-name','custom-title','ai-title','summary') OR (?2 AND (instr(raw,'"agentName":')>0 OR instr(raw,'"customTitle":')>0 OR instr(raw,'"aiTitle":')>0)))
         ORDER BY sequence`);
@@ -589,7 +596,12 @@ export class Recorder {
       const filled = await this.upgradeEach(({ id, named }) => {
         const count = counts.get(id)!;
         if (count.invalid) { reset.run(id); return; }
-        fill.run(count.apiErrors ?? 0, count.decisions ?? 0, id);
+        let decisions = 0;
+        for (const row of decidedRecords.all(id)) {
+          try { decisions += decidedResults(normalize(object(JSON.parse(row.raw)), id, 0, 0).blocks); }
+          catch { reset.run(id); return; }
+        }
+        fill.run(count.apiErrors ?? 0, decisions, id);
         let title: ReturnType<typeof explicitTitle> = null;
         for (const row of titleRecords.all(id, Number(named > 0))) {
           let explicit: ReturnType<typeof explicitTitle> = null;
@@ -715,8 +727,8 @@ export class Recorder {
           row.tools += event.toolNames.length;
           row.errors += Number(event.error);
           row.api_errors += Number(isApiError(line.value));
-          row.decisions += Number(event.decision !== null);
-          row.edits ||=Number(event.toolNames.some(name => /^(edit|write|multiedit|notebookedit)$/i.test(name)));
+          row.decisions += decidedResults(event.blocks);
+          row.edits ||= Number(event.toolNames.some(name => /^(edit|write|multiedit|notebookedit)$/i.test(name)));
           row.cwd ||= event.cwd || "";
           row.session_id = string(line.value.sessionId) || string(line.value.session_id) || row.session_id;
           row.branch = string(line.value.gitBranch) || row.branch;
@@ -1416,9 +1428,8 @@ export class Recorder {
         facetsLimited: models.limited || tools.limited || efforts.length > facetLimit || versions.limited,
       };
     }
-    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; apiErrors: number; decisions: number; warnings: number; unrecognizedRecords: number }, []>(
-      `SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,
-        coalesce(sum(api_errors),0) AS apiErrors,coalesce(sum(decisions),0) AS decisions,coalesce(sum(warnings),0) AS warnings,coalesce(sum(unrecognized),0) AS unrecognizedRecords FROM sessions`).get()!;
+    const totals = this.db.query<{ sessions: number; messages: number; tools: number; errors: number; warnings: number; unrecognizedRecords: number }, []>(
+      "SELECT count(*) AS sessions,coalesce(sum(messages),0) AS messages,coalesce(sum(tools),0) AS tools,coalesce(sum(errors),0) AS errors,coalesce(sum(warnings),0) AS warnings,coalesce(sum(unrecognized),0) AS unrecognizedRecords FROM sessions").get()!;
     const sources = this.db.query<{ cwd: string; count: number; mainCount: number }, []>("SELECT cwd,count(*) AS count,sum(CASE WHEN agent=0 THEN 1 ELSE 0 END) AS mainCount FROM sessions GROUP BY cwd ORDER BY count(*) DESC").all();
     const groups = this.groups();
     if (!this.workspaceUsage) {

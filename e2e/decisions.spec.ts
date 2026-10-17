@@ -19,7 +19,7 @@ test("the Errors tab labels each tool the user stopped and counts only the failu
   expect(session.errorCount).toBe(1);
   const results = page.locator(".replay-event-tool-result");
   await expect(results).toHaveCount(5);
-  await expect(results.locator(".replay-decision-label")).toHaveText(["Permission denied", "Stopped by hook", "Interrupted", "Permission denied"]);
+  await expect(results.locator(".replay-decision-label")).toHaveText(["Permission denied", "Stopped by hook", "Interrupted", "Cancelled"]);
   await expect(results.locator(".replay-error-label")).toHaveText(["Error"]);
   await expect(page.locator(".replay-event-decision")).toHaveCount(4);
   await expect(page.locator(".replay-event-error")).toHaveCount(1);
@@ -37,7 +37,7 @@ test("the Errors tab labels each tool the user stopped and counts only the failu
   await expect(rail.locator(".inspector-stats")).toContainText("1errors");
   // The stopped tools never count as errors, but the count says how many there were.
   await expect(rail.locator(".inspector-stats > div").nth(2)).toHaveAttribute("title", "1 error · 4 tools stopped");
-  await expect(rail.getByRole("navigation", { name: "Events on this page" }).getByRole("button")).toHaveText([/^Permission denied/, /^Stopped by hook/, /^Interrupted/, /^Permission denied/, /^Error/]);
+  await expect(rail.getByRole("navigation", { name: "Events on this page" }).getByRole("button")).toHaveText([/^Permission denied/, /^Stopped by hook/, /^Interrupted/, /^Cancelled/, /^Error/]);
   await page.locator(".session-details > summary").click();
   const details = page.getByRole("region", { name: "Session details" });
   await expect(details.locator("dt", { hasText: /^Errors$/ }).locator("+ dd")).toHaveText("1 error · 4 tools stopped");
@@ -57,13 +57,13 @@ test("the Tools tab tints a stopped call apart from a failed one and names what 
   await expect(page.locator(".tool-card-error .tool-code header").nth(1)).toContainText("Command error");
 });
 
-test("a denied change is listed as denied, not as an error, in the files the recording changed", async ({ page }) => {
+test("a cancelled change is counted as stopped, not as an error, in the files the recording changed", async ({ page }) => {
   await openRecording(page, "Thornquill", stoppedTitle, "replayKind=conversation");
   const rail = page.getByRole("complementary", { name: "Recording overview" });
   await rail.getByLabel("Overview content").selectOption("files");
   const files = rail.getByRole("navigation", { name: "Files changed in this recording" });
-  const row = files.getByRole("button", { name: /^config\.ts in src, 1 change, 1 denied\. Show the change\.$/ });
-  await expect(row).toContainText("1 denied");
+  const row = files.getByRole("button", { name: /^config\.ts in src, 1 change, 1 stopped\. Show the change\.$/ });
+  await expect(row).toContainText("1 stopped");
   await expect(row).not.toContainText("error");
 }, wide);
 

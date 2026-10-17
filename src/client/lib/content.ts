@@ -63,15 +63,14 @@ export function isApiError(event: Pick<ReplayEvent, "raw">): boolean {
 // server_error, and max_output_tokens for a reply cut off at the output cap or the context window), a cause code such
 // as `usage_limit_reached` in `apiError`, and the HTTP status, when there was one, in `apiErrorStatus`. All are recorded
 // content, so the label keeps the kind short, names a cause only when it has the shape of a code and says more than
-// the kind, and leaves out a status that is not one. An `apiError` object's `status` is still read when
-// `apiErrorStatus` is absent, the shape this app first expected; 2.1.302 writes `apiError` as a string.
+// the kind, and leaves out a status that is not one.
 export function apiErrorLabel(event: Pick<ReplayEvent, "raw">): string {
   const parts = ["API error"];
   const kind = getString(event.raw.error)?.trim().replace(/_/g, " ");
   if (kind && kind !== "unknown") parts.push(truncate(kind, 40));
   const cause = typeof event.raw.apiError === "string" && /^[a-z0-9_]{1,40}$/.test(event.raw.apiError) ? event.raw.apiError.replace(/_/g, " ") : "";
   if (cause && cause !== kind) parts.push(cause);
-  const status = event.raw.apiErrorStatus ?? (isRecord(event.raw.apiError) ? event.raw.apiError.status : undefined);
+  const status = event.raw.apiErrorStatus;
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) parts.push(`HTTP ${status}`);
   return parts.join(" · ");
 }

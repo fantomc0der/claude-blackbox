@@ -43,13 +43,13 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
     const parts = () => splitPath(file().display);
     const open = () => expanded().has(file().path);
     const first = () => file().changes[0];
-    const name = () => `${parts().name}${parts().dir ? ` in ${parts().dir}` : ""}, ${plural(file().count, "change")}${file().errors ? `, ${plural(file().errors, "error")}` : ""}${file().denied ? `, ${file().denied.toLocaleString()} denied` : ""}. Show the ${file().count > 1 ? "first " : ""}change.${hiddenNote(first())}`;
+    const name = () => `${parts().name}${parts().dir ? ` in ${parts().dir}` : ""}, ${plural(file().count, "change")}${file().errors ? `, ${plural(file().errors, "error")}` : ""}${file().stopped ? `, ${file().stopped.toLocaleString()} stopped` : ""}. Show the ${file().count > 1 ? "first " : ""}change.${hiddenNote(first())}`;
     return <li class={['overview-file', { selected: file().changes.some(change => change.id === props.selected) }]}>
       <button class="overview-file-open" title={file().path} aria-label={name()} onClick={() => props.show(first())}>
         <span class="overview-file-name">{parts().name}</span>
         <span class="overview-file-count" aria-hidden="true">{file().count.toLocaleString()}</span>
         <Show when={parts().dir}><span class="overview-file-dir">{parts().dir}</span></Show>
-        <Show when={file().errors || file().denied}><span class="overview-file-outcome" aria-hidden="true"><Show when={file().errors}><span class="overview-file-error">{plural(file().errors, "error")}</span></Show><Show when={file().denied}><span class="overview-file-denied">{file().denied.toLocaleString()} denied</span></Show></span></Show>
+        <Show when={file().errors || file().stopped}><span class="overview-file-outcome" aria-hidden="true"><Show when={file().errors}><span class="overview-file-error">{plural(file().errors, "error")}</span></Show><Show when={file().stopped}><span class="overview-file-stopped">{file().stopped.toLocaleString()} stopped</span></Show></span></Show>
       </button>
       <Show when={file().changes.length > 1}>
         <button class="icon-button tiny overview-file-toggle" aria-expanded={open() ? "true" : "false"} aria-controls={open() ? listId : undefined} aria-label={`Changes to ${parts().name}`} title={open() ? "Hide the changes" : "List each change"} onClick={() => toggle(file().path)}><Icon name="down" size={14} /></button>
@@ -58,7 +58,7 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
         <ol class="overview-changes" id={listId} aria-label={`Changes to ${parts().name}`}>
           <For each={file().changes} keyed={change => change.id}>{change => <li>
             <button aria-current={change().id === props.selected ? "true" : undefined} title={change().position === null ? hiddenText : undefined} onClick={() => props.show(change())}>
-              <span>{change().tool}</span>{" "}<span aria-hidden="true">·</span>{" "}<span>{formatEventTime(change().timestamp)}</span><Show when={change().error}>{" "}<span class="overview-file-error">error</span></Show><Show when={change().decision}>{decision => <>{" "}<span class="overview-file-denied">{decisionLabels[decision()].toLowerCase()}</span></>}</Show><HiddenNote record={change()} />
+              <span>{change().tool}</span>{" "}<span aria-hidden="true">·</span>{" "}<span>{formatEventTime(change().timestamp)}</span><Show when={change().error}>{" "}<span class="overview-file-error">error</span></Show><Show when={change().decision}>{decision => <>{" "}<span class="overview-file-stopped">{decisionLabels[decision()].toLowerCase()}</span></>}</Show><HiddenNote record={change()} />
             </button>
           </li>}</For>
         </ol>

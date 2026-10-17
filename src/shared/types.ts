@@ -133,7 +133,7 @@ export interface Session {
   errorCount: number;
   /** The API error turns among `errorCount`. */
   apiErrorCount: number;
-  /** Records whose tool results record a decision, which never count as errors. */
+  /** Tool results that record a decision, each counted once, which never count as errors. */
   decisionCount: number;
   hasEdits: boolean;
   bookmarked: boolean;
@@ -182,10 +182,6 @@ export interface Catalog {
   messages: number;
   tools: number;
   errors: number;
-  /** The API error turns among `errors`. */
-  apiErrors: number;
-  /** Records whose tool results record a decision, across every recording. */
-  decisions: number;
   bookmarked: number;
   workspaces: Workspace[];
   models: string[];
@@ -291,9 +287,10 @@ export interface SummaryChange extends SummaryRecord { tool: string; error: bool
 
 /**
  * A changed file. `display` is the path relative to its folder, or the whole path when no folder contains it. `count`,
- * `errors`, and `denied` cover every recorded change, even when `changes` stops at its limit.
+ * `errors`, and `stopped`, the changes a decision stopped, cover every recorded change, even when `changes` stops at its
+ * limit.
  */
-export interface SummaryFile { path: string; display: string; count: number; errors: number; denied: number; changes: SummaryChange[] }
+export interface SummaryFile { path: string; display: string; count: number; errors: number; stopped: number; changes: SummaryChange[] }
 
 /**
  * A file the recording read but never changed, pointing at its first read. `folder` is its containing folder or

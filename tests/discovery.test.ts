@@ -320,7 +320,7 @@ test("API error turns and other Claude Code stand-ins count as errors, never as 
   // The `<synthetic>` model is no model, so neither the replay's nor the library's model filter offers it.
   expect(all.facets.models).toEqual(["model-a"]);
   const catalog = await recorder.catalog();
-  expect([catalog.messages, catalog.errors, catalog.apiErrors, catalog.models]).toEqual([2, 1, 1, ["model-a"]]);
+  expect([catalog.messages, catalog.errors, catalog.models]).toEqual([2, 1, ["model-a"]]);
 });
 
 test("version 10 indexes re-index only the recordings that hold Claude Code's stand-ins", async () => {
@@ -441,6 +441,9 @@ test("version 16 indexes count API errors and decisions in place and re-index on
   await setup.write("cancelled", [record("Clean the install"), toolResult("rm-call", denial)]);
   await setup.write("failed", [record("Run the tests"), toolResult("test-call", "1 fail")]);
   await setup.write("overloaded", [record("Fix the login test"), apiError("a1", "u1", "2026-09-20T12:00:05Z"), toolResult("rm-call", denial), toolResult("test-call", "1 fail")]);
+  await setup.write("twice", [record("Clean twice"), record("", { message: { content: [
+    { type: "tool_result", tool_use_id: "rm-1", content: denial, is_error: true }, { type: "tool_result", tool_use_id: "rm-2", content: denial, is_error: true },
+  ] } })]);
   const before = await setup.open();
   const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
   before.bookmark(sessions["Deploy the release"], true);
@@ -468,13 +471,11 @@ test("version 16 indexes count API errors and decisions in place and re-index on
   for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(after.getSession(sessions["Retry the request"])?.errorCount).toBe(0);
   // A decision an earlier build recognized keeps its flag and takes its new label from the stored record, unread.
-  for (const title of ["Clean the install", "Run the tests", "Fix the login test"]) expect(cwds(sessions[title])).toEqual(["/synthetic/stale"]);
+  for (const title of ["Clean the install", "Run the tests", "Fix the login test", "Clean twice"]) expect(cwds(sessions[title])).toEqual(["/synthetic/stale"]);
   expect(["Deploy the release", "Run the batch", "Clean the install", "Run the tests"].map(title => after.getSession(sessions[title])?.errorCount)).toEqual([0, 0, 0, 1]);
-  // The counts are filled from the stored flags, read or not.
+  // The counts are filled from the stored flags, read or not, with every stopped result in a decided record counted.
   const counts = (title: string) => { const session = after.getSession(sessions[title])!; return [session.errorCount, session.apiErrorCount, session.decisionCount]; };
-  expect(["Deploy the release", "Clean the install", "Run the tests", "Fix the login test"].map(counts)).toEqual([[0, 0, 1], [0, 0, 1], [1, 0, 0], [2, 1, 1]]);
-  const catalog = await after.catalog();
-  expect([catalog.errors, catalog.apiErrors, catalog.decisions]).toEqual([3, 1, 4]);
+  expect(["Deploy the release", "Clean the install", "Run the tests", "Fix the login test", "Clean twice"].map(counts)).toEqual([[0, 0, 1], [0, 0, 1], [1, 0, 0], [2, 1, 1], [0, 0, 2]]);
   expect(["Deploy the release", "Run the batch", "Clean the install", "Run the tests"].map(decided)).toEqual([[[false, "denied"]], [[false, "cancelled"]], [[false, "cancelled"]], [[true, null]]]);
   expect(after.results(sessions["Deploy the release"], ["deploy-call"])["deploy-call"]).toMatchObject({ is_error: true, toolDenialKind: "permission-rule" });
   expect(after.getSession(sessions["Deploy the release"])?.bookmarked).toBe(true);

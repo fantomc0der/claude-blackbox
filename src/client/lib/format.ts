@@ -36,7 +36,7 @@ export function errorBreakdown(session: Pick<Session, "errorCount" | "apiErrorCo
   return apiErrors ? `${counted(errors, "error", "errors")} (${counted(apiErrors, "API error", "API errors")})` : counted(errors, "error", "errors");
 }
 
-/** The tools a decision stopped, which never count as errors, as `2 tools stopped`; empty when none was. */
+/** The tool calls a decision stopped, one for each result that records it, which never count as errors, as `2 tools stopped`; empty when none was. */
 export function stoppedTools(session: Pick<Session, "decisionCount">): string {
   return session.decisionCount ? counted(session.decisionCount, "tool stopped", "tools stopped") : "";
 }

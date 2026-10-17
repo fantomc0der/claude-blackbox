@@ -38,7 +38,7 @@ test("an API retry reads as a note with its attempt, not as an error", async ({ 
   await expect(page.locator(".replay-scroll")).toHaveAttribute("aria-busy", "false");
   const retry = page.locator(".replay-event").nth(1);
   await expect(retry.locator(".tool-hidden")).toHaveText("API retry · attempt 2 of 10 · retry after 4s");
-  await expect(retry.locator(".tool-hidden")).toHaveAttribute("title", /never writes it to a recording/);
+  await expect(retry.locator(".tool-hidden")).toHaveAttribute("title", /the index does not count a retry as an error/);
   await expect(retry.locator(".replay-error-label")).toHaveCount(0);
   await expect(retry).not.toHaveClass(/replay-event-error/);
   await expect(page.locator(".replay-event-error")).toHaveCount(1);

@@ -120,6 +120,16 @@ describe("normalized error flags", () => {
     expect([both.error, both.decision]).toEqual([false, "interrupted"]);
   });
 
+  test("files a user rejection the session's shutdown cut short as an interruption, as Claude Code does when it loads it", () => {
+    const rejected = (extra: Record<string, unknown>) => user([result(reject)], { toolDenialKind: "user-rejected", ...extra });
+    const shutdown = rejected({ interruptedByShutdown: true });
+    expect([shutdown.blocks[0].toolDenialKind, shutdown.decision, shutdown.error]).toEqual(["interrupted", "interrupted", false]);
+    // The raw record keeps the kind as recorded.
+    expect(shutdown.raw.toolDenialKind).toBe("user-rejected");
+    expect([rejected({}).decision, rejected({ interruptedByShutdown: "true" }).decision]).toEqual(["denied", "denied"]);
+    expect(user([result(cancel)], { toolDenialKind: "cancelled", interruptedByShutdown: true }).decision).toBe("cancelled");
+  });
+
   test("counts an API error turn as an error", () => {
     const turn = normalize({
       type: "assistant", timestamp: "2026-10-17T10:00:05Z", isApiErrorMessage: true, error: "rate_limit", apiError: "usage_limit_reached", apiErrorStatus: 429,

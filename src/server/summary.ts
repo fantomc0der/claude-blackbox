@@ -144,7 +144,7 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): Sessio
     else folder.working ??= root.record;
   }
 
-  const changed = new Map<string, { path: string; count: number; errors: number; denied: number; changes: SummaryChange[] }>();
+  const changed = new Map<string, { path: string; count: number; errors: number; stopped: number; changes: SummaryChange[] }>();
   const read = new Map<string, { path: string; reads: number; record: SummaryRecord }>();
   for (const call of calls) {
     const path = resolveRecorded(call.path, call.cwd);
@@ -158,10 +158,10 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): Sessio
       continue;
     }
     let entry = changed.get(key);
-    if (!entry) changed.set(key, entry = { path, count: 0, errors: 0, denied: 0, changes: [] });
+    if (!entry) changed.set(key, entry = { path, count: 0, errors: 0, stopped: 0, changes: [] });
     entry.count++;
     if (call.error) entry.errors++;
-    if (call.decision) entry.denied++;
+    if (call.decision) entry.stopped++;
     if (entry.changes.length < changeLimit) entry.changes.push({ ...call.record, tool: call.tool, error: call.error, decision: call.decision });
     else limited = true;
   }
