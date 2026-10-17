@@ -48,7 +48,8 @@ export function isRequestMessage(event: Pick<ReplayEvent, "type">): boolean {
   return event.type === "api-request-blob";
 }
 
-/** A record Claude Code wrote itself in place of a model turn: an API error, or a stand-in such as `No response requested.`. */
+/** A record Claude Code wrote itself: in place of a model turn, an API error or a stand-in such as `No response requested.`,
+ *  or in place of a prompt, the interruption marker it writes when a turn is interrupted. */
 export function isStandIn(event: Pick<ReplayEvent, "category">): boolean {
   return event.category === "synthetic";
 }

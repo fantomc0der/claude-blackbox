@@ -344,7 +344,8 @@ await writeFile(join(folder, "overview-files.jsonl"), [
   overviewText("The overview files are ready.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
-// messages, plus one genuine failure: the Errors tab labels each, and only the failure counts as an error. The
+// messages, the interruption marker it writes as a user record after the interrupted result, plus one genuine failure:
+// the Errors tab labels each, and only the failure counts as an error. The
 // rejection and the cancellation carry the kinds Claude Code 2.1.30x files beside those messages; the hook stop and the
 // interruption carry none, as an older recording's would. The Marrowgate recording's cancellation carries none either.
 const decisionCall = (sequence: number, id: string, name: string, input: Record<string, unknown>) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "tool_use", id, name, input }], model: "claude-sonnet-4-5" } });
@@ -358,6 +359,7 @@ await writeFile(join(folder, "decisions.jsonl"), [
   decisionResult(4, "decision-hook", "Execution stopped by PreToolUse hook: protected branch"),
   decisionCall(5, "decision-interrupted", "Bash", { command: "sleep 600" }),
   decisionResult(6, "decision-interrupted", "[Request interrupted by user for tool use]"),
+  { ...event("[Request interrupted by user for tool use]", 6), uuid: "browser-interruption-marker" },
   decisionCall(7, "decision-edit", "Edit", { file_path: "/synthetic/browser-tests/src/config.ts", old_string: "a", new_string: "b" }),
   kindResult(8, "decision-edit", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", "cancelled"),
   decisionCall(9, "decision-failed", "Bash", { command: "bun test tests/decisions.test.ts" }),

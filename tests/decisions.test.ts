@@ -140,6 +140,22 @@ describe("normalized error flags", () => {
     expect(normalize({ type: "system", level: "error", content: "Hook failed" }, "s", 0, 3).error).toBe(true);
   });
 
+  // Claude Code writes its interruption marker as a user record itself when a turn is interrupted; the user typed nothing.
+  test("reads Claude Code's interruption marker as its own record, not as a prompt", () => {
+    const marker = (content: unknown, extra: Record<string, unknown> = {}) => { const event = user(content, extra); return [event.role, event.category, event.error, event.decision]; };
+    expect(marker([{ type: "text", text: "[Request interrupted by user for tool use]" }])).toEqual(["user", "synthetic", false, null]);
+    expect(marker([{ type: "text", text: "[Request interrupted by user]" }])).toEqual(["user", "synthetic", false, null]);
+    expect(marker("[Request interrupted by user]")).toEqual(["user", "synthetic", false, null]);
+    expect(marker(" [Request interrupted by user] \n")).toEqual(["user", "synthetic", false, null]);
+    // Only the marker alone is Claude Code's: a prompt that quotes or extends it, or a second block beside it, is the user's.
+    expect(marker("[Request interrupted by user] then resumed")).toEqual(["user", "message", false, null]);
+    expect(marker("It printed [Request interrupted by user]")).toEqual(["user", "message", false, null]);
+    expect(marker([{ type: "text", text: "[Request interrupted by user]" }, { type: "text", text: "Carry on" }])).toEqual(["user", "message", false, null]);
+    // The same text as a tool result is the interrupted call's decision, and a meta record is a system record.
+    expect(marker([result("[Request interrupted by user for tool use]")])).toEqual(["user", "tool", false, "interrupted"]);
+    expect(marker("[Request interrupted by user]", { isMeta: true })).toEqual(["system", "system", false, null]);
+  });
+
   // Claude Code 2.1.302 shows this banner while it waits to retry a request and never writes it to a recording.
   test("never counts an API retry banner as an error, whatever its level", () => {
     const banner = { type: "system", subtype: "api_error", level: "error", error: { status: 529 }, retryInMs: 4210, retryAttempt: 2, maxRetries: 10, timestamp: "2026-10-17T10:00:04Z", uuid: "r1" };

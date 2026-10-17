@@ -72,11 +72,14 @@ describe("Claude Code recording generations", () => {
     const { of, view } = await indexed();
     const { session, all, events, find, facets, named, landing } = view("2.0");
     // Eleven records: the summary, two local command records, two prompts and an interruption marker, three replies, and
-    // the failed and refused results. Each reply holds text, so each is a message; the interruption marker is one too.
-    expect(counts(session)).toEqual({ events: 11, messages: 6, tools: 2, errors: 1, apiErrors: 0, decisions: 1 });
-    expect(categories(all.items)).toEqual({ system: 3, message: 6, tool: 2 });
+    // the failed and refused results. Each reply holds text, so each is a message; the interruption marker is Claude
+    // Code's own record, a stand-in like an API error turn, so it is not one and is not a prompt.
+    expect(counts(session)).toEqual({ events: 11, messages: 5, tools: 2, errors: 1, apiErrors: 0, decisions: 1 });
+    expect(categories(all.items)).toEqual({ system: 3, message: 5, tool: 2, synthetic: 1 });
     expect([all.total, events({ kind: "conversation" }).total, all.hiddenTotal]).toEqual([11, 8, 0]);
     expect(events({ kind: "conversation" }).total).toBe(conversationRecords(of("2.0"), all.items));
+    expect(all.items[8]).toMatchObject({ role: "user", category: "synthetic", error: false, decision: null });
+    expect(events({ kind: "prompts" }).items.map(event => event.sequence)).toEqual([3, 9]);
     // The failure counts as an error; the refusal is a decision read from its message alone, and the Errors view shows both.
     expect(all.items.filter(event => event.error).map(event => event.sequence)).toEqual([5]);
     expect(all.items.filter(event => event.decision).map(event => [event.sequence, event.decision])).toEqual([[7, "denied"]]);
@@ -136,13 +139,15 @@ describe("Claude Code recording generations", () => {
     const { of, view } = await indexed();
     const { session, all, events, find, facets, named, landing } = view("2.1.30x");
     // 57 records: 25 transcript records, seven request log records with a version, nine message copies, and sixteen
-    // state and bookkeeping records. Two of the ten assistant records are Claude Code's own stand-ins, never messages.
-    expect(counts(session)).toEqual({ events: 57, messages: 6, tools: 5, errors: 1, apiErrors: 1, decisions: 4 });
-    expect(categories(all.items)).toEqual({ system: 38, message: 6, tool: 10, hidden: 1, synthetic: 2 });
+    // state and bookkeeping records. Two of the ten assistant records and the interruption marker are Claude Code's own
+    // stand-ins, never messages.
+    expect(counts(session)).toEqual({ events: 57, messages: 5, tools: 5, errors: 1, apiErrors: 1, decisions: 4 });
+    expect(categories(all.items)).toEqual({ system: 38, message: 5, tool: 10, hidden: 1, synthetic: 3 });
     expect([all.total, events({ kind: "conversation" }).total, all.hiddenTotal]).toEqual([57, 18, 1]);
     expect(events({ kind: "conversation" }).total).toBe(conversationRecords(of("2.1.30x"), all.items));
-    // The interruption marker is a user record with text, so it is listed among the prompts.
-    expect(events({ kind: "prompts" }).items.map(event => event.sequence)).toEqual([1, 28, 37, 47]);
+    // The interruption marker is Claude Code's own record, not the user's words, so it is not listed among the prompts.
+    expect(all.items[28]).toMatchObject({ role: "user", category: "synthetic", error: false, decision: null });
+    expect(events({ kind: "prompts" }).items.map(event => event.sequence)).toEqual([1, 37, 47]);
     expect(events({ kind: "responses" }).items.map(event => event.sequence)).toEqual([6, 51]);
     // Each decision is read from the `toolDenialKind` beside it; a PreToolUse hook's denial, filed as a permission rule,
     // is told apart by its message. Only the API error turn is an error, and the Errors view lists all five.
