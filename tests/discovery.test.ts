@@ -176,7 +176,7 @@ test("version 5 indexes reclassify reasoning the API did not return", async () =
   const after = await setup.open();
   expect(after.events(session.id, new URLSearchParams("kind=conversation")).items.map(event => event.sequence)).toEqual([0]);
   expect(after.events(session.id, new URLSearchParams("kind=thinking")).total).toBe(0);
-  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(17);
+  expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(18);
 });
 
 test("version 6 indexes clean terminal styling out of stored titles without rescanning recordings", async () => {
@@ -266,11 +266,78 @@ test("version 7 indexes re-index only the recordings that hold API request messa
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
   expect(version()).toBe(7);
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(cwds(copied.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.events(copied.id, new URLSearchParams("kind=edits")).items.map(event => event.sequence)).toEqual([1, 2]);
   expect(after.getSession(copied.id)?.toolCount).toBe(1);
+});
+
+// The user message Claude Code sends for a prompt merges the prompt with the context it composed, so its copy repeats
+// the prompt's text block, and the context an `attachment` record rendered, beside context no other record holds.
+const text = (value: string) => ({ type: "text", text: value });
+const hookContext = "<system-reminder>SessionStart hook additional context: Fernhollow conventions</system-reminder>";
+const hookAttachment = { type: "attachment", cwd: "/synthetic/project", timestamp: "2026-09-20T12:00:00Z",
+  attachment: { type: "hook_additional_context", content: ["Fernhollow conventions"], hookName: "SessionStart" }, rendered: [{ content: [text(hookContext)] }] };
+
+test("API request message copies leave out the text an earlier user or attachment record holds", async () => {
+  const setup = await fixture();
+  const source = await setup.write("prompted", [
+    hookAttachment,
+    record("Port the Fernhollow importer"),
+    requestBlob("hash-prompt", { role: "user", content: [text(hookContext), text("Port the Fernhollow importer"), text("<system-reminder>Fernhollow budget: 9000 tokens left.</system-reminder>")] }),
+    apiRequest(["hash-prompt"]),
+  ]);
+  let recorder = await setup.open();
+  const session = recorder.list(new URLSearchParams()).items[0];
+  const find = (term: string) => recorder.matches(session.id, new URLSearchParams({ kind: "all", find: term })).items.map(item => item.sequence);
+  const copies = () => recorder.events(session.id, new URLSearchParams("kind=all")).items.filter(event => event.type === "api-request-blob");
+  const append = (records: unknown[]) => appendFile(source, records.map(value => JSON.stringify(value)).join("\n") + "\n");
+  // Only the reminder no other record holds stays searchable on the copy, and the page carries that stored text.
+  expect(copies().map(event => event.text)).toEqual(["type: text\ntext: <system-reminder>Fernhollow budget: 9000 tokens left.</system-reminder>"]);
+  expect([find("Fernhollow"), find("importer"), find("conventions"), find("budget")]).toEqual([[0, 1, 2], [1], [0], [2]]);
+  expect(recorder.events(session.id, new URLSearchParams({ kind: "all", q: "importer" })).items.map(event => event.sequence)).toEqual([1]);
+  // A read that resumes at the cursor knows the records indexed before it, whether the copy arrives with its prompt, in
+  // a later read, or after a restart. A user record that holds a tool result holds none of the copy's text, and a queued
+  // prompt's attachment holds what it renders for the human turn.
+  await append([record("Retry the Fernhollow port"), requestBlob("hash-second", { role: "user", content: "Retry the Fernhollow port" }), apiRequest(["hash-second"])]);
+  await recorder.scan();
+  await append([
+    record("Continue in the Fernhollow worktree"),
+    record("", { message: { content: [{ type: "tool_result", tool_use_id: "call", content: "Done" }, text("Fernhollow tool note")] } }),
+    { ...hookAttachment, attachment: { type: "queued_command", prompt: "Sweep the Fernhollow queue" }, rendered: [{ content: "The user sent a message while you were working: Sweep the Fernhollow queue" }], renderedInHumanTurn: [{ content: "Sweep the Fernhollow queue" }] },
+  ]);
+  await recorder.scan();
+  await append([requestBlob("hash-third", { role: "user", content: [text(hookContext), text("Continue in the Fernhollow worktree"), text("Fernhollow tool note")] }), apiRequest(["hash-third"])]);
+  await recorder.scan();
+  await recorder.close();
+  await append([requestBlob("hash-fourth", { role: "user", content: [text("Sweep the Fernhollow queue"), "Retry the Fernhollow port"] }), apiRequest(["hash-fourth"])]);
+  recorder = await setup.open();
+  expect(copies().map(event => [event.sequence, event.text]).slice(1)).toEqual([[5, ""], [10, "type: text\ntext: Fernhollow tool note"], [12, ""]]);
+  expect([find("Retry"), find("worktree"), find("Sweep"), find("tool note"), find("conventions")]).toEqual([[4], [7], [9], [8, 10], [0]]);
+});
+
+test("version 17 indexes re-index only the recordings whose API request message copies have searchable text", async () => {
+  const setup = await fixture();
+  await setup.write("repeated", [record("Repeat the Fernhollow prompt"), requestBlob("hash-repeat", { role: "user", content: [text("Repeat the Fernhollow prompt")] }), apiRequest(["hash-repeat"])]);
+  await setup.write("assistant", [record("Answer once"), requestBlob("hash-answer", { role: "assistant", content: [text("Answered")] }), apiRequest(["hash-answer"])]);
+  await setup.write("plain", [record("Plain prompt")]);
+  const before = await setup.open();
+  const sessions = Object.fromEntries(before.list(new URLSearchParams()).items.map(session => [session.title, session.id]));
+  // An earlier build kept the prompt a copy repeats in its searchable text.
+  before.db.query("UPDATE events SET text=? WHERE session_id=? AND type='api-request-blob'").run("type: text\ntext: Repeat the Fernhollow prompt", sessions["Repeat the Fernhollow prompt"]);
+  before.db.exec("UPDATE events SET cwd='/synthetic/stale'");
+  before.db.exec("PRAGMA user_version=17");
+  await before.close();
+  const after = await setup.open({ scan: false });
+  const version = () => after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+  const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
+  expect(version()).toBe(17);
+  await after.scan();
+  expect(version()).toBe(18);
+  expect(cwds(sessions["Repeat the Fernhollow prompt"])).not.toContain("/synthetic/stale");
+  expect([cwds(sessions["Answer once"]), cwds(sessions["Plain prompt"])]).toEqual([["/synthetic/stale"], ["/synthetic/stale"]]);
+  expect(after.matches(sessions["Repeat the Fernhollow prompt"], new URLSearchParams("kind=all&find=Fernhollow")).items.map(item => item.sequence)).toEqual([0]);
 });
 
 // When an API request fails for good, Claude Code records the failure itself as an `assistant` record marked
@@ -346,7 +413,7 @@ test("version 10 indexes re-index only the recordings that hold Claude Code's st
   expect(version()).toBe(10);
   expect([counts(failed.id), counts(quiet.id)]).toEqual([[2, 0], [2, 0]]);
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect([counts(failed.id), counts(quiet.id)]).toEqual([[1, 1], [1, 0]]);
   expect(after.events(failed.id, new URLSearchParams("kind=all&errors=1")).items.map(event => event.sequence)).toEqual([1]);
   expect(after.events(quiet.id, new URLSearchParams("kind=all")).items.map(event => event.category)).toEqual(["message", "synthetic"]);
@@ -390,7 +457,7 @@ test("version 8 indexes retitle recordings by Claude Code's first-prompt rules w
   expect(version()).toBe(8);
   expect(titles().commandFirst).toBe("/clear clear");
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(titles()).toEqual({ commandFirst: "Add retries to the upload client", ideFirst: "Why does the upload client hang?", review: "/review PR 12",
     outputOnly: "Session output-o", named: "Custom title", plain: "Plain prompt" });
   for (const id of [ids.commandFirst, ids.ideFirst, ids.outputOnly, ids.named, ids.plain]) expect(cwds(id)).toEqual(["/synthetic/stale"]);
@@ -421,7 +488,7 @@ test("version 11 indexes re-index only the recordings whose errors need telling 
   expect(version()).toBe(11);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   for (const title of ["Clean the install", "Run the tests"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Clean the install"])?.errorCount).toBe(0);
@@ -467,7 +534,7 @@ test("version 16 indexes count API errors and decisions in place and re-index on
   expect(version()).toBe(16);
   expect(after.getSession(sessions["Deploy the release"])?.errorCount).toBe(1);
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   for (const title of ["Deploy the release", "Run the batch", "Retry the request"]) expect(cwds(sessions[title])).toEqual(["/synthetic/project"]);
   expect(after.getSession(sessions["Retry the request"])?.errorCount).toBe(0);
   // A decision an earlier build recognized keeps its flag and takes its new label from the stored record, unread.
@@ -533,7 +600,7 @@ test("version 16 indexes retitle recordings by Claude Code's title precedence wi
   expect(version()).toBe(16);
   expect(titles().agent).toBe("Release");
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(titles()).toEqual({ summarized: "Earlier work on the Larkspur parser", agent: "Release reviewer", renamed: "Custom", legacy: "Custom on a prompt", teammate: "Harbor teammate", plain: "Plain prompt" });
   expect(named()).toEqual({ summarized: 1, agent: 4, renamed: 3, legacy: 3, teammate: 4, plain: 0 });
   for (const id of Object.values(ids)) expect(cwds(id)).toEqual(["/synthetic/stale"]);
@@ -682,7 +749,7 @@ test("version 12 indexes re-index only the recordings that hold Claude Code's ru
   expect(version()).toBe(12);
   expect(after.getSession(sessions["Price the work"])?.recordedCost).toBeNull();
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
   expect(after.getSession(sessions["Price the work"])).toMatchObject({ bookmarked: true, recordedCost: { costUSD: 1.27, models: { "claude-opus-5": { outputTokens: 300, costUSD: 1.27 } } } });
@@ -747,7 +814,7 @@ test("version 13 indexes re-index only the recordings that hold turn durations o
   expect(after.getSession(sessions["Time the work"])?.activeTime).toBeNull();
   expect(after.getSession(sessions["Price the work"])?.recordedCost).toMatchObject({ costUSD: 1.27, apiDurationMs: null, toolDurationMs: null });
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(cwds(sessions["Time the work"])).toEqual(["/synthetic/project"]);
   expect(cwds(sessions["Price the work"]).sort()).toEqual(["", "/synthetic/project"]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale"]);
@@ -775,7 +842,7 @@ test("version 14 indexes re-index only the recordings that Claude Code relocated
   const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT cwd FROM events WHERE session_id=? ORDER BY sequence").all(id).map(row => row.cwd);
   expect(version()).toBe(14);
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(cwds(sessions["Move to a worktree"])).toEqual(["/synthetic/project", worktree, worktree]);
   expect(cwds(sessions["Plain prompt"])).toEqual(["/synthetic/stale", "/synthetic/stale"]);
   expect(after.getSession(sessions["Move to a worktree"])).toMatchObject({ bookmarked: true, cwd: "/synthetic/project" });
@@ -802,7 +869,7 @@ test("version 15 indexes fill the Claude Code version and unrecognized records i
   expect(version()).toBe(15);
   expect(after.getSession(ids.formats)).toMatchObject({ version: "", unrecognizedCount: 0 });
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(after.getSession(ids.formats)).toMatchObject({ bookmarked: true, version: "2.1.302", unrecognizedCount: 4 });
   expect(after.getSession(ids.plain)).toMatchObject({ version: "2.1.278", unrecognizedCount: 0 });
   const catalog = await after.catalog();
@@ -834,7 +901,7 @@ test("version 15 and 16 indexes re-read a recording holding a record SQLite's JS
     const after = await setup.open({ scan: false });
     const cwds = (id: string) => after.db.query<{ cwd: string }, [string]>("SELECT DISTINCT cwd FROM events WHERE session_id=?").all(id).map(row => row.cwd);
     await after.scan();
-    expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(17);
+    expect(after.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(18);
     expect([cwds(ids.deep), cwds(ids.plain)]).toEqual([["/synthetic/project"], ["/synthetic/stale"]]);
     expect(after.getSession(ids.deep)).toMatchObject({ version: "2.1.302", errorCount: 1, apiErrorCount: 1 });
     expect(after.getSession(ids.plain)).toMatchObject({ version: "2.1.278", errorCount: 0 });
@@ -860,7 +927,7 @@ test("version 9 indexes re-index only the recordings that hold session state rec
   expect(version()).toBe(9);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0, 1]);
   await after.scan();
-  expect(version()).toBe(17);
+  expect(version()).toBe(18);
   expect(cwds(stateful.id)).not.toContain("/synthetic/stale");
   expect(cwds(plain.id)).toEqual(["/synthetic/stale"]);
   expect(after.matches(stateful.id, new URLSearchParams("kind=all&find=Stateful")).items.map(item => item.sequence)).toEqual([0]);

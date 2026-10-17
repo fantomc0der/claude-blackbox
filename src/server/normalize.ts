@@ -56,10 +56,59 @@ export function isStandIn(raw: Record<string, unknown>): boolean {
   return raw.type === "assistant" && (object(raw.message).model === syntheticModel || isApiError(raw));
 }
 
-function requestMessageText(message: Record<string, unknown>): string {
+// Claude Code writes a blob only for a message no run of transcript records holds whole, but the user message it sends
+// for a prompt merges the prompt with the context composed for it, so that blob repeats the prompt's text block for
+// block, as it does any context an `attachment` record keeps in `rendered`. `TranscriptTexts` collects the text of a
+// recording's `user` records without tool blocks and its attachments' rendered messages, and a blob's text that an
+// earlier one holds is left out of its searchable text, so a prompt is found once, on its user record, while composed
+// context that no record holds stays searchable. `load` supplies the records already indexed when a read resumes at its
+// cursor without the previous read's collection, and runs only once a blob asks.
+export class TranscriptTexts {
+  private readonly hashes = new Set<number | bigint>();
+
+  constructor(private load?: () => Record<string, unknown>[]) {}
+
+  note(raw: Record<string, unknown>): void {
+    for (const text of transcriptTexts(raw)) this.hashes.add(Bun.hash(text));
+  }
+
+  has(text: string): boolean {
+    if (this.load) {
+      const load = this.load;
+      this.load = undefined;
+      for (const raw of load()) this.note(raw);
+    }
+    const trimmed = text.trim();
+    return trimmed !== "" && this.hashes.has(Bun.hash(trimmed));
+  }
+}
+
+function messageTexts(content: unknown): string[] {
+  if (typeof content === "string") return [content];
+  return Array.isArray(content) ? content.flatMap(entry => typeof entry === "string" ? [entry] : object(entry).type === "text" ? [string(object(entry).text)] : []) : [];
+}
+
+function transcriptTexts(raw: Record<string, unknown>): string[] {
+  let texts: string[] = [];
+  if (raw.type === "user") {
+    const content = object(raw.message).content;
+    const tools = Array.isArray(content) && content.some(entry => ["tool_use", "tool_result"].includes(string(object(entry).type)));
+    texts = tools ? [] : messageTexts(content);
+  } else if (raw.type === "attachment") {
+    texts = [raw.rendered, raw.renderedInHumanTurn].flatMap(rendered => Array.isArray(rendered) ? rendered.flatMap(message => messageTexts(object(message).content)) : []);
+  }
+  return texts.map(text => text.trim()).filter(Boolean);
+}
+
+function requestMessageText(message: Record<string, unknown>, transcript?: TranscriptTexts): string {
   if (message.role === "assistant") return "";
-  if (typeof message.content === "string") return message.content;
-  return Array.isArray(message.content) ? searchable(message.content.filter(entry => !copiedBlocks.has(string(object(entry).type)))) : "";
+  const held = (text: unknown) => transcript?.has(string(text)) ?? false;
+  if (typeof message.content === "string") return held(message.content) ? "" : message.content;
+  return Array.isArray(message.content) ? searchable(message.content.filter(entry => {
+    if (typeof entry === "string") return !held(entry);
+    const block = object(entry);
+    return !copiedBlocks.has(string(block.type)) && !(block.type === "text" && held(block.text));
+  })) : "";
 }
 
 // A bookkeeping or state record's prompt copy is held by the user record it repeats, so it is left out of the searchable
@@ -78,7 +127,7 @@ function relocatedCwd(type: string, raw: Record<string, unknown>): string {
   return type === "relocated" ? string(raw.relocatedCwd) : "";
 }
 
-export function normalize(raw: Record<string, unknown>, sourceId: string, offset: number, sequence: number): ReplayEvent {
+export function normalize(raw: Record<string, unknown>, sourceId: string, offset: number, sequence: number, transcript?: TranscriptTexts): ReplayEvent {
   const message = object(raw.message);
   const type = string(raw.type) || "unknown";
   const role = (type === "user" || type === "assistant") && raw.isMeta !== true && raw.isCompactSummary !== true ? type : "system";
@@ -93,7 +142,7 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     return { ...block, type: string(block.type) || "unknown" } as ContentBlock;
   });
   if (!blocks.length && !note && typeof raw.summary === "string") blocks = [{ type: "text", text: raw.summary }];
-  const text = copy ? requestMessageText(message) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
+  const text = copy ? requestMessageText(message, transcript) : note ? noteText(type, raw) : blocks.length ? searchable(blocks) : searchable(raw);
   // Claude Code 2.1.30x writes a decided result's kind as `toolDenialKind` beside the result, on the record that holds
   // it, and when it loads a user rejection the session's shutdown cut short, marked `interruptedByShutdown`, it files
   // that as an interruption. Once the searchable text is taken, the kind is copied onto each flagged result, so a result
