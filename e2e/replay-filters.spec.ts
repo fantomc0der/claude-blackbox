@@ -117,7 +117,8 @@ test("reasoning the API did not return is kept out of the conversation but shown
   await expect(page.locator(".tool-thinking summary")).toHaveText("Reasoning");
   await page.getByRole("button", { name: "All events", exact: true }).click();
   await expect(page.locator(".replay-event")).toHaveCount(4);
-  await expect(page.locator(".tool-hidden")).toHaveText("Reasoning not returned by the API");
+  // The step's measured time and the API's thinking token count, recorded on the record itself, read on the note.
+  await expect(page.locator(".tool-hidden")).toHaveText("Reasoning not returned by the API · thought for 12s (1,840 thinking tokens)");
   await expect(page.locator(".replay-event").nth(1).locator("details.tool-thinking")).toHaveCount(0);
 });
 

@@ -79,6 +79,21 @@ export interface RecordedCost {
   /** Claude Code's `hasUnknownModelCost`: it could not price every model itself. */
   unknownModelCost: boolean;
   models: Record<string, RecordedModelUsage>;
+  /** The tracker's `totalAPIDuration`: milliseconds spent waiting on API requests, retries included. Null when the
+   *  record carries no readable value. */
+  apiDurationMs: number | null;
+  /** The tracker's `totalToolDuration`: milliseconds spent running tools. Null when the record carries no readable value. */
+  toolDurationMs: number | null;
+}
+
+/**
+ * The time Claude Code measured itself working in a recording: the sum of the `durationMs` of its `turn_duration`
+ * records, one per turn, as opposed to the span between the recording's first and last timestamps, which counts the
+ * pauses between turns. Null on a session whose recording holds no such record.
+ */
+export interface ActiveTime {
+  durationMs: number;
+  turns: number;
 }
 
 /** The sum of Claude Code's running totals over the recordings in a selection that carry one. */
@@ -121,6 +136,7 @@ export interface Session {
   source: string;
   usage: UsageSummary;
   recordedCost: RecordedCost | null;
+  activeTime: ActiveTime | null;
   snippet?: string;
   matchEventId?: string;
   matchCategory?: ReplayEvent["category"];

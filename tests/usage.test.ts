@@ -496,11 +496,21 @@ describe("Claude Code's recorded totals", () => {
     expect(recorded.models["claude-opus-5"]).toMatchObject({ inputTokens: 3, outputTokens: 276, thinkingTokens: 40, cacheCreationTokens: 94_896, cacheReadTokens: 100, webSearchRequests: 1 });
     expect(recorded.models["claude-opus-5"].costUSD).toBeCloseTo(1, 9);
     expect(recorded.models["claude-haiku-4-5"]).toEqual({ inputTokens: 1000, outputTokens: 0, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, webSearchRequests: 0, costUSD: 0.07 });
-    expect(readCostState(costState(0.5, { startTime: "2026-09-20T12:00:00Z" }))).toEqual({ costUSD: 0.5, startedAt: "2026-09-20T12:00:00.000Z", unknownModelCost: false, models: {} });
+    expect(readCostState(costState(0.5, { startTime: "2026-09-20T12:00:00Z" }))).toEqual({ costUSD: 0.5, startedAt: "2026-09-20T12:00:00.000Z", unknownModelCost: false, models: {}, apiDurationMs: null, toolDurationMs: null });
     expect(readCostState(costState(0.5, { startTime: "soon", modelUsage: "none" }))).toMatchObject({ startedAt: "", models: {} });
     expect(readCostState(costState(0))?.costUSD).toBe(0);
     for (const total of [undefined, -1, Number.NaN, Number.POSITIVE_INFINITY, "1.27"]) expect(readCostState(costState(total))).toBeNull();
     expect(readCostState({ type: "last-prompt", totalCostUSD: 1 })).toBeNull();
+  });
+
+  // The tracker also measures the time its API requests and tools took; `totalDuration` is left out because the clock
+  // behind it is restored across resumes, so it can exceed the recording's own span.
+  test("reads the measured API and tool time within Claude Code's own bounds", () => {
+    expect(readCostState(costState(1, { totalAPIDuration: 450_000, totalToolDuration: 132_000.5, totalDuration: 9_000_000 }))).toMatchObject({ apiDurationMs: 450_000, toolDurationMs: 132_000.5 });
+    expect(readCostState(costState(1, { totalAPIDuration: 0, totalToolDuration: 1e15 }))).toMatchObject({ apiDurationMs: 0, toolDurationMs: 1e15 });
+    for (const bad of [undefined, -1, Number.NaN, Number.POSITIVE_INFINITY, 1e15 + 1, "450000", null]) {
+      expect(readCostState(costState(1, { totalAPIDuration: bad, totalToolDuration: bad }))).toMatchObject({ apiDurationMs: null, toolDurationMs: null });
+    }
   });
 
   test("indexes the last total of each recording, follows appended ones and sums them over a selection", async () => {
@@ -516,7 +526,7 @@ describe("Claude Code's recorded totals", () => {
     const recorder = await setup.open();
     const page = recorder.list(new URLSearchParams());
     const costed = page.items.find(item => item.sessionId === "session-a" && !item.isAgent)!;
-    expect(costed.recordedCost).toEqual({ costUSD: 1.25, startedAt: "", unknownModelCost: false,
+    expect(costed.recordedCost).toEqual({ costUSD: 1.25, startedAt: "", unknownModelCost: false, apiDurationMs: null, toolDurationMs: null,
       models: { "claude-sonnet-4-5": { inputTokens: 0, outputTokens: 200, thinkingTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, webSearchRequests: 0, costUSD: 1.25 } } });
     expect(page.items.find(item => item.sessionId === "session-b")!.recordedCost).toBeNull();
     // The selection's total spans the same recordings as its usage: hidden subagents add nothing unless they carry one.
@@ -524,10 +534,10 @@ describe("Claude Code's recorded totals", () => {
     expect(recorder.list(new URLSearchParams({ agents: "1" })).recordedCost).toEqual({ costUSD: 1.25, recordings: 1 });
     expect(recorder.list(new URLSearchParams({ agents: "only" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
     expect(recorder.list(new URLSearchParams({ cwd: "C:\work\elsewhere" })).recordedCost).toEqual({ costUSD: 0, recordings: 0 });
-    // A later turn's total replaces the stored one; a turn without one keeps it.
-    await appendFile(file, [...turn("third", 2), record("fourth")].map(value => JSON.stringify(value)).join("\n") + "\n");
+    // A later turn's total replaces the stored one, measured time included; a turn without one keeps it.
+    await appendFile(file, [...turn("third", 2), costState(2, { totalAPIDuration: 450_000, totalToolDuration: 132_000 }), record("fourth")].map(value => JSON.stringify(value)).join("\n") + "\n");
     await recorder.scan();
-    expect(recorder.getSession(costed.id)?.recordedCost).toMatchObject({ costUSD: 2, models: { "claude-sonnet-4-5": { outputTokens: 200, costUSD: 2 } } });
+    expect(recorder.getSession(costed.id)?.recordedCost).toMatchObject({ costUSD: 2, apiDurationMs: 450_000, toolDurationMs: 132_000 });
     expect(recorder.list(new URLSearchParams()).recordedCost).toEqual({ costUSD: 2, recordings: 1 });
     // The estimate still covers only the requests the recording holds.
     expect(recorder.getSession(costed.id)?.usage.requests).toBe(4);

@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, RecordedCost, RecordedCostTotal, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
 import { resultDecision } from "../shared/decisions";
-import { sessionStateTypes } from "../shared/records";
+import { sessionStateTypes, turnDuration } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -24,8 +24,10 @@ interface SourceRow {
   id: string; session_id: string; source: string; cwd: string; title: string; branch: string; model: string;
   started: string; updated: string; events: number; messages: number; tools: number; errors: number;
   edits: number; agent: number; size: number; mtime: number; cursor: number; fingerprint: string;
-  warnings: number; named: number; identity: string; tailprint: string; group_id?: string; group_name?: string; bookmarked?: number;
+  warnings: number; named: number; identity: string; tailprint: string; turns: number; active_ms: number;
+  group_id?: string; group_name?: string; bookmarked?: number;
   recorded_cost?: number | null; recorded_started?: string | null; recorded_unknown?: number | null; recorded_models?: string | null;
+  recorded_api_ms?: number | null; recorded_tool_ms?: number | null;
 }
 
 interface StoredEvent { raw: string; event_id: string; sequence: number; offset: number; text: string }
@@ -59,7 +61,8 @@ const schema = `
     errors INTEGER NOT NULL DEFAULT 0, edits INTEGER NOT NULL DEFAULT 0, agent INTEGER NOT NULL DEFAULT 0,
     size INTEGER NOT NULL DEFAULT 0, mtime REAL NOT NULL DEFAULT 0, cursor INTEGER NOT NULL DEFAULT 0,
     fingerprint TEXT NOT NULL DEFAULT '', warnings INTEGER NOT NULL DEFAULT 0, named INTEGER NOT NULL DEFAULT 0,
-    identity TEXT NOT NULL DEFAULT '', tailprint TEXT NOT NULL DEFAULT ''
+    identity TEXT NOT NULL DEFAULT '', tailprint TEXT NOT NULL DEFAULT '',
+    turns INTEGER NOT NULL DEFAULT 0, active_ms INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS events (
     rowid INTEGER PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -80,7 +83,7 @@ const schema = `
   CREATE TABLE IF NOT EXISTS session_costs (
     session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     cost REAL NOT NULL, started TEXT NOT NULL DEFAULT '', unknown_models INTEGER NOT NULL DEFAULT 0,
-    model_usage TEXT NOT NULL DEFAULT '{}'
+    model_usage TEXT NOT NULL DEFAULT '{}', api_ms REAL, tool_ms REAL
   );
   CREATE TABLE IF NOT EXISTS tool_results (
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -120,7 +123,8 @@ const joins = `FROM sessions s LEFT JOIN group_paths gp ON gp.path = s.cwd
   LEFT JOIN groups g ON g.id = gp.group_id LEFT JOIN bookmarks b ON b.session_id = s.id
   LEFT JOIN session_costs sc ON sc.session_id = s.id`;
 const columns = `s.*, g.id AS group_id, g.name AS group_name, (b.session_id IS NOT NULL) AS bookmarked,
-  sc.cost AS recorded_cost, sc.started AS recorded_started, sc.unknown_models AS recorded_unknown, sc.model_usage AS recorded_models`;
+  sc.cost AS recorded_cost, sc.started AS recorded_started, sc.unknown_models AS recorded_unknown, sc.model_usage AS recorded_models,
+  sc.api_ms AS recorded_api_ms, sc.tool_ms AS recorded_tool_ms`;
 const snippetLimit = 262_144;
 const sessionUsageJoin = `LEFT JOIN (SELECT session_id, count(*) AS usageRequests, count(cost) AS pricedRequests,
   sum(cost) AS knownCost, sum(input+output+cache_creation+cache_read) AS usageTokens
@@ -140,7 +144,11 @@ function recordedCostOf(row: SourceRow): RecordedCost | null {
   if (typeof row.recorded_cost !== "number") return null;
   let models: RecordedCost["models"] = {};
   try { models = JSON.parse(row.recorded_models || "{}") as RecordedCost["models"]; } catch { /* an unreadable breakdown leaves the total */ }
-  return { costUSD: row.recorded_cost, startedAt: row.recorded_started || "", unknownModelCost: row.recorded_unknown === 1, models };
+  return {
+    costUSD: row.recorded_cost, startedAt: row.recorded_started || "", unknownModelCost: row.recorded_unknown === 1, models,
+    apiDurationMs: typeof row.recorded_api_ms === "number" ? row.recorded_api_ms : null,
+    toolDurationMs: typeof row.recorded_tool_ms === "number" ? row.recorded_tool_ms : null,
+  };
 }
 
 function agentFileId(source: string): string {
@@ -233,13 +241,18 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 13) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 14) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
     const fields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all().map(row => row.name));
     if (!fields.has("identity")) db.exec("ALTER TABLE sessions ADD COLUMN identity TEXT NOT NULL DEFAULT ''");
     if (!fields.has("tailprint")) db.exec("ALTER TABLE sessions ADD COLUMN tailprint TEXT NOT NULL DEFAULT ''");
+    if (!fields.has("turns")) db.exec("ALTER TABLE sessions ADD COLUMN turns INTEGER NOT NULL DEFAULT 0");
+    if (!fields.has("active_ms")) db.exec("ALTER TABLE sessions ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0");
+    const costFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(session_costs)").all().map(row => row.name));
+    if (!costFields.has("api_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN api_ms REAL");
+    if (!costFields.has("tool_ms")) db.exec("ALTER TABLE session_costs ADD COLUMN tool_ms REAL");
     const usageFields = new Set(db.query<{ name: string }, []>("PRAGMA table_info(usage_records)").all().map(row => row.name));
     if (!usageFields.has("model")) db.exec("ALTER TABLE usage_records ADD COLUMN model TEXT NOT NULL DEFAULT ''");
     if (!usageFields.has("effort")) db.exec("ALTER TABLE usage_records ADD COLUMN effort TEXT");
@@ -358,8 +371,8 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9, 10, 11, 12, and 13 steps
-    // below follow it in order for the same reason.
+    // its port, and before the recordings are compared with what was indexed; the version 9 to 14 steps below follow it
+    // in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
@@ -406,6 +419,15 @@ export class Recorder {
       this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='cost-state')");
       this.db.exec("PRAGMA user_version=13");
     })();
+    // Version 14 sums Claude Code's `turn_duration` records into `sessions.turns` and `sessions.active_ms` and keeps the
+    // API and tool time of the last `cost-state` record in `session_costs`, none of which earlier builds filled. Only
+    // the recordings holding either record are re-read; finding them reads every event, like version 8. The stored raw
+    // record is `JSON.stringify` of the parsed record, so the subtype is matched as it is serialized there.
+    if (version < 14) this.db.transaction(() => {
+      this.db.exec(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events
+        WHERE type='cost-state' OR (type='system' AND instr(raw,'"subtype":"turn_duration"')>0))`);
+      this.db.exec("PRAGMA user_version=14");
+    })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
     const files: string[] = [];
@@ -438,7 +460,7 @@ export class Recorder {
           this.db.query("DELETE FROM session_costs WHERE session_id = ?").run(id);
           this.db.query("DELETE FROM session_facets WHERE session_id = ?").run(id);
           this.db.query(`UPDATE sessions SET title='',cwd='',branch='',model='',started='',updated='',events=0,
-            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0 WHERE id=?`).run(id);
+            messages=0,tools=0,errors=0,edits=0,cursor=0,warnings=0,named=0,turns=0,active_ms=0 WHERE id=?`).run(id);
         })();
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id)!;
         // Claude Code files `cost-state` as last-wins, so the last one read replaces the stored total; a read that
@@ -492,6 +514,8 @@ export class Recorder {
           if (!line.value) { row.warnings += Number(line.malformed); continue; }
           const event = normalize(line.value, id, line.offset, row.events);
           recordedCost = readCostState(line.value) ?? recordedCost;
+          const turn = turnDuration(line.value);
+          if (turn !== null) { row.turns++; row.active_ms += turn; }
           row.events++;
           row.messages += Number(event.category === "message");
           row.tools += event.toolNames.length;
@@ -513,14 +537,15 @@ export class Recorder {
           if (batch.length >= 250) { write(batch); batch = []; await Bun.sleep(0); }
         }
         write(batch);
-        if (recordedCost) this.db.query("INSERT OR REPLACE INTO session_costs(session_id,cost,started,unknown_models,model_usage) VALUES (?,?,?,?,?)")
-          .run(id, recordedCost.costUSD, recordedCost.startedAt, Number(recordedCost.unknownModelCost), JSON.stringify(recordedCost.models));
+        if (recordedCost) this.db.query("INSERT OR REPLACE INTO session_costs(session_id,cost,started,unknown_models,model_usage,api_ms,tool_ms) VALUES (?,?,?,?,?,?,?)")
+          .run(id, recordedCost.costUSD, recordedCost.startedAt, Number(recordedCost.unknownModelCost), JSON.stringify(recordedCost.models), recordedCost.apiDurationMs, recordedCost.toolDurationMs);
         const stamp = new Date(info.mtimeMs).toISOString();
         this.db.query(`UPDATE sessions SET cwd=?,title=?,branch=?,model=?,started=?,updated=?,events=?,messages=?,tools=?,errors=?,
-          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=? WHERE id=?`).run(
+          edits=?,size=?,mtime=?,cursor=?,fingerprint=?,warnings=?,named=?,session_id=?,identity=?,tailprint=?,turns=?,active_ms=? WHERE id=?`).run(
           row.cwd, row.title || `Session ${row.session_id.slice(0, 8)}`, row.branch, row.model, row.started || stamp, row.updated || stamp,
           row.events, row.messages, row.tools, row.errors, row.edits, info.size, info.mtimeMs, row.cursor,
-          await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true), id);
+          await this.fingerprint(path, info.size), row.warnings, row.named, row.session_id, identity, await this.fingerprint(path, info.size, true),
+          row.turns, row.active_ms, id);
         changed.push(id);
         // Let live clients see a long first index fill in instead of an empty library.
         if (performance.now() - publishedAt >= 1000) {
@@ -589,6 +614,7 @@ export class Recorder {
       source: relative(this.dataDir, row.source),
       usage: this.db.query<UsageSummary, [string]>(`SELECT ${usageColumns} FROM usage_records WHERE session_id=?`).get(row.id)!,
       recordedCost: recordedCostOf(row),
+      activeTime: row.turns > 0 ? { durationMs: row.active_ms, turns: row.turns } : null,
     };
   }
 
@@ -844,6 +870,8 @@ export class Recorder {
       tokens: "(session_usage.usageRequests IS NOT NULL) DESC, session_usage.usageTokens DESC",
       "tokens-asc": "(session_usage.usageRequests IS NOT NULL) DESC, session_usage.usageTokens ASC",
       errors: "s.errors DESC", tools: "s.tools DESC", duration: "(julianday(s.updated)-julianday(s.started)) DESC",
+      // Recordings without a measured turn have no active time, so they follow every measured one rather than ranking as 0.
+      active: "(s.turns>0) DESC, s.active_ms DESC",
       title: "s.title COLLATE NOCASE ASC",
     };
     const sort = params.get("sort") || "recent";

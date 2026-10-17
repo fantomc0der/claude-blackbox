@@ -13,11 +13,11 @@ test("archive filters expose the usage contract and reset cleanly", async ({ pag
   await expect(page).toHaveURL(/\/$/);
 });
 
-test("recording sort options include cost, tokens, errors, tools, and span", async ({ page }) => {
+test("recording sort options include cost, tokens, errors, tools, active time, and span", async ({ page }) => {
   await page.goto("/");
   const sort = page.getByLabel("Sort recordings");
   await expect(sort).toHaveValue("recent");
-  for (const value of ["cost", "cost-asc", "tokens", "tokens-asc", "errors", "tools", "duration", "title"]) {
+  for (const value of ["cost", "cost-asc", "tokens", "tokens-asc", "errors", "tools", "active", "duration", "title"]) {
     await sort.selectOption(value);
     await expect(sort).toHaveValue(value);
   }

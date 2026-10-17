@@ -1,4 +1,35 @@
-import type { RecordedCost, RecordedCostTotal, Session, UsageSummary } from "../../shared/types";
+import type { ActiveTime, RecordedCost, RecordedCostTotal, Session, UsageSummary } from "../../shared/types";
+
+/** A measured length of time: `42s`, `5m 36s`, `6h 39m`, `1d 3h`. A positive time under half a second reads as `<1s`. */
+export function duration(milliseconds: number): string {
+  const seconds = Math.round(milliseconds / 1000);
+  if (milliseconds > 0 && seconds === 0) return "<1s";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ${minutes % 60}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+/** Where a recording's active time comes from, and why it differs from its recorded span. */
+export const activeTimeNote = "Active time is the sum of the turn durations that Claude Code 2.1.27x and later measure and write at the end of each turn, from the prompt to the reply. The recorded span runs from the first to the last recorded timestamp and counts the pauses between turns.";
+
+export function activeTimeSummary(active: ActiveTime): string {
+  return `${duration(active.durationMs)} across ${tokenCount(active.turns)} ${active.turns === 1 ? "turn" : "turns"}`;
+}
+
+/** Claude Code's own measured API and tool time from its running total, as `7m 30s in API calls · 2m 12s in tools`; empty when it measured neither. */
+export function measuredTime(recorded: RecordedCost): string {
+  return [recorded.apiDurationMs !== null ? `${duration(recorded.apiDurationMs)} in API calls` : "", recorded.toolDurationMs !== null ? `${duration(recorded.toolDurationMs)} in tools` : ""].filter(Boolean).join(" · ");
+}
+
+export const measuredTimeNote = "The tracker behind Claude Code's running total also measures the time its API requests took, retries included, and the time its tools ran, over the same requests the total counts.";
+
+/** How long the model thought on a reasoning step, with the thinking tokens the API reported for it when it did. */
+export function thinkingSummary(measure: { durationMs: number; tokens: number | null }): string {
+  return `thought for ${duration(measure.durationMs)}${measure.tokens !== null ? ` (${tokenCount(measure.tokens)} thinking tokens)` : ""}`;
+}
 
 export function dollars(value: number): string {
   if (value > 0 && value < 0.01) return "<$0.01";

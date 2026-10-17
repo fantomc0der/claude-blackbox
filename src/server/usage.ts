@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { RecordedCost, RecordedModelUsage, UsageSummary } from "../shared/types";
 import { object, string, syntheticModel } from "./normalize";
 import { isFacetValue } from "./facets";
+import { recordedDuration } from "../shared/records";
 
 /** Rate multipliers for a request whose prompt, counting cache reads and writes, is over `above` tokens. */
 interface LongContext { above: number; input: number; output: number }
@@ -123,7 +124,9 @@ function money(value: unknown): number | null {
  * on resume, files the type as last-wins, and restores its tracker from it, so the last record in a recording holds the
  * session's total so far. `modelUsage` is keyed by the requested model string (`claude-opus-5[1m]`,
  * `claude-haiku-4-5-20251001`), which `normalizeModel()` maps onto the rate table's keys; models that normalize to the
- * same key are summed. A record without a readable `totalCostUSD` is not a total.
+ * same key are summed. A record without a readable `totalCostUSD` is not a total. The tracker's `totalAPIDuration`
+ * and `totalToolDuration` come along as measured time; `totalDuration` does not, because the tracker's clock is
+ * restored across resumes of the session, so it measures process time rather than the recording.
  */
 export function readCostState(raw: Record<string, unknown>): RecordedCost | null {
   if (raw.type !== "cost-state") return null;
@@ -150,6 +153,8 @@ export function readCostState(raw: Record<string, unknown>): RecordedCost | null
     startedAt: Number.isFinite(started) ? new Date(started).toISOString() : "",
     unknownModelCost: raw.hasUnknownModelCost === true,
     models: Object.fromEntries(models),
+    apiDurationMs: recordedDuration(raw.totalAPIDuration),
+    toolDurationMs: recordedDuration(raw.totalToolDuration),
   };
 }
 

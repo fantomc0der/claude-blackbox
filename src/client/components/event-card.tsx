@@ -1,5 +1,6 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, createUniqueId, onSettled, untrack } from "solid-js";
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
+import { thinkingMeasure, turnDuration } from "../../shared/records";
 import {
   apiErrorLabel,
   boundedDiff,
@@ -35,7 +36,7 @@ import { decisionLabels, resultDecision, type Decision } from "../../shared/deci
 import { Markdown } from "./markdown";
 import { Highlight } from "./highlight";
 import { Icon, type IconName } from "./icon";
-import { modelName } from "../lib/format";
+import { duration, modelName, thinkingSummary, tokenCount } from "../lib/format";
 
 export interface SubagentNavigation {
   targets: Record<string, { id: string; label: string }>;
@@ -283,8 +284,25 @@ function ToolResult(props: { block: ContentBlock; call?: ContentBlock; highlight
   return <section class={`tool-card tool-result ${statusClass(status())}`}><Show when={props.call} fallback={output()}>{call => <><div class="tool-head"><div class="tool-summary tool-result-call"><ToolLabel block={call()} status={status()} previewId={previewId} /></div><ToolCopy block={call()} describedBy={previewId} /></div><div class="tool-content">{output()}</div></>}</Show></section>;
 }
 
-function HiddenReasoning(props: { label: string; detail: string }) {
-  return <p class="tool-hidden" title={props.detail}>{props.label}</p>;
+type ThinkingMeasure = NonNullable<ReturnType<typeof thinkingMeasure>>;
+
+// A reasoning step whose text the API kept back still has its measured time and token count, which Claude Code writes
+// on the record that carries the block, so the note says how long the model thought instead of nothing at all.
+function HiddenReasoning(props: { label: string; detail: string; measure?: ThinkingMeasure | null }) {
+  return <p class="tool-hidden" title={props.detail}>{props.label}<Show when={props.measure}>{measure => <> · {thinkingSummary(measure())}</>}</Show></p>;
+}
+
+const turnDurationDetail = "Claude Code 2.1.27x and later write this record at the end of each turn with the time it measured from the prompt to the reply and the number of messages it then held in memory. The recording's active time is the sum of these turns. The record carries no conversation content; Raw event shows it.";
+
+// A turn's measured time reads as a one-line note rather than as the record's fields. Like a session state note, its
+// searchable text shows only when a highlighted term is in it.
+function TurnDurationNote(props: { event: ReplayEvent; durationMs: number; highlight?: string }) {
+  const highlighted = () => Boolean(props.highlight) && mentions(props.event.text, props.highlight!);
+  const messages = () => { const count = props.event.raw.messageCount; return typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? count : null; };
+  return <>
+    <p class="tool-hidden turn-duration" title={turnDurationDetail}>Turn took {duration(props.durationMs)} · measured by Claude Code<Show when={messages() !== null}> · {tokenCount(messages()!)} {messages() === 1 ? "message" : "messages"} in memory</Show></p>
+    <Show when={highlighted()}><CodePanel title="turn_duration record" value={props.event.text} highlight={props.highlight} json /></Show>
+  </>;
 }
 
 const requestMessageDetail = "Claude Code stores each message it sends to the API once, just before the request that first sends it. Assistant turns, tool calls and results, and reasoning repeat records shown elsewhere in this recording; context Claude Code composed for the request, such as hook output, may appear only here.";
@@ -317,18 +335,18 @@ function SessionStateNote(props: { event: ReplayEvent; highlight?: string }) {
   </>;
 }
 
-function ThinkingBlock(props: { block: ContentBlock; highlight?: string }) {
+function ThinkingBlock(props: { block: ContentBlock; highlight?: string; measure?: ThinkingMeasure | null }) {
   const [open, setOpen] = createSignal(false);
   const text = () => getString(props.block.thinking) ?? getString(props.block.text) ?? "";
   createEffect(() => Boolean(props.highlight) && mentions(text(), props.highlight!), value => { if (value) setOpen(true); });
-  if (!text()) return <HiddenReasoning label="Reasoning not returned by the API" detail="The model reasoned here, but the API's thinking display setting returned only an encrypted signature, so there is no text to show." />;
-  return <details class="tool-thinking" open={open()} onToggle={(event) => { setOpen(event.currentTarget.open); }}><summary>Reasoning</summary><Show when={open()}><CodePanel title="Recorded reasoning" value={props.block.thinking ?? props.block.text ?? ""} highlight={props.highlight} /></Show></details>;
+  if (!text()) return <HiddenReasoning label="Reasoning not returned by the API" detail="The model reasoned here, but the API's thinking display setting returned only an encrypted signature, so there is no text to show." measure={props.measure} />;
+  return <details class="tool-thinking" open={open()} onToggle={(event) => { setOpen(event.currentTarget.open); }}><summary>Reasoning<Show when={props.measure}>{measure => <span class="thinking-measure"> · {thinkingSummary(measure())}</span>}</Show></summary><Show when={open()}><CodePanel title="Recorded reasoning" value={props.block.thinking ?? props.block.text ?? ""} highlight={props.highlight} /></Show></details>;
 }
 
-function BlockRenderer(props: { block: ContentBlock; results?: Record<string, ContentBlock>; calls?: Record<string, ContentBlock>; highlight?: string; subagents?: SubagentNavigation }) {
+function BlockRenderer(props: { block: ContentBlock; results?: Record<string, ContentBlock>; calls?: Record<string, ContentBlock>; highlight?: string; subagents?: SubagentNavigation; measure?: ThinkingMeasure | null }) {
   if (props.block.type === "text") return <Markdown content={props.block.text ?? ""} highlight={props.highlight} />;
-  if (props.block.type === "thinking") return <ThinkingBlock block={props.block} highlight={props.highlight} />;
-  if (props.block.type === "redacted_thinking") return <HiddenReasoning label="Reasoning redacted" detail="The API encrypted this reasoning step, so there is no text to show." />;
+  if (props.block.type === "thinking") return <ThinkingBlock block={props.block} highlight={props.highlight} measure={props.measure} />;
+  if (props.block.type === "redacted_thinking") return <HiddenReasoning label="Reasoning redacted" detail="The API encrypted this reasoning step, so there is no text to show." measure={props.measure} />;
   if (props.block.type === "tool_use") return <ToolUse block={props.block} result={props.block.id ? props.results?.[props.block.id] : undefined} highlight={props.highlight} subagents={props.subagents} />;
   if (props.block.type === "tool_result") return <ToolResult block={props.block} call={props.block.tool_use_id ? props.calls?.[props.block.tool_use_id] : undefined} highlight={props.highlight} />;
   if (isImageBlock(props.block)) return <Attachment block={props.block} />;
@@ -352,6 +370,8 @@ export function EventCard(props: EventCardProps) {
   // A glyph ahead of the label tells user and assistant turns apart at a glance; results, stand-ins, state notes, and system records keep the plain label.
   const roleIcon = createMemo((): IconName | undefined => presentation() === "user" ? "user" : presentation() === "assistant" ? "sparkle" : undefined);
   const hasBlocks = createMemo(() => props.event.blocks.length > 0);
+  const measure = createMemo(() => thinkingMeasure(props.event.raw));
+  const turn = createMemo(() => turnDuration(props.event.raw));
   const recordedModel = () => isRecord(props.event.raw.message) ? getString(props.event.raw.message.model) : undefined;
   const permalink = () => {
     const url = new URL(location.href);
@@ -363,7 +383,13 @@ export function EventCard(props: EventCardProps) {
   };
   return <article class={`replay-event replay-event-${presentation()} ${props.event.error ? "replay-event-error" : props.event.decision ? "replay-event-decision" : ""} ${props.selected ? "replay-event-selected" : ""}`} data-event-id={props.event.id} data-settled={settled() ? "true" : "false"}>
     <header class="replay-event-header"><span class="replay-role" title={roleDetail()}><Show when={roleIcon()}>{name => <Icon name={name()} size={14} class="replay-role-icon" />}</Show>{roleLabel()}</span><Show when={props.linkEvents !== false} fallback={<span class="replay-event-link"><time datetime={props.event.timestamp}>{timeLabel()}</time></span>}><a class="replay-event-link" href={permalink()} title={`Link to event ${props.event.sequence + 1}`}><time datetime={props.event.timestamp}>{timeLabel()}</time></a></Show><Show when={props.event.role === "assistant" && recordedModel() && recordedModel() !== "<synthetic>"}><span class="replay-recorded-model" title={`Recorded model: ${truncate(recordedModel()!, 256)}`}>{truncate(modelName(recordedModel()!), 80)}</span></Show><Show when={props.event.cwd && props.showWorkspace !== false}><code title={props.event.cwd}>{props.event.cwd}</code></Show><Show when={props.event.error}><span class="replay-error-label">{errorLabel()}</span></Show><Show when={props.event.decision}>{decision => <span class="replay-decision-label">{decisionLabels[decision()]}</span>}</Show></header>
-    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} />}</For><Show when={presentation() === "state"} fallback={<Show when={isRequestMessage(props.event)} fallback={<><Show when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Show><Show when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Show></>}><p class="tool-hidden" title={`${requestMessageDetail} Raw event shows this copy.`}>Message stored for the API request that follows</p></Show>}><SessionStateNote event={props.event} highlight={props.highlight} /></Show><Show when={props.requestMessages}>{run => <RequestMessages run={run()} highlight={props.highlight} />}</Show></div>
+    <div class="replay-event-body"><For each={props.event.blocks}>{(block) => <BlockRenderer block={block} results={props.results} calls={props.calls} highlight={props.highlight} subagents={props.subagents} measure={measure()} />}</For><Switch>
+      <Match when={presentation() === "state"}><SessionStateNote event={props.event} highlight={props.highlight} /></Match>
+      <Match when={isRequestMessage(props.event)}><p class="tool-hidden" title={`${requestMessageDetail} Raw event shows this copy.`}>Message stored for the API request that follows</p></Match>
+      <Match when={turn() !== null}><TurnDurationNote event={props.event} durationMs={turn()!} highlight={props.highlight} /></Match>
+      <Match when={!hasBlocks() && props.event.text}><CodePanel title={`${props.event.type} record`} value={props.event.text} highlight={props.highlight} json /></Match>
+      <Match when={!hasBlocks() && !props.event.text}><section class="tool-unknown">No renderable event content.</section></Match>
+    </Switch><Show when={props.requestMessages}>{run => <RequestMessages run={run()} highlight={props.highlight} />}</Show></div>
     <Show when={props.filtered && props.onShowContext}><button class="replay-context-button" type="button" onClick={() => props.onShowContext?.(props.event.id)}><Icon name="arrow" size={12} />Show surrounding context</button></Show>
     <details class="replay-raw" onToggle={(event) => { setRawOpen(event.currentTarget.open); }}><summary>Raw event</summary><Show when={rawOpen()}><CodePanel title="Recorded event" value={eventRaw(props.event)} json /></Show></details>
   </article>;

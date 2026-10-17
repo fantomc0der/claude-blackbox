@@ -1,6 +1,54 @@
 import { expect, spyOn, test } from "bun:test";
-import { folderLabels, folderName, localDayOffset, modelName, recordedRange, resumeCommand, searchHighlight, timeAgo, withLocalDays } from "../src/client/lib/format";
+import { activeTimeSummary, duration, folderLabels, folderName, localDayOffset, measuredTime, modelName, recordedRange, resumeCommand, searchHighlight, thinkingSummary, timeAgo, withLocalDays } from "../src/client/lib/format";
 import { parseSearch } from "../src/server/search";
+import { recordedDuration, thinkingMeasure, turnDuration } from "../src/shared/records";
+
+test("measured times read in the two largest units", () => {
+  expect(duration(0)).toBe("0s");
+  expect(duration(400)).toBe("<1s");
+  expect(duration(12_340)).toBe("12s");
+  expect(duration(59_600)).toBe("1m 0s");
+  expect(duration(336_000)).toBe("5m 36s");
+  expect(duration(3_599_400)).toBe("59m 59s");
+  expect(duration(23_940_000)).toBe("6h 39m");
+  expect(duration(78_852_000)).toBe("21h 54m");
+  expect(duration(97_200_000)).toBe("1d 3h");
+  expect(activeTimeSummary({ durationMs: 336_000, turns: 6 })).toBe("5m 36s across 6 turns");
+  expect(activeTimeSummary({ durationMs: 29_622_000, turns: 1 })).toBe("8h 13m across 1 turn");
+  const recorded = { costUSD: 1, startedAt: "", unknownModelCost: false, models: {} };
+  expect(measuredTime({ ...recorded, apiDurationMs: 450_000, toolDurationMs: 132_000 })).toBe("7m 30s in API calls · 2m 12s in tools");
+  expect(measuredTime({ ...recorded, apiDurationMs: 450_000, toolDurationMs: null })).toBe("7m 30s in API calls");
+  expect(measuredTime({ ...recorded, apiDurationMs: null, toolDurationMs: null })).toBe("");
+  expect(thinkingSummary({ durationMs: 12_340, tokens: 1840 })).toBe("thought for 12s (1,840 thinking tokens)");
+  expect(thinkingSummary({ durationMs: 400, tokens: null })).toBe("thought for <1s");
+});
+
+// Claude Code's own schema bounds a recorded duration as a finite non-negative number up to 1e15, and its loader rewrites
+// a `turn_duration` whose `durationMs` fails that as 0.
+test("recorded durations are read within Claude Code's own bounds", () => {
+  expect(recordedDuration(0)).toBe(0);
+  expect(recordedDuration(132_000.5)).toBe(132_000.5);
+  expect(recordedDuration(1e15)).toBe(1e15);
+  for (const bad of [-1, 1e15 + 1, Number.NaN, Number.POSITIVE_INFINITY, "5", null, undefined, true]) expect(recordedDuration(bad)).toBeNull();
+  const turn = (durationMs: unknown) => ({ type: "system", subtype: "turn_duration", durationMs, messageCount: 4 });
+  expect(turnDuration(turn(336_000))).toBe(336_000);
+  expect(turnDuration(turn(0))).toBe(0);
+  for (const bad of [-1, 1.5, Number.NaN, "336000", undefined, 2 ** 53]) expect(turnDuration(turn(bad))).toBe(0);
+  expect(turnDuration({ type: "system", subtype: "stop_hook_summary", durationMs: 5 })).toBeNull();
+  expect(turnDuration({ type: "user", subtype: "turn_duration", durationMs: 5 })).toBeNull();
+  expect(turnDuration({ type: "system", durationMs: 5 })).toBeNull();
+});
+
+test("a reasoning step's measured time comes with its thinking tokens when the API reported them", () => {
+  const thought = (thinkingDurationMs: unknown, usage?: Record<string, unknown>) => ({ type: "assistant", thinkingDurationMs, message: { role: "assistant", content: [{ type: "thinking", thinking: "" }], usage } });
+  expect(thinkingMeasure(thought(12_340, { output_tokens: 2000, output_tokens_details: { thinking_tokens: 1840 } }))).toEqual({ durationMs: 12_340, tokens: 1840 });
+  expect(thinkingMeasure(thought(12_340, { output_tokens: 2000 }))).toEqual({ durationMs: 12_340, tokens: null });
+  expect(thinkingMeasure(thought(1))).toEqual({ durationMs: 1, tokens: null });
+  expect(thinkingMeasure(thought(12_340, { output_tokens_details: { thinking_tokens: -1 } }))).toEqual({ durationMs: 12_340, tokens: null });
+  expect(thinkingMeasure(thought(12_340, { output_tokens_details: "none" }))).toEqual({ durationMs: 12_340, tokens: null });
+  for (const bad of [0, -1, 1.5, Number.NaN, "12340", undefined, null]) expect(thinkingMeasure(thought(bad))).toBeNull();
+  expect(thinkingMeasure({ type: "assistant", message: { usage: { output_tokens_details: { thinking_tokens: 1840 } } } })).toBeNull();
+});
 
 test("search highlights use the term the server matched records with", () => {
   expect(searchHighlight("retry")).toBe("retry");
