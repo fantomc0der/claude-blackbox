@@ -1,5 +1,6 @@
 import type { ContentBlock, ReplayEvent } from "../../shared/types";
 import { stripAnsi } from "../../shared/ansi";
+import { isSessionState } from "../../shared/records";
 import { diffLines } from "diff";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -46,6 +47,11 @@ export function isToolResultEvent(event: Pick<ReplayEvent, "blocks">): boolean {
 
 export function isRequestMessage(event: Pick<ReplayEvent, "type">): boolean {
   return event.type === "api-request-blob";
+}
+
+/** Whether the record is one Claude Code keeps as its own session state rather than as part of the transcript. */
+export function isSessionStateEvent(event: Pick<ReplayEvent, "type">): boolean {
+  return isSessionState(event.type);
 }
 
 export interface RequestMessageRun {

@@ -4,6 +4,7 @@ import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
+import { sessionStateTypes } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string } from "./normalize";
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
@@ -215,7 +216,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 8) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 9) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -339,11 +340,17 @@ export class Recorder {
 
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
-    // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed.
-    if (this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version < 8) this.db.transaction(() => {
+    // conversation content, and version 9 only those holding Claude Code's session state records, which an earlier
+    // build read as content with their prompt copies searchable. Finding them reads every event, so both run with the
+    // first scan, after the server has bound its port, and before the recordings are compared with what was indexed.
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
+    if (version < 8) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=?)").run(requestMessageType);
       this.db.exec("PRAGMA user_version=8");
+    })();
+    if (version < 9) this.db.transaction(() => {
+      this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type IN (SELECT value FROM json_each(?)))").run(JSON.stringify([...sessionStateTypes]));
+      this.db.exec("PRAGMA user_version=9");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
