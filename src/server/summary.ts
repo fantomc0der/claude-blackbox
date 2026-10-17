@@ -1,6 +1,7 @@
 import { posix, win32 } from "node:path";
 import { stripAnsi } from "../shared/ansi";
 import { object, string } from "./normalize";
+import type { Decision } from "../shared/decisions";
 import type { SessionSummary, SummaryChange, SummaryFile, SummaryFolder, SummaryRead, SummaryRecord, SummaryScratchpad } from "../shared/types";
 
 /** Tools whose calls change the file their input names. Read is collected separately. */
@@ -13,8 +14,11 @@ const folderLimit = 50;
 /** A folder the recording started in, moved to, or added with `/add-dir`, in recording order. */
 export interface SummaryRoot { path: string; added: boolean; record: SummaryRecord }
 
-/** One Edit, Write, MultiEdit, NotebookEdit, or Read call, with the path its input names as recorded. */
-export interface SummaryCall { tool: string; path: string; cwd: string; error: boolean; record: SummaryRecord }
+/**
+ * One Edit, Write, MultiEdit, NotebookEdit, or Read call, with the path its input names as recorded. `error` means its
+ * result was a failure; `decision` means the user, a permission rule, or a hook stopped it before it ran.
+ */
+export interface SummaryCall { tool: string; path: string; cwd: string; error: boolean; decision: Decision | null; record: SummaryRecord }
 
 // Recorded paths come from whichever machine made the recording, not the one serving it, so the style follows the
 // path itself: a drive letter, a UNC prefix, or a backslash means Windows.
@@ -139,24 +143,25 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): Sessio
     else folder.working ??= root.record;
   }
 
-  const changed = new Map<string, { path: string; count: number; errors: number; changes: SummaryChange[] }>();
+  const changed = new Map<string, { path: string; count: number; errors: number; denied: number; changes: SummaryChange[] }>();
   const read = new Map<string, { path: string; reads: number; record: SummaryRecord }>();
   for (const call of calls) {
     const path = resolveRecorded(call.path, call.cwd);
     if (!path) continue;
     const key = fileKey(path);
     if (call.tool.toLowerCase() === "read") {
-      if (call.error) continue;
+      if (call.error || call.decision) continue;
       const entry = read.get(key);
       if (entry) entry.reads++;
       else read.set(key, { path, reads: 1, record: call.record });
       continue;
     }
     let entry = changed.get(key);
-    if (!entry) changed.set(key, entry = { path, count: 0, errors: 0, changes: [] });
+    if (!entry) changed.set(key, entry = { path, count: 0, errors: 0, denied: 0, changes: [] });
     entry.count++;
     if (call.error) entry.errors++;
-    if (entry.changes.length < changeLimit) entry.changes.push({ ...call.record, tool: call.tool, error: call.error });
+    if (call.decision) entry.denied++;
+    if (entry.changes.length < changeLimit) entry.changes.push({ ...call.record, tool: call.tool, error: call.error, decision: call.decision });
     else limited = true;
   }
   for (const key of changed.keys()) read.delete(key);

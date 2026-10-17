@@ -327,6 +327,29 @@ await writeFile(join(folder, "overview-files.jsonl"), [
   overviewResult("overview-write-2", "File created successfully."),
   overviewText("The overview files are ready.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
+// messages, plus one genuine failure: the Errors tab labels each, and only the failure counts as an error.
+const decisionCall = (sequence: number, id: string, name: string, input: Record<string, unknown>) => ({ ...event("", sequence, "assistant"), message: { role: "assistant", content: [{ type: "tool_use", id, name, input }], model: "claude-sonnet-4-5" } });
+const decisionResult = (sequence: number, id: string, content: string, is_error = true) => ({ ...event("", sequence), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error }] } });
+await writeFile(join(folder, "decisions.jsonl"), [
+  event("Thornquill decision verification", 0),
+  decisionCall(1, "decision-denied", "Bash", { command: "rm -rf node_modules" }),
+  decisionResult(2, "decision-denied", "\nThe user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nKeep the install, just prune the cache."),
+  decisionCall(3, "decision-hook", "Bash", { command: "git push --force origin main" }),
+  decisionResult(4, "decision-hook", "Execution stopped by PreToolUse hook: protected branch"),
+  decisionCall(5, "decision-interrupted", "Bash", { command: "sleep 600" }),
+  decisionResult(6, "decision-interrupted", "[Request interrupted by user for tool use]"),
+  decisionCall(7, "decision-edit", "Edit", { file_path: "/synthetic/browser-tests/src/config.ts", old_string: "a", new_string: "b" }),
+  decisionResult(8, "decision-edit", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."),
+  decisionCall(9, "decision-failed", "Bash", { command: "bun test tests/decisions.test.ts" }),
+  decisionResult(10, "decision-failed", "<tool_use_error>Exit code 1\n1 fail</tool_use_error>"),
+  event("Stopping here until you decide.", 11, "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "denial-only.jsonl"), [
+  { ...event("Marrowgate denial verification", 0), uuid: "denial-only-0" },
+  { ...decisionCall(1, "denial-only-call", "Bash", { command: "rm -rf dist" }), uuid: "denial-only-1" },
+  { ...decisionResult(2, "denial-only-call", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."), uuid: "denial-only-2" },
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 export const recorder = await Recorder.open(data, resolve(".blackbox/e2e-state"));
 recorder.db.exec("DELETE FROM bookmarks; DELETE FROM groups;");
 recorder.watch(250);

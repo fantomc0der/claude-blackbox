@@ -1,4 +1,5 @@
 import { stripAnsi } from "../shared/ansi";
+import { resultDecision } from "../shared/decisions";
 import { isSessionState } from "../shared/records";
 import type { ContentBlock, ReplayEvent } from "../shared/types";
 
@@ -89,6 +90,9 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
   const hasTools = blocks.some(block => block.type === "tool_use" || block.type === "tool_result");
   const hasText = blocks.some(block => block.type === "text" && block.text?.trim());
   const stamp = typeof raw.timestamp === "number" ? raw.timestamp : Date.parse(string(raw.timestamp));
+  // A result Claude Code marked `is_error` because the user, a permission rule, or a hook stopped the tool records a
+  // decision, not a failure; only the remaining `is_error` results, error-level records, and API error turns are errors.
+  const decisions = blocks.map(resultDecision);
   return {
     id: `${sourceId}-${offset}`,
     sequence,
@@ -100,7 +104,8 @@ export function normalize(raw: Record<string, unknown>, sourceId: string, offset
     text,
     category: role === "system" ? "system" : isStandIn(raw) ? "synthetic" : isHiddenReasoning(blocks) ? "hidden" : hasText ? "message" : hasTools ? "tool" : "thinking",
     toolNames: tools.map(block => block.name || "Unknown tool"),
-    error: blocks.some(block => block.is_error === true) || raw.is_error === true || raw.level === "error" || isApiError(raw),
+    error: blocks.some((block, index) => block.is_error === true && !decisions[index]) || raw.is_error === true || raw.level === "error" || isApiError(raw),
+    decision: decisions.find(decision => decision !== null) ?? null,
     parentId: string(raw.parentUuid) || undefined,
     uuid: string(raw.uuid) || undefined,
     cwd: string(raw.cwd) || undefined,

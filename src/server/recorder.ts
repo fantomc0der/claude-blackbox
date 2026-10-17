@@ -2,8 +2,9 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath, stat, open } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type { Catalog, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
+import type { Catalog, ContentBlock, DirectoryUsage, EventPage, EventTimeline, FindMatches, IndexProgress, ModelUsage, ReplayEvent, Session, SessionFamily, SessionFamilyMember, SessionPage, SessionSummary, SummaryRecord, TimelineBucket, UsageSummary, WorkspaceGroup } from "../shared/types";
 import { stripAnsi } from "../shared/ansi";
+import { resultDecision } from "../shared/decisions";
 import { sessionStateTypes } from "../shared/records";
 import { readJsonLines } from "./jsonl";
 import { displaySnippet, hasReadableThinking, normalize, object, pathName, promptTitle, requestMessageType, string, syntheticModel } from "./normalize";
@@ -64,7 +65,7 @@ const schema = `
     sequence INTEGER NOT NULL, offset INTEGER NOT NULL, category TEXT NOT NULL, type TEXT NOT NULL,
     error INTEGER NOT NULL, tools TEXT NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT '', timestamp TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '',
-    has_thinking INTEGER NOT NULL DEFAULT 0, has_tools INTEGER NOT NULL DEFAULT 0
+    has_thinking INTEGER NOT NULL DEFAULT 0, has_tools INTEGER NOT NULL DEFAULT 0, decision INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS events_session ON events(session_id, sequence);
   CREATE TABLE IF NOT EXISTS usage_records (
@@ -216,7 +217,7 @@ export class Recorder {
     this.stateDir = resolve(stateDir);
     this.db = db;
     const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    if (version > 11) throw new Error("This index was created by a newer version. Choose a different state directory.");
+    if (version > 12) throw new Error("This index was created by a newer version. Choose a different state directory.");
     const hasResults = db.query("SELECT name FROM sqlite_master WHERE name='tool_results'").get();
     const hasFacets = db.query("SELECT name FROM sqlite_master WHERE name='session_facets'").get();
     db.exec(schema);
@@ -232,7 +233,7 @@ export class Recorder {
     for (const field of ["role", "timestamp", "model", "cwd"]) {
       if (!eventFields.has(field)) db.exec(`ALTER TABLE events ADD COLUMN ${field} TEXT NOT NULL DEFAULT ''`);
     }
-    for (const field of ["has_thinking", "has_tools"]) {
+    for (const field of ["has_thinking", "has_tools", "decision"]) {
       if (!eventFields.has(field)) db.exec(`ALTER TABLE events ADD COLUMN ${field} INTEGER NOT NULL DEFAULT 0`);
     }
     db.exec(`CREATE INDEX IF NOT EXISTS events_model ON events(session_id,model);
@@ -341,7 +342,7 @@ export class Recorder {
   private async reconcile(): Promise<string[]> {
     // Version 8 re-indexes only the recordings whose `api-request-blob` message copies an earlier build read as
     // conversation content. Finding them reads every event, so it runs with the first scan, after the server has bound
-    // its port, and before the recordings are compared with what was indexed; the version 9, 10, and 11 steps below
+    // its port, and before the recordings are compared with what was indexed; the version 9, 10, 11, and 12 steps below
     // follow it in order for the same reason.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
     if (version < 8) this.db.transaction(() => {
@@ -374,6 +375,13 @@ export class Recorder {
     if (version < 11) this.db.transaction(() => {
       this.db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type='assistant' AND model=?)").run(syntheticModel);
       this.db.exec("PRAGMA user_version=11");
+    })();
+    // Version 12 tells the tool results that record a user's decision apart from failures. Every result an earlier build
+    // flagged is in a recording with an error, so only those recordings are re-read; finding them reads every event, like
+    // version 8. API error turns already count as errors since version 11.
+    if (version < 12) this.db.transaction(() => {
+      this.db.exec("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE error=1)");
+      this.db.exec("PRAGMA user_version=12");
     })();
     this.scanWarnings = 0;
     this.reportProgress({ phase: "discovering", checked: 0, total: 0 });
@@ -411,8 +419,8 @@ export class Recorder {
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM sessions WHERE id=?").get(id)!;
         let batch: ReplayEvent[] = [];
         const write = this.db.transaction((events: ReplayEvent[]) => {
-          const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text,role,timestamp,model,cwd,has_thinking,has_tools)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+          const insert = this.db.query(`INSERT OR IGNORE INTO events(event_id,session_id,sequence,offset,category,type,error,tools,raw,text,role,timestamp,model,cwd,has_thinking,has_tools,decision)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
           const insertResult = this.db.query("INSERT OR REPLACE INTO tool_results(session_id,tool_id,raw,event_row) VALUES (?,?,?,?)");
           const insertCall = this.db.query("INSERT OR REPLACE INTO tool_calls(session_id,tool_id,name,event_row) VALUES (?,?,?,?)");
           const insertFacet = this.db.query("INSERT OR IGNORE INTO session_facets(session_id,kind,value) VALUES (?,?,?)");
@@ -434,7 +442,7 @@ export class Recorder {
             const inserted = insert.run(event.id, id, event.sequence, event.offset, event.category, event.type,
               Number(event.error), toolNames.join("\n"), JSON.stringify(event.raw), event.text, event.role, event.timestamp,
               string(object(event.raw.message).model), event.cwd || "", Number(hasReadableThinking(event.blocks)),
-              Number(event.blocks.some(block => block.type === "tool_use" || block.type === "tool_result")));
+              Number(event.blocks.some(block => block.type === "tool_use" || block.type === "tool_result")), Number(event.decision !== null));
             const usage = readUsage(event.raw, id, event.id);
             if (usage) {
               insertUsage.run(id, usage.key, usage.input, usage.output, usage.cacheCreation, usage.cacheRead, usage.cost, Number(usage.recorded), Number(usage.sidechain), usage.model, usage.effort, rateStamp(usage.model), Number(usage.unrated));
@@ -870,7 +878,9 @@ export class Recorder {
       OR EXISTS (SELECT 1 FROM tool_results result JOIN tool_calls call ON call.session_id=result.session_id AND call.tool_id=result.tool_id
         WHERE result.event_row=e.rowid AND lower(call.name) IN ('edit','write','multiedit','notebookedit')))`;
     else if (["message", "system"].includes(kind || "")) { filter += " AND e.category=?"; bindings.push(kind!); }
-    if (params.get("errors") === "1") filter += " AND e.error=1";
+    // The Errors view shows the tools the user, a permission rule, or a hook stopped beside the failures, each labelled;
+    // only the failures count toward a recording's errors and the activity strip's error bars.
+    if (params.get("errors") === "1") filter += " AND (e.error=1 OR e.decision=1)";
     if (params.get("q")) { filter += " AND instr(lower(e.text),lower(?))>0"; bindings.push(params.get("q")!.slice(0, 1000)); }
     for (const field of ["model", "cwd"]) {
       if (params.get(field)) { filter += ` AND e.${field}=?`; bindings.push(params.get(field)!); }
@@ -955,6 +965,7 @@ export class Recorder {
   // Inputs are read from each call's own record, one record at a time, because a Write record carries the whole file it
   // wrote. A result's error flag is found in SQL for the same reason: a Read result carries the whole file it read. The
   // stored result is serialized JSON, where a quote inside recorded text is always escaped, so the flag cannot be faked.
+  // Only a flagged result travels, to tell a failure from a decision the user, a permission rule, or a hook made.
   private summaryData(id: string): SessionSummary {
     const record = (row: { id: string; timestamp: string }): SummaryRecord => ({ id: row.id, position: null, timestamp: row.timestamp });
     const roots: Array<SummaryRoot & { sequence: number }> = this.db.query<{ cwd: string; id: string; sequence: number; timestamp: string }, [string, string]>(
@@ -984,8 +995,8 @@ export class Recorder {
     const calls: SummaryCall[] = [];
     const source = this.db.query<{ raw: string }, [number]>("SELECT raw FROM events WHERE rowid=?");
     let parsed = null as { row: number; blocks: unknown[] } | null;
-    for (const row of this.db.query<{ toolId: string; name: string; row: number; id: string; timestamp: string; cwd: string; error: number | null }, SQLQueryBindings[]>(
-      `SELECT call.tool_id AS toolId, call.name, call.event_row AS row, e.event_id AS id, e.timestamp, e.cwd, instr(result.raw,'"is_error":true')>0 AS error
+    for (const row of this.db.query<{ toolId: string; name: string; row: number; id: string; timestamp: string; cwd: string; flagged: string | null }, SQLQueryBindings[]>(
+      `SELECT call.tool_id AS toolId, call.name, call.event_row AS row, e.event_id AS id, e.timestamp, e.cwd, CASE WHEN instr(result.raw,'"is_error":true')>0 THEN result.raw END AS flagged
         FROM tool_calls call JOIN events e ON e.rowid=call.event_row
         LEFT JOIN tool_results result ON result.session_id=call.session_id AND result.tool_id=call.tool_id
         WHERE call.session_id=? AND lower(call.name) IN (${tools.map(() => "?").join(",")}) ORDER BY e.sequence`).all(id, ...tools)) {
@@ -993,7 +1004,9 @@ export class Recorder {
       const block = object(parsed.blocks.find(entry => object(entry).type === "tool_use" && object(entry).id === row.toolId));
       const input = object(block.input);
       const path = string(input.file_path) || string(input.notebook_path);
-      if (path) calls.push({ tool: row.name, path, cwd: row.cwd, error: row.error === 1, record: record(row) });
+      if (!path) continue;
+      const decision = row.flagged ? resultDecision(jsonRecord(row.flagged) as ContentBlock) : null;
+      calls.push({ tool: row.name, path, cwd: row.cwd, error: row.flagged !== null && !decision, decision, record: record(row) });
     }
     return buildSummary(roots, calls);
   }
