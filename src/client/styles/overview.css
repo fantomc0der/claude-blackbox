@@ -50,6 +50,12 @@
   .overview-run-glyph { position: absolute; top: 9px; left: 2px; width: 15px; font: 600 var(--text-meta)/1.4 var(--mono); text-align: center; color: var(--muted); }
   .overview-run-glyph.error { color: var(--danger); }
   .overview-run-glyph.stopped { color: var(--caution); }
+  .overview-step-ellipsis { color: var(--muted); }
+  .overview-file-also { grid-column: 1 / -1; grid-row: 3; }
+  .overview-step-meta { display: flex; align-items: center; gap: 6px; margin-left: -18px; }
+  .overview-step-meta svg { flex: none; color: var(--muted); }
+  .overview-step-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .overview-category-programs { grid-column: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--text-meta)/1.45 var(--mono); }
   .overview-searches .overview-folder { padding-top: 10px; }
 
   .overview-reads { margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--line); }
