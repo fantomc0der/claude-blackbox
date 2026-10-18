@@ -85,7 +85,6 @@ export function Library(props: LibraryProps) {
       <div class="stat"><dt>Workspaces</dt><dd>{props.catalog?.workspaces.length || 0}</dd></div>
       <div class="stat"><dt>Tool calls</dt><dd>{compact(props.catalog?.tools || 0)}</dd></div>
     </dl></Show>
-    <UsagePanel page={props.usageCurrent ? props.page : null} pending={props.pending} slow={slow()} open={usageOpen()} toggle={toggleUsage} />
     <div class="discovery-controls">
       <div class="search-box"><Icon name="search" size={19} /><input ref={props.searchRef} aria-label="Search all recordings" placeholder="Search prompts, code, tool output…" value={props.query} onInput={event => props.setQuery(event.currentTarget.value)} onKeyDown={event => {
         if (event.key === "Escape") { props.setQuery(""); filter({ q: null }); }
@@ -121,6 +120,7 @@ export function Library(props: LibraryProps) {
       <Show when={chips().length}><div class="active-filters"><For each={chips()}>{([key, label]) => <button class="filter-chip" title={`Remove ${label}`} onClick={() => filter({ [key]: null, ...(key === "workspace" ? { cwd: null } : {}) })}>{label}<Icon name="close" size={12} /></button>}</For><button class="clear-filters" onClick={clear}>Clear all</button></div></Show>
     </div>
     <div class="list-caption"><span>{props.query ? "SEARCH RESULTS" : "RECORDINGS"}<span class="result-count" aria-live="polite">{props.page?.total ?? "—"}<span class="count-unit">{countUnit()}</span></span><Show when={slow()}><span class="loading-dot" /></Show></span><select aria-label="Sort recordings" value={sort()} onChange={event => filter({ sort: event.currentTarget.value === "recent" ? null : event.currentTarget.value })}><option value="recent">Newest activity</option><option value="oldest">Oldest activity</option><option value="activity">Most records</option><option value="cost">Highest cost (est.)</option><option value="cost-asc">Lowest cost (est.)</option><option value="tokens">Most tokens</option><option value="tokens-asc">Fewest tokens</option><option value="errors">Most errors</option><option value="tools">Most tool calls</option><option value="active">Longest active time</option><option value="duration">Longest recorded span</option><option value="title">Title (A–Z)</option></select></div>
+    <UsagePanel page={props.usageCurrent ? props.page : null} pending={props.pending} slow={slow()} open={usageOpen()} toggle={toggleUsage} />
     <div class="recordings-scroll" ref={recordings} aria-busy={props.pending ? "true" : "false"} onKeyDown={event => {
       if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
       const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(".session-row")];

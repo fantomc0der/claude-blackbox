@@ -1,5 +1,6 @@
 @layer components {
-  .usage-panel { flex-shrink: 0; margin: 0 0 14px; border-block: 1px solid var(--line); font-size: var(--text-support); }
+  /* The Usage bar is the last line of the list header, directly above the rows, so its breakdown opens right under the toggle. */
+  .usage-panel { flex-shrink: 0; border-bottom: 1px solid var(--line); font-size: var(--text-support); }
   .usage-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; width: 100%; padding: 11px 0; min-height: 44px; text-align: left; }
   .usage-summary:hover .usage-expand { color: var(--text); }
   .usage-label { display: inline-flex; align-items: center; gap: 8px; font-weight: 550; }
@@ -12,7 +13,7 @@
   .usage-expand svg { transition: transform .15s; }
   .usage-summary[aria-expanded="true"] .usage-expand svg { transform: rotate(180deg); }
   .usage-empty, .usage-loading { color: var(--muted); }
-  /* The expanded breakdown is the recording list's first full-width item: it scrolls away with the rows, and the list
+  /* The expanded breakdown is the recording list's first full-width item, directly under the Usage bar that opens it: it scrolls away with the rows, and the list
      keeps its full height. */
   .recordings-scroll > .usage-body { grid-column: 1 / -1; min-width: 0; margin: 12px 0 4px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
   .usage-scope { margin: 0 0 14px; color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
@@ -72,7 +73,6 @@
 @layer responsive {
   @media (max-width: 1050px) { .session-usage-tokens { display: none; } }
   @media (max-height: 820px) and (min-width: 681px) {
-    .usage-panel { margin-bottom: 6px; }
     .usage-summary { min-height: 36px; padding-block: 7px; }
   }
   @media (max-width: 680px) {
@@ -81,8 +81,6 @@
     .usage-breakdown-sort select, .usage-drilldown { min-height: 44px; }
     .usage-view-switch button { min-height: 44px; }
     .usage-matrix th, .usage-matrix td { padding-left: 8px; }
-    .library .overview { margin-bottom: 2px; }
-    .usage-panel { margin-bottom: 0; }
     .usage-summary { gap: 6px 13px; }
     .recordings-scroll > .usage-body { padding: 14px; }
     .usage-expand > span { display: none; }
