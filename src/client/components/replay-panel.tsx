@@ -576,6 +576,15 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     return () => window.removeEventListener("keydown", keyboard);
   });
   const outline = () => visibleEvents().filter(event => event.category === "message" || event.error || event.decision || event.toolNames.length).slice(0, 24);
+  const outlineOption = () => page() ? `Event outline · ${outline().length.toLocaleString()}` : "Event outline";
+  const outlineScope = () => {
+    const current = page();
+    if (!current) return "Current page";
+    if (!current.items.length) return "Current page · 0 records";
+    const first = Math.min(current.offset + 1, current.total);
+    const last = Math.min(current.offset + current.items.length, current.total);
+    return first === last ? `Current page · record ${first.toLocaleString()}` : `Current page · records ${first.toLocaleString()}–${last.toLocaleString()}`;
+  };
   const jumpToEvent = (id: string) => {
     scroll.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   };
@@ -625,7 +634,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     goTo(record.position);
     pendingMatch = seekTarget === record.position ? record.id : "";
   };
-  // On this page needs the summary only for the options' counts, so it fetches once; Prompts, Files changed, and
+  // Event outline needs the summary only for the options' counts, so it fetches once; Prompts, Files changed, and
   // Commands run follow the filters and live updates, and choosing any of them refreshes the summary.
   createEffect(() => {
     const follows = overviewView() !== "page";
@@ -756,8 +765,8 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <p class="eyebrow">AT A GLANCE</p>
       <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div title={props.session ? errorSummary(props.session) || "No errors" : undefined}><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
       <div class="overview-section">
-        <select class="overview-view" aria-label="Overview content" value={overviewView()} onChange={event => changeOverviewView(event.currentTarget.value)}><option value="page">On this page</option><option value="prompts">{promptsOption()}</option><option value="files">{filesOption()}</option><option value="commands">{commandsOption()}</option></select>
-        <Switch fallback={<nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, decision: !event.error && Boolean(event.decision), user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>}>
+        <select class="overview-view" aria-label="Overview content" value={overviewView()} onChange={event => changeOverviewView(event.currentTarget.value)}><option value="page">{outlineOption()}</option><option value="prompts">{promptsOption()}</option><option value="files">{filesOption()}</option><option value="commands">{commandsOption()}</option></select>
+        <Switch fallback={<><p class="overview-scope">{outlineScope()}</p><nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, decision: !event.error && Boolean(event.decision), user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav></>}>
           <Match when={overviewView() === "prompts"}><OverviewPrompts {...summaryProps()} /></Match>
           <Match when={overviewView() === "files"}><OverviewFiles {...summaryProps()} /></Match>
           <Match when={overviewView() === "commands"}><OverviewCommands {...summaryProps()} /></Match>
