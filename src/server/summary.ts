@@ -201,9 +201,9 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
 
   // The groups of the programs run most sit first, ties in the order the programs were first run; the catch-all group
   // is last. It is kept apart from the named groups rather than under a reserved name, so a program that happens to be
-  // called "other" keeps a group of its own. Within a group the command run latest sits first.
+  // called "other" keeps a group of its own. Within a group the commands sit in the order they were first run.
   const group = (entries: Map<string, Entry>) => {
-    type Group = { group: SummaryCommandGroup; first: number; rows: { command: SummaryCommand; last: number }[] };
+    type Group = { group: SummaryCommandGroup; first: number; rows: { command: SummaryCommand; first: number }[] };
     const groups = new Map<string, Group>();
     let other: Group | null = null;
     const list = [...entries.values()].sort((left, right) => right.last - left.last);
@@ -213,7 +213,7 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
     const place = (found: Group, entry: Entry, command: SummaryCommand) => {
       found.group.count += command.count; found.group.errors += command.errors; found.group.stopped += command.stopped;
       found.first = Math.min(found.first, entry.first);
-      found.rows.push({ command, last: entry.last });
+      found.rows.push({ command, first: entry.first });
     };
     for (const entry of listed) {
       const key = entry.program.toLowerCase();
@@ -248,7 +248,7 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
     }
     const sorted = [...groups.values()].sort((left, right) => right.group.count - left.group.count || left.first - right.first);
     if (other) sorted.push(other);
-    return sorted.map(entry => ({ ...entry.group, commands: entry.rows.sort((left, right) => right.last - left.last).map(row => row.command) }));
+    return sorted.map(entry => ({ ...entry.group, commands: entry.rows.sort((left, right) => left.first - right.first).map(row => row.command) }));
   };
   return { commands: group(commands), searches: group(searches), fetches: group(fetches), commandCount: commands.size, commandRuns: totals.commands, searchCount: searches.size, searchRuns: totals.searches, fetchCount: fetches.size, fetchRuns: totals.fetches, limited };
 }

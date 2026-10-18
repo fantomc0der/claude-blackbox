@@ -312,13 +312,13 @@ describe("recording summary commands", () => {
     ]);
     expect(summary).toMatchObject({ commandCount: 0, commandRuns: 0, searchCount: 0, searchRuns: 0, fetchCount: 2, fetchRuns: 3 });
     expect(summary.fetches).toMatchObject([{ category: "network", count: 3, errors: 1, commands: [
-      { detail: "Find API", count: 1, runs: [{ id: "f3", pending: true }] },
       { detail: "Find setup", count: 2, errors: 1, runs: [{ id: "f1" }, { id: "f2" }] },
+      { detail: "Find API", count: 1, runs: [{ id: "f3", pending: true }] },
     ] }]);
     expect(summaryRecordIds(summary).sort()).toEqual(["f1", "f2", "f3"]);
     const placed = placeSummary(summary, new Map([["f3", 7]]));
-    expect(placed.fetches[0].commands[0].runs[0].position).toBe(7);
-    expect(placed.fetches[0].commands[1].runs[0].position).toBeNull();
+    expect(placed.fetches[0].commands[1].runs[0].position).toBe(7);
+    expect(placed.fetches[0].commands[0].runs[0].position).toBeNull();
   });
 
   test("deduplicates commands by their text, groups them by program, and keeps every run's outcome", () => {
@@ -336,16 +336,16 @@ describe("recording summary commands", () => {
       run("c11", "Bash", "FOO=1"),
     ]);
     expect(built.commands.map(group => [group.name, group.count, group.errors, group.stopped, group.commands.map(command => [command.text, command.head, command.count, command.runs.map(run => run.id)])])).toEqual([
-      ["bun", 4, 1, 1, [["bun run dev", "bun run dev", 1, ["c7"]], ["cd /work && bun test", "…bun test", 3, ["c1", "c3", "c6"]]]],
-      ["git", 3, 0, 0, [["/usr/bin/git diff --stat", "/usr/bin/git diff --stat", 1, ["c5"]], ["git status", "git status", 2, ["c2", "c4"]]]],
+      ["bun", 4, 1, 1, [["cd /work && bun test", "…bun test", 3, ["c1", "c3", "c6"]], ["bun run dev", "bun run dev", 1, ["c7"]]]],
+      ["git", 3, 0, 0, [["git status", "git status", 2, ["c2", "c4"]], ["/usr/bin/git diff --stat", "/usr/bin/git diff --stat", 1, ["c5"]]]],
       ["cargo", 1, 0, 0, [["cargo test", "cargo test", 1, ["c8"]]]],
-      ["Other", 5, 1, 1, [["FOO=1", "FOO=1", 2, ["c10", "c11"]], ["cd /work && bun test", "cd /work && bun test", 3, ["c1", "c3", "c6"]]]],
+      ["Other", 5, 1, 1, [["cd /work && bun test", "cd /work && bun test", 3, ["c1", "c3", "c6"]], ["FOO=1", "FOO=1", 2, ["c10", "c11"]]]],
     ]);
-    expect(built.commands[3].commands[1].runs.map(run => [run.tool, run.error, run.decision])).toEqual([["Bash", true, null], ["Bash", false, "denied"], ["Bash", false, null]]);
-    expect(built.commands[0].commands[0].runs[0]).toMatchObject({ background: true, pending: false });
-    expect(built.commands[0].commands[1]).toMatchObject({ key: `${built.commands[3].commands[1].key}:bun`, step: { line: 1, step: 2, steps: 2 }, also: [] });
-    expect(built.commands[3].commands[1]).toMatchObject({ also: ["bun"] });
-    expect(built.commands[3].commands[1].step).toBeUndefined();
+    expect(built.commands[3].commands[0].runs.map(run => [run.tool, run.error, run.decision])).toEqual([["Bash", true, null], ["Bash", false, "denied"], ["Bash", false, null]]);
+    expect(built.commands[0].commands[1].runs[0]).toMatchObject({ background: true, pending: false });
+    expect(built.commands[0].commands[0]).toMatchObject({ key: `${built.commands[3].commands[0].key}:bun`, step: { line: 1, step: 2, steps: 2 }, also: [] });
+    expect(built.commands[3].commands[0]).toMatchObject({ also: ["bun"] });
+    expect(built.commands[3].commands[0].step).toBeUndefined();
     expect(built.commands[2].commands[0].runs[0]).toMatchObject({ background: false, pending: true });
     expect(built).toMatchObject({ commandCount: 6, commandRuns: 10, searchCount: 0, searchRuns: 0, searches: [], limited: false });
   });
@@ -360,14 +360,14 @@ describe("recording summary commands", () => {
       run("c1", "Bash", "bun test"),
     ]);
     expect(built.searches.map(group => [group.name, group.count, group.commands.map(command => [command.text, command.detail, command.count])])).toEqual([
-      ["Grep", 3, [["retry", "", 1], ["retry", "src · *.ts", 2]]],
+      ["Grep", 3, [["retry", "src · *.ts", 2], ["retry", "", 1]]],
       ["Glob", 1, [["**/*.test.ts", "", 1]]],
       ["WebSearch", 1, [["bun test timeout", "", 1]]],
     ]);
     expect(built).toMatchObject({ commandCount: 1, commandRuns: 1, searchCount: 4, searchRuns: 5 });
   });
 
-  test("orders the programs run most first, their latest command first, and the catch-all last", () => {
+  test("orders the programs run most first, their commands by first run, and the catch-all last", () => {
     const built = buildCommands([
       run("c1", "Bash", "ls"), run("c2", "Bash", "git status"), run("c3", "Bash", "git diff"), run("c4", "Bash", "bun test"),
       run("c5", "Bash", "bun run check"), run("c6", "Bash", "git status"), run("c7", "Bash", "bun test"), run("c8", "Bash", "ls"),
@@ -379,11 +379,11 @@ describe("recording summary commands", () => {
     const many = buildCommands([...Array.from({ length: 35 }, (_, index) => run(`p${index}`, "Bash", `tool${index} run`)), ...Array.from({ length: 5 }, (_, index) => run(`q${index}`, "Bash", "# only a comment"))]);
     expect(many.commands).toHaveLength(31);
     expect(many.commands.at(-1)).toMatchObject({ name: otherProgram, count: 10 });
-    expect(many.commands.at(-1)!.commands.map(command => command.text)).toEqual(["# only a comment", ...Array.from({ length: 5 }, (_, index) => `tool${4 - index} run`)]);
+    expect(many.commands.at(-1)!.commands.map(command => command.text)).toEqual([...Array.from({ length: 5 }, (_, index) => `tool${index} run`), "# only a comment"]);
     expect(many.limited).toBe(true);
     // A program that happens to be called "other" keeps a group of its own, apart from the catch-all.
     const named = buildCommands([run("o1", "Bash", "Other --version"), run("o2", "Bash", "other --help"), run("o3", "Bash", "# nothing")]);
-    expect(named.commands.map(group => [group.name, group.commands.map(command => command.text)])).toEqual([["other", ["other --help", "Other --version"]], [otherProgram, ["# nothing"]]]);
+    expect(named.commands.map(group => [group.name, group.commands.map(command => command.text)])).toEqual([["other", ["Other --version", "other --help"]], [otherProgram, ["# nothing"]]]);
     expect(named.limited).toBe(false);
   });
 
@@ -394,8 +394,8 @@ describe("recording summary commands", () => {
     ]);
     const commands = (tool === "Grep" ? built.searches : built.fetches)[0].commands;
     expect(commands).toHaveLength(2);
-    expect(commands[0]).toMatchObject({ count: 1, errors: 0, runs: [{ id: "b" }] });
-    expect(commands[1]).toMatchObject({ count: 1, errors: 1, runs: [{ id: "a" }] });
+    expect(commands[0]).toMatchObject({ count: 1, errors: 1, runs: [{ id: "a" }] });
+    expect(commands[1]).toMatchObject({ count: 1, errors: 0, runs: [{ id: "b" }] });
     expect(commands[0].key).not.toBe(commands[1].key);
   });
 
@@ -433,7 +433,7 @@ describe("recording summary commands", () => {
     expect(initial[0].text).toBe(initial[1].text);
     expect(initial[0].key).not.toBe(initial[1].key);
     const refreshed = buildCommands([...calls, run("c", "Bash", `${prefix}a.py`)]).commands[0].commands;
-    expect(refreshed[0].key).toBe(initial[1].key);
+    expect(refreshed[0].key).toBe(initial[0].key);
     const detail = "x".repeat(220);
     const fetched = buildCommands([run("f1", "WebFetch", "https://example.test", { detail: `${detail}a` }), run("f2", "WebFetch", "https://example.test", { detail: `${detail}b` })]).fetches[0].commands;
     expect(fetched[0].detail).toBe(fetched[1].detail);
@@ -517,13 +517,13 @@ describe("recording summary commands", () => {
       run("c6", "Bash", "herdr status"),
     ]);
     expect(built.commands.map(group => [group.name, group.category, group.count, group.errors, group.stopped, group.commands.map(command => [command.head, command.step ?? null, command.also ?? null])])).toEqual([
-      ["git", "source", 2, 0, 0, [["git commit -m @'", { line: 1, step: 1, steps: 1 }, []], ["git add -A && git commit -m 'x' && git push", { line: 1, step: 1, steps: 3 }, []]]],
-      ["netstat", "shell", 2, 0, 0, [["netstat -ano", null, null], ['netstat -ano | grep -q ":12003" && echo BUSY', { line: 1, step: 1, steps: 3 }, []]]],
+      ["git", "source", 2, 0, 0, [["git add -A && git commit -m 'x' && git push", { line: 1, step: 1, steps: 3 }, []], ["git commit -m @'", { line: 1, step: 1, steps: 1 }, []]]],
+      ["netstat", "shell", 2, 0, 0, [['netstat -ano | grep -q ":12003" && echo BUSY', { line: 1, step: 1, steps: 3 }, []], ["netstat -ano", null, null]]],
       ["bun", "language", 1, 1, 0, [["…bun test | tail -3", { line: 1, step: 2, steps: 3 }, []]]],
       ["cat", "files", 1, 0, 1, [["…cat f && ls", { line: 1, step: 2, steps: 3 }, ["ls"]]]],
       ["ls", "files", 1, 0, 1, [["…ls", { line: 1, step: 3, steps: 3 }, ["cat"]]]],
       ["herdr", "shell", 1, 0, 0, [["herdr status", null, null]]],
-      [otherProgram, "other", 5, 1, 1, [["git commit -m @'", null, ["git"]], ["echo hi && cat f && ls", null, ["cat", "ls"]], ['netstat -ano | grep -q ":12003" && echo BUSY', null, ["netstat"]], ["cd app && bun test | tail -3", null, ["bun"]], ["git add -A && git commit -m 'x' && git push", null, ["git"]]]],
+      [otherProgram, "other", 5, 1, 1, [["git add -A && git commit -m 'x' && git push", null, ["git"]], ["cd app && bun test | tail -3", null, ["bun"]], ['netstat -ano | grep -q ":12003" && echo BUSY', null, ["netstat"]], ["echo hi && cat f && ls", null, ["cat", "ls"]], ["git commit -m @'", null, ["git"]]]],
     ]);
     const other = built.commands.at(-1)!.commands;
     expect(built.commands[0].commands.map(command => command.key)).toEqual([`${other[0].key}:git`, `${other[4].key}:git`]);
