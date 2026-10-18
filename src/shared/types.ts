@@ -323,16 +323,26 @@ export interface SummaryFolder { path: string; working: SummaryRecord | null; ad
 export interface SummaryScratchpad { path: string; files: SummaryFile[] }
 
 /**
- * The files a recording changed and read, grouped under the folders it worked in. `scratchpads` holds the changed files
- * inside Claude Code's per-session scratchpad directories, and `other` the changed files outside every folder and
- * scratchpad. The totals count every file even when a list stops at its limit, which `limited` reports.
+ * One thing the user typed, in recording order: `prompt` for prose, `command` for a slash command shown as `/name args`,
+ * `shell` for a `!` shell command shown as `! command`. `text` is its first 180 characters on one line. `errors` and
+ * `stopped` count the failures and the decided, interrupted, or cancelled tools recorded between it and the next prompt.
+ */
+export interface SummaryPrompt extends SummaryRecord { kind: "prompt" | "command" | "shell"; text: string; errors: number; stopped: number }
+
+/**
+ * The files a recording changed and read, grouped under the folders it worked in, and the prompts it holds. `scratchpads`
+ * holds the changed files inside Claude Code's per-session scratchpad directories, and `other` the changed files outside
+ * every folder and scratchpad. The totals count every file and prompt even when a list stops at its limit, which
+ * `limited` reports.
  */
 export interface SessionSummary {
   folders: SummaryFolder[];
   scratchpads: SummaryScratchpad[];
   other: SummaryFile[];
   read: SummaryRead[];
+  prompts: SummaryPrompt[];
   changedFiles: number;
   readFiles: number;
+  promptCount: number;
   limited: boolean;
 }

@@ -1,8 +1,8 @@
 import { posix, win32 } from "node:path";
 import { stripAnsi } from "../shared/ansi";
-import { object, string } from "./normalize";
+import { object, promptLine, string } from "./normalize";
 import type { Decision } from "../shared/decisions";
-import type { SessionSummary, SummaryChange, SummaryFile, SummaryFolder, SummaryRead, SummaryRecord, SummaryScratchpad } from "../shared/types";
+import type { SessionSummary, SummaryChange, SummaryFile, SummaryFolder, SummaryPrompt, SummaryRead, SummaryRecord, SummaryScratchpad } from "../shared/types";
 
 /** Tools whose calls change the file their input names. Read is collected separately. */
 export const changeTools = ["edit", "write", "multiedit", "notebookedit"] as const;
@@ -10,9 +10,16 @@ export const changeTools = ["edit", "write", "multiedit", "notebookedit"] as con
 const fileLimit = 500;
 const changeLimit = 100;
 const folderLimit = 50;
+const promptLimit = 500;
 
 /** A folder the recording started in, moved to, or added with `/add-dir`, in recording order. */
 export interface SummaryRoot { path: string; added: boolean; record: SummaryRecord }
+
+/** A user message record with the text it carries, in recording order; `promptLine()` decides whether it is a prompt. */
+export interface SummaryMessage { text: string; sequence: number; record: SummaryRecord }
+
+/** A record that holds a failure, a decided tool, or both, for counting under the prompt it followed. */
+export interface SummaryOutcome { sequence: number; error: boolean; stopped: boolean }
 
 /**
  * One Edit, Write, MultiEdit, NotebookEdit, or Read call, with the path its input names as recorded. `error` means its
@@ -124,12 +131,40 @@ function byPath(left: string, right: string): number {
 }
 
 /**
- * Groups a recording's changed and read files under the folders it worked in. Each file joins the deepest folder that
- * contains it; files outside every folder are listed under their scratchpad directory when they have one, otherwise on
- * their own. A file that was ever changed is not listed as read.
+ * The prompts among a recording's user messages, in order, each counting the outcomes recorded after it and before the
+ * next prompt. Outcomes ahead of the first prompt count under none.
  */
-export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): SessionSummary {
-  let limited = false;
+export function buildPrompts(messages: SummaryMessage[], outcomes: SummaryOutcome[]): { prompts: SummaryPrompt[]; count: number; limited: boolean } {
+  const prompts: SummaryPrompt[] = [];
+  const sequences: number[] = [];
+  let count = 0;
+  for (const message of messages) {
+    const line = promptLine(message.text);
+    if (!line) continue;
+    count++;
+    sequences.push(message.sequence);
+    if (prompts.length < promptLimit) prompts.push({ ...message.record, kind: line.kind, text: line.text, errors: 0, stopped: 0 });
+  }
+  // Every prompt claims the outcomes up to the next one, so an outcome after a prompt the limit cut is not counted
+  // under the last prompt listed.
+  let index = -1;
+  for (const outcome of [...outcomes].sort((left, right) => left.sequence - right.sequence)) {
+    while (index + 1 < sequences.length && sequences[index + 1] <= outcome.sequence) index++;
+    if (index < 0 || index >= prompts.length) continue;
+    if (outcome.error) prompts[index].errors++;
+    if (outcome.stopped) prompts[index].stopped++;
+  }
+  return { prompts, count, limited: count > prompts.length };
+}
+
+/**
+ * Groups a recording's changed and read files under the folders it worked in, and lists its prompts. Each file joins the
+ * deepest folder that contains it; files outside every folder are listed under their scratchpad directory when they have
+ * one, otherwise on their own. A file that was ever changed is not listed as read.
+ */
+export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[], messages: SummaryMessage[] = [], outcomes: SummaryOutcome[] = []): SessionSummary {
+  const typed = buildPrompts(messages, outcomes);
+  let limited = typed.limited;
   const folders = new Map<string, SummaryFolder>();
   for (const root of roots) {
     if (!root.path.trim()) continue;
@@ -206,7 +241,7 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[]): Sessio
     return { ...file.record, path: file.path, display, folder: home?.folder.path ?? root ?? "", reads: file.reads };
   }).sort((left, right) => rank(left) - rank(right) || byPath(left.display, right.display));
 
-  return { folders: list, scratchpads: [...scratchpads.values()], other, read: reads, changedFiles: changed.size, readFiles: read.size, limited };
+  return { folders: list, scratchpads: [...scratchpads.values()], other, read: reads, prompts: typed.prompts, changedFiles: changed.size, readFiles: read.size, promptCount: typed.count, limited };
 }
 
 /** Every record a summary points at, for looking up their positions under the replay filters. */
@@ -219,6 +254,7 @@ export function summaryRecordIds(summary: SessionSummary): string[] {
   const files = [...summary.folders.flatMap(folder => folder.files), ...summary.scratchpads.flatMap(scratchpad => scratchpad.files), ...summary.other];
   for (const file of files) for (const change of file.changes) ids.add(change.id);
   for (const file of summary.read) ids.add(file.id);
+  for (const prompt of summary.prompts) ids.add(prompt.id);
   return [...ids];
 }
 
@@ -232,5 +268,6 @@ export function placeSummary(summary: SessionSummary, positions: Map<string, num
     scratchpads: summary.scratchpads.map(scratchpad => ({ ...scratchpad, files: scratchpad.files.map(file) })),
     other: summary.other.map(file),
     read: summary.read.map(at),
+    prompts: summary.prompts.map(at),
   };
 }

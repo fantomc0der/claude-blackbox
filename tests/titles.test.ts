@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { explicitTitle, normalize, promptTitle } from "../src/server/normalize";
+import { explicitTitle, normalize, promptLine, promptTitle } from "../src/server/normalize";
 import { Recorder } from "../src/server/recorder";
 import { removeTestDirectory } from "./helpers";
 
@@ -36,6 +36,8 @@ describe("session titles", () => {
     expect(title(selection)).toBe("");
     expect(title([{ type: "text", text: openedFile }, { type: "text", text: selection }])).toBe("");
     expect(title("<bash-input></bash-input>")).toBe("");
+    expect(title("<bash-stdout>186 pass</bash-stdout><bash-stderr></bash-stderr>")).toBe("");
+    expect(title("<bash-stderr>command not found</bash-stderr>")).toBe("");
     expect(title("Summary of the conversation so far", { isCompactSummary: true })).toBe("");
     expect(title("Internal skill instructions", { isMeta: true })).toBe("");
   });
@@ -45,6 +47,16 @@ describe("session titles", () => {
     expect(title(command("/review", "  PR 12\n  and PR 13  "))).toBe("/review PR 12 and PR 13");
     expect(title("<bash-input>bun test</bash-input>")).toBe("! bun test");
     expect(title("<bash-input>\u001b[1mbun\u001b[22m test tests/titles.test.ts</bash-input>")).toBe("! bun test tests/titles.test.ts");
+  });
+
+  test("list what was typed by kind, keeping a bare slash command that titles nothing", () => {
+    expect(promptLine("Add retries to the upload client")).toEqual({ kind: "prompt", text: "Add retries to the upload client", bare: false });
+    expect(promptLine(`${openedFile}\nWhy does the upload client hang?`)).toEqual({ kind: "prompt", text: "Why does the upload client hang?", bare: false });
+    expect(promptLine(command("/review", "PR 12"))).toEqual({ kind: "command", text: "/review PR 12", bare: false });
+    expect(promptLine(command("/compact", ""))).toEqual({ kind: "command", text: "/compact", bare: true });
+    expect(promptLine("<command-name>/compact</command-name>\n<command-message>compact</command-message>")).toEqual({ kind: "command", text: "/compact", bare: true });
+    expect(promptLine("<bash-input>bun test</bash-input>")).toEqual({ kind: "shell", text: "! bun test", bare: false });
+    for (const skipped of ["", "  ", command("", ""), "<bash-input></bash-input>", stdout("Compacted"), "<bash-stdout>186 pass</bash-stdout>", "[Request interrupted by user]", openedFile, selection]) expect(promptLine(skipped)).toBeNull();
   });
 
   test("title a prompt by its own words once the context Claude Code attached is removed", () => {

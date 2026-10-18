@@ -343,6 +343,38 @@ await writeFile(join(folder, "overview-files.jsonl"), [
   overviewResult("overview-write-2", "File created successfully."),
   overviewText("The overview files are ready.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// The overview's Prompts view: a typed prompt whose tool failed, a bare slash command and the local output it wrote, a
+// slash command with arguments, a `!` shell command and the output it wrote back, an IDE record nothing was typed into,
+// a prompt with attached context whose tool the user refused, the interruption marker, and enough assistant prose that
+// the last prompt, typed the next day, sits on the second page.
+const promptsStart = Date.parse("2026-01-05T12:00:00Z");
+let promptsSequence = 0;
+const promptsRecord = (record: Record<string, unknown>, offsetMs = 0) => {
+  const sequence = promptsSequence++;
+  return { uuid: `prompts-${sequence}`, cwd: "/synthetic/prompts-app", timestamp: new Date(promptsStart + sequence * 60_000 + offsetMs).toISOString(), ...record };
+};
+const promptsText = (text: string, type = "user", offsetMs = 0) => promptsRecord({ type, message: { role: type, content: text, model: "claude-sonnet-4-5" } }, offsetMs);
+const promptsCall = (id: string, name: string, input: Record<string, unknown>) => promptsRecord({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }], model: "claude-sonnet-4-5" } });
+const promptsResult = (id: string, content: string, is_error = false, extra: Record<string, unknown> = {}) => promptsRecord({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error }] }, ...extra });
+const promptsCommand = (name: string, args: string) => promptsText(`<command-name>${name}</command-name>\n            <command-message>${name.slice(1)}</command-message>\n            <command-args>${args}</command-args>`);
+await writeFile(join(folder, "overview-prompts.jsonl"), [
+  promptsText("Overview prompts verification"),
+  promptsCall("prompts-failed", "Bash", { command: "bun test" }),
+  promptsResult("prompts-failed", "<tool_use_error>Exit code 1\n1 fail</tool_use_error>", true),
+  promptsCommand("/compact", ""),
+  promptsText("<local-command-stdout>Compacted the conversation</local-command-stdout>"),
+  promptsCommand("/review", "PR 12"),
+  promptsText("<bash-input>bun test</bash-input>"),
+  promptsText("<bash-stdout>186 pass</bash-stdout><bash-stderr></bash-stderr>"),
+  promptsText("<ide_opened_file>The user opened the file /synthetic/prompts-app/src/upload.ts in the IDE. This may or may not be related to the current task.</ide_opened_file>"),
+  promptsText("<system-reminder>Follow CLAUDE.md</system-reminder>Add retries to the upload client"),
+  promptsCall("prompts-denied", "Bash", { command: "rm -rf node_modules" }),
+  promptsResult("prompts-denied", "\nThe user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nKeep the install.", true, { toolDenialKind: "user-rejected" }),
+  promptsText("[Request interrupted by user for tool use]"),
+  ...Array.from({ length: 58 }, (_, index) => promptsText(prose(`Prompts filler ${index + 1}`), "assistant")),
+  promptsText("Ship it", "user", 24 * 60 * 60_000),
+  promptsText("Shipped.", "assistant", 24 * 60 * 60_000),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
 // messages, the interruption marker it writes as a user record after the interrupted result, plus one genuine failure:
 // the Errors tab labels each, and only the failure counts as an error. The

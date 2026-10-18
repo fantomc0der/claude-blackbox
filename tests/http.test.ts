@@ -69,8 +69,10 @@ test("serves a recording's file summary with positions under the replay filters"
   ]);
   const summary = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=all`))).json();
   expect(summary).toMatchObject({ folders: [{ path: "/work/example", added: null, files: [{ path: "/work/example/src/a.ts", display: "src/a.ts", changes: [{ tool: "Edit", error: false, position: 1 }] }] }], changedFiles: 1 });
+  expect(summary).toMatchObject({ prompts: [{ kind: "prompt", text: "Hello", position: 0, errors: 0, stopped: 0 }], promptCount: 1 });
   const prompts = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=prompts`))).json();
   expect(prompts.folders[0].files[0].changes[0].position).toBeNull();
+  expect(prompts.prompts[0].position).toBe(0);
   expect((await handler(new Request(`http://127.0.0.1:12001/api/sessions/${"0".repeat(24)}/summary`))).status).toBe(404);
 });
 
