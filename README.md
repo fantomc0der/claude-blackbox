@@ -141,6 +141,8 @@ The derived index upgrades automatically and rebuilds usage from existing record
 
 Verified viewport sizes include **1280×720**, **1366×768**, **1920×1080**, **2560×1440**, **3440×1440**, **3840×2160**, and **390×844**. These are CSS viewport sizes; browser zoom and OS scaling naturally choose the appropriate layout.
 
+The **Commands run** overview keeps simple commands grouped by program and puts language/build tools, network activity, and ambiguous shell scripts behind disclosures. See [command grouping and previews](docs/command-overview.md) for the classification rules.
+
 ### Keyboard
 
 | Shortcut | Action |

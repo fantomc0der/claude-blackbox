@@ -414,6 +414,40 @@ await writeFile(join(folder, "overview-commands.jsonl"), [
   commandCall("commands-cargo-1", "Bash", { command: "cargo test --locked" }),
   commandText("The tests pass now.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "overview-command-overflow.jsonl"), [
+  commandText("Overview command overflow verification"),
+  ...Array.from({ length: 31 }, (_, index) => [
+    commandCall(`overflow-${index}`, "Bash", { command: `overflow-tool-${index} --version` }),
+    commandResult(`overflow-${index}`, `Synthetic program ${index}`),
+  ]).flat(),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "overview-command-categories.jsonl"), [
+  commandText("Overview command categories verification"),
+  commandCall("categories-ls", "Bash", { command: "ls src" }),
+  commandResult("categories-ls", "main.ts"),
+  commandCall("categories-python", "Bash", { command: "python -X utf8 -B tests/check.py" }),
+  commandResult("categories-python", "1 pass"),
+  commandCall("categories-dotnet", "PowerShell", { command: "dotnet test" }),
+  commandResult("categories-dotnet", "1 pass"),
+  commandCall("categories-curl", "Bash", { command: 'curl "https://example.test/?a=1&b=2"' }),
+  commandResult("categories-curl", "ok"),
+  commandCall("categories-fetch-1", "WebFetch", { url: "https://example.test/docs", prompt: "Find setup instructions" }),
+  commandResult("categories-fetch-1", "Fetch failed", true),
+  commandCall("categories-fetch-2", "WebFetch", { url: "https://example.test/docs", prompt: "Find setup instructions" }),
+  commandResult("categories-fetch-2", "Setup instructions found"),
+  commandCall("categories-chain", "Bash", { command: 'cd "/synthetic/skills" && S="/tmp/scratch" && python "$S/check.py" 2>&1 | tail -8' }),
+  commandResult("categories-chain", "1 pass"),
+  commandCall("categories-assignment", "Bash", { command: 'F=/tmp/scratch\npython "$F/check.py"\nwc -l "$F/output.txt"' }),
+  commandResult("categories-assignment", "Missing output.txt", true),
+  commandCall("categories-powershell", "PowerShell", { command: '$sp = "C:\\Temp\\scratch"\nGet-ChildItem -LiteralPath $sp' }),
+  commandResult("categories-powershell", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", true, { toolDenialKind: "cancelled" }),
+  commandCall("categories-search", "Grep", { pattern: "backoffCeiling", path: "src" }),
+  commandResult("categories-search", "src/main.ts: backoffCeiling"),
+  commandCall("categories-search-repeat", "Grep", { pattern: "backoffCeiling", path: "src" }),
+  commandResult("categories-search-repeat", "Search failed", true),
+  commandCall("categories-search-stopped", "Glob", { pattern: "**/*.ts" }),
+  commandResult("categories-search-stopped", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", true, { toolDenialKind: "cancelled" }),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
 // messages, the interruption marker it writes as a user record after the interrupted result, plus one genuine failure:
 // the Errors tab labels each, and only the failure counts as an error. The

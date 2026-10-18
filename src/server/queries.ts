@@ -9,7 +9,7 @@ import { displaySnippet, normalize, object, pathName, requestMessageType, string
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
-import { addedDirectory, buildSummary, changeTools, commandTools, contentBlocks, isAddDirCommand, placeSummary, recordText, searchTools, summaryRecordIds, type SummaryCall, type SummaryMessage, type SummaryOutcome, type SummaryRoot, type SummaryRunCall } from "./summary";
+import { addedDirectory, buildSummary, changeTools, commandTools, contentBlocks, fetchTools, isAddDirCommand, placeSummary, recordText, searchTools, summaryRecordIds, type SummaryCall, type SummaryMessage, type SummaryOutcome, type SummaryRoot, type SummaryRunCall } from "./summary";
 
 const timelineBucketLimit = 1500;
 const findMatchLimit = 5000;
@@ -651,7 +651,7 @@ export class RecordingQueries {
     }
     roots.sort((left, right) => left.sequence - right.sequence);
 
-    const tools = [...changeTools, "read", ...commandTools, ...searchTools];
+    const tools = [...changeTools, "read", ...commandTools, ...searchTools, ...fetchTools];
     const calls: SummaryCall[] = [];
     const runs: SummaryRunCall[] = [];
     const source = this.db.query<{ raw: string }, [number]>("SELECT raw FROM events WHERE rowid=?");
@@ -671,6 +671,11 @@ export class RecordingQueries {
       if ((commandTools as readonly string[]).includes(tool)) {
         const text = string(input.command);
         if (text.trim()) runs.push({ tool: row.name, text, detail: "", background: input.run_in_background === true, pending: !row.answered, ...outcome });
+        continue;
+      }
+      if ((fetchTools as readonly string[]).includes(tool)) {
+        const text = string(input.url);
+        if (text.trim()) runs.push({ tool: row.name, text, detail: string(input.prompt), background: false, pending: !row.answered, ...outcome });
         continue;
       }
       if ((searchTools as readonly string[]).includes(tool)) {

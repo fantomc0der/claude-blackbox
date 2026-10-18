@@ -330,20 +330,21 @@ export interface SummaryScratchpad { path: string; files: SummaryFile[] }
 export interface SummaryRun extends SummaryRecord { tool: string; error: boolean; decision: Decision | null; background: boolean; pending: boolean }
 
 /**
- * A distinct command or search, with its latest runs in recording order. `text` is the recorded command, pattern, or
- * query, trimmed and capped; `head` is its first line from the program on, and `lead` the `cd` steps and environment
- * settings before the program, each on one line, and `lines` how many non-empty lines the command has from the program
- * on; `detail` is the path
- * and glob a search was scoped to, or "". `count`,
+ * A distinct command, search, or fetch, with its latest runs in recording order. `key` identifies its uncapped inputs
+ * across summary refreshes. `text` is the recorded command, pattern, URL, or
+ * query, trimmed and capped; `head` is its original first non-empty line and `lines` its non-empty line count.
+ * `detail` is a search's scope or a WebFetch prompt, or "". `count`,
  * `errors`, and `stopped` cover every run, even when `runs` keeps only the last of them.
  */
-export interface SummaryCommand { text: string; head: string; lead: string; lines: number; detail: string; count: number; errors: number; stopped: number; runs: SummaryRun[] }
+export interface SummaryCommand { key: string; text: string; head: string; lines: number; detail: string; count: number; errors: number; stopped: number; runs: SummaryRun[] }
+
+export type SummaryCommandCategory = "shell" | "language" | "network" | "other" | "search";
 
 /**
- * Commands that start with one program, named by `name`, or the searches one tool made, named by the tool. The counts
- * cover every run of every command in the group.
+ * Single-program commands, ambiguous shell input, or calls to one search/fetch tool. `category` controls the overview
+ * disclosure independently of the program's name. The counts cover every run of every command in the group.
  */
-export interface SummaryCommandGroup { name: string; count: number; errors: number; stopped: number; commands: SummaryCommand[] }
+export interface SummaryCommandGroup { name: string; category: SummaryCommandCategory; count: number; errors: number; stopped: number; commands: SummaryCommand[] }
 
 /**
  * One thing the user typed, in recording order: `prompt` for prose, `command` for a slash command shown as `/name args`,
@@ -355,9 +356,9 @@ export interface SummaryPrompt extends SummaryRecord { kind: "prompt" | "command
 /**
  * The files a recording changed and read, grouped under the folders it worked in, the prompts it holds, and the commands
  * it ran. `scratchpads` holds the changed files inside Claude Code's per-session scratchpad directories, and `other` the
- * changed files outside every folder and scratchpad. `commands` groups the Bash and PowerShell commands by the program
- * they start with, and `searches` the Grep, Glob, and WebSearch calls by tool; `commandCount` and `searchCount` are the
- * distinct commands and searches, `commandRuns` and `searchRuns` every run of them. The totals count every file, prompt,
+ * changed files outside every folder and scratchpad. `commands` groups Bash and PowerShell commands by a single
+ * program or Other, `searches` groups Grep, Glob, and WebSearch calls, and `fetches` groups WebFetch calls. Each has
+ * distinct-entry and run totals. The totals count every file, prompt,
  * command, and run even when a list stops at its limit, which `limited` reports.
  */
 export interface SessionSummary {
@@ -368,6 +369,7 @@ export interface SessionSummary {
   prompts: SummaryPrompt[];
   commands: SummaryCommandGroup[];
   searches: SummaryCommandGroup[];
+  fetches: SummaryCommandGroup[];
   changedFiles: number;
   readFiles: number;
   promptCount: number;
@@ -375,5 +377,7 @@ export interface SessionSummary {
   commandRuns: number;
   searchCount: number;
   searchRuns: number;
+  fetchCount: number;
+  fetchRuns: number;
   limited: boolean;
 }

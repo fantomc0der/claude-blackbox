@@ -59,6 +59,9 @@
   .overview-reads[open] > summary svg { transform: rotate(90deg); }
   .overview-reads .overview-file-open { padding-left: 19px; }
   .overview-searches .overview-file-open { padding-left: 21px; }
+  .overview-command-category > summary { display: grid; grid-template-columns: 13px minmax(0, 1fr); gap: 2px 6px; padding: 5px 0; }
+  .overview-category-tally { grid-column: 2; font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
+  .overview-commands .overview-category-note { margin: 8px 0 12px; }
   .overview-note { margin: 16px 0 0; font-size: var(--text-meta); line-height: 1.5; color: var(--muted); }
 
   @media (pointer: coarse) {

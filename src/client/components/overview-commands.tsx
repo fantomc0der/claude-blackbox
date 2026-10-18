@@ -1,10 +1,16 @@
 import { createSignal, For, Show } from "solid-js";
-import type { SessionSummary, SummaryCommand, SummaryCommandGroup, SummaryRecord, SummaryRun } from "../../shared/types";
+import type { SessionSummary, SummaryCommand, SummaryCommandCategory, SummaryCommandGroup, SummaryRecord, SummaryRun } from "../../shared/types";
 import { formatEventTime, truncate } from "../lib/content";
 import { decisionLabels } from "../../shared/decisions";
 import { Icon } from "./icon";
 
-const plural = (count: number, word: string) => `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;
+const plural = (count: number, word: string) => `${count.toLocaleString()} ${word}${count === 1 ? "" : word.endsWith("ch") ? "es" : "s"}`;
+const entryCount = (groups: SummaryCommandGroup[]) => groups.reduce((count, group) => count + group.commands.length, 0);
+const categories = [
+  { key: "language", label: "Language & build tools" },
+  { key: "network", label: "Network" },
+  { key: "other", label: "Other commands" },
+] as const;
 const hiddenText = "Opens in All events, because the current view hides it.";
 const hiddenNote = (record: SummaryRecord) => record.position === null ? ` ${hiddenText}` : "";
 const HiddenNote = (props: { record: SummaryRecord }) => <Show when={props.record.position === null}><span class="visually-hidden"> {hiddenText}</span></Show>;
@@ -34,8 +40,8 @@ function runPhrase(run: SummaryRun, subject: string): string {
 
 /** The overview rail's Commands run view: shell commands deduplicated and grouped by program, with their searches. */
 export function OverviewCommands(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: string }) {
-  // Rows are keyed by their command's text and scope, which a refreshed summary keeps, so an open run list stays open.
-  const keyOf = (command: SummaryCommand) => `${command.text}\n${command.detail}`;
+  // Rows keep their full-input identity across refreshes, even when their displayed text and detail are capped.
+  const keyOf = (command: SummaryCommand) => command.key;
   const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set());
   const toggle = (command: SummaryCommand) => setExpanded(current => {
     const next = new Set(current);
@@ -50,9 +56,10 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
     const listId = `overview-runs-${++runLists}`;
     const open = () => expanded().has(keyOf(command()));
     const last = () => command().runs.at(-1)!;
-    const secondary = () => [command().lead, command().lines > 1 ? `+${plural(command().lines - 1, "line")}` : ""].filter(Boolean).join(" · ") || command().detail;
+    const secondary = () => command().lines > 1 ? `+${plural(command().lines - 1, "line")}` : command().detail;
+    const listName = () => `${noun === "run" ? "Runs" : noun === "fetch" ? "Fetches" : "Searches"} of ${truncate(command().head, 100)}`;
     const subject = () => command().count > 1 ? `Last ${noun}` : `The ${noun}`;
-    const name = () => `${truncate(command().head, 100)}${command().detail ? ` in ${command().detail}` : ""}, ${plural(command().count, noun)}${command().errors ? `, ${plural(command().errors, "error")}` : ""}${command().stopped ? `, ${command().stopped.toLocaleString()} stopped` : ""}. ${runPhrase(last(), subject())} Show the ${command().count > 1 ? "last " : ""}${noun}.${hiddenNote(last())}`;
+    const name = () => `${truncate(command().head, 100)}${command().detail ? `${noun === "fetch" ? ": " : " in "}${command().detail}` : ""}, ${plural(command().count, noun)}${command().errors ? `, ${plural(command().errors, "error")}` : ""}${command().stopped ? `, ${command().stopped.toLocaleString()} stopped` : ""}. ${runPhrase(last(), subject())} Show the ${command().count > 1 ? "last " : ""}${noun}.${hiddenNote(last())}`;
     return <li class={['overview-file', 'overview-command', { selected: command().runs.some(run => run.id === props.selected) }]}>
       <button class="overview-file-open" title={command().detail ? `${command().text}\n${command().detail}` : command().text} aria-label={name()} onClick={() => props.show(last())}>
         <span class={['overview-run-glyph', runGlyph(last()).tone]} aria-hidden="true">{runGlyph(last()).glyph}</span>
@@ -62,10 +69,10 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
         <Show when={command().errors || command().stopped}><span class="overview-file-outcome" aria-hidden="true"><Show when={command().errors}><span class="overview-file-error">{plural(command().errors, "error")}</span></Show><Show when={command().stopped}><span class="overview-file-stopped">{command().stopped.toLocaleString()} stopped</span></Show></span></Show>
       </button>
       <Show when={command().runs.length > 1}>
-        <button class="icon-button tiny overview-file-toggle" aria-expanded={open() ? "true" : "false"} aria-controls={open() ? listId : undefined} aria-label={`${noun === "run" ? "Runs" : "Searches"} of ${truncate(command().head, 100)}`} title={open() ? `Hide the ${noun}s` : `List each ${noun}`} onClick={() => toggle(command())}><Icon name="down" size={14} /></button>
+        <button class="icon-button tiny overview-file-toggle" aria-expanded={open() ? "true" : "false"} aria-controls={open() ? listId : undefined} aria-label={listName()} title={open() ? "Hide the list" : `List each ${noun}`} onClick={() => toggle(command())}><Icon name="down" size={14} /></button>
       </Show>
       <Show when={open()}>
-        <ol class="overview-changes" id={listId} aria-label={`${noun === "run" ? "Runs" : "Searches"} of ${truncate(command().head, 100)}`}>
+        <ol class="overview-changes" id={listId} aria-label={listName()}>
           <For each={command().runs} keyed={run => run.id}>{run => <li>
             <button aria-current={run().id === props.selected ? "true" : undefined} title={run().position === null ? hiddenText : undefined} onClick={() => props.show(run())}>
               <span>{formatEventTime(run().timestamp)}</span><Show when={runOutcome(run())}>{outcome => <>{" "}<span aria-hidden="true">·</span>{" "}<span class={run().error ? "overview-file-error" : run().decision ? "overview-file-stopped" : ""}>{outcome()}</span></>}</Show><HiddenNote record={run()} />
@@ -77,12 +84,60 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
   };
   const CommandRow = Row("run");
   const SearchRow = Row("search");
+  const FetchRow = Row("fetch");
 
-  const Tally = (props: { group: SummaryCommandGroup; noun: string }) => <p class="overview-provenance">
+  const listLimited = (kind: "commands" | "searches" | "fetches") => {
+    const summary = props.summary;
+    if (!summary) return false;
+    const total = kind === "commands" ? summary.commandCount : kind === "searches" ? summary.searchCount : summary.fetchCount;
+    return total > entryCount(summary[kind]);
+  };
+  const hasOmissions = () => listLimited("commands") || listLimited("searches") || listLimited("fetches");
+  const searchTotals = () => (props.summary?.searches ?? []).reduce((total, group) => ({ count: total.count + group.count, errors: total.errors + group.errors, stopped: total.stopped + group.stopped }), { count: 0, errors: 0, stopped: 0 });
+
+  const Tally = (props: { group: SummaryCommandGroup; noun: string; listedOnly?: boolean }) => <p class="overview-provenance">
+    <Show when={props.listedOnly}><span>Listed:</span></Show>
     <span>{plural(props.group.count, props.noun)}</span>
     <Show when={props.group.errors}><span class="meta-dot" aria-hidden="true">·</span><span class="overview-file-error">{plural(props.group.errors, "error")}</span></Show>
     <Show when={props.group.stopped}><span class="meta-dot" aria-hidden="true">·</span><span class="overview-file-stopped">{props.group.stopped.toLocaleString()} stopped</span></Show>
   </p>;
+
+  const groups = (category: SummaryCommandCategory) => props.summary?.commands.filter(group => group.category === category) ?? [];
+  const Program = (props: { group: SummaryCommandGroup }) => <section class="overview-folder" aria-label={`Commands starting with ${props.group.name}`}>
+    <h3><Icon name="terminal" size={14} /><span>{props.group.name}</span></h3>
+    <Tally group={props.group} noun="run" listedOnly={listLimited("commands")} />
+    <ul class="overview-file-list"><For each={props.group.commands} keyed={keyOf}>{CommandRow}</For></ul>
+  </section>;
+  const Category = (category: { key: SummaryCommandCategory; label: string }) => {
+    const shell = () => groups(category.key);
+    const fetches = () => category.key === "network" ? props.summary?.fetches ?? [] : [];
+    const count = () => shell().reduce((total, group) => total + group.count, 0);
+    const fetched = () => fetches().reduce((total, group) => total + group.count, 0);
+    const errors = () => [...shell(), ...fetches()].reduce((total, group) => total + group.errors, 0);
+    const stopped = () => [...shell(), ...fetches()].reduce((total, group) => total + group.stopped, 0);
+    return <Show when={shell().length || fetches().length}>
+      <details class="overview-reads overview-searches overview-command-category" aria-label={category.label}>
+        <summary>
+          <Icon name="chevron" size={13} /><span>{category.label}</span>
+          <span class="overview-category-tally">
+            <Show when={shell().length && listLimited("commands") || fetches().length && listLimited("fetches")}>Listed: </Show>
+            <span>{[count() ? plural(count(), "run") : "", fetched() ? plural(fetched(), "fetch") : ""].filter(Boolean).join(" · ")}</span>
+            <Show when={errors()}><span class="overview-file-error"> · {plural(errors(), "error")}</span></Show>
+            <Show when={stopped()}><span class="overview-file-stopped"> · {stopped().toLocaleString()} stopped</span></Show>
+          </span>
+        </summary>
+        <Show when={category.key === "other"} fallback={<For each={shell()} keyed={group => group.name}>{group => <Program group={group()} />}</For>}>
+          <p class="overview-note overview-category-note">Multi-step or ambiguous commands, plus programs beyond the overview’s group limit. Previews keep the recorded first line; select one to see the full call.</p>
+          <For each={shell()} keyed={group => group.name}>{group => <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{CommandRow}</For></ul>}</For>
+        </Show>
+        <For each={fetches()} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={`${group().name} fetches`}>
+          <h3><Icon name="terminal" size={14} /><span>{group().name}</span></h3>
+          <Tally group={group()} noun="fetch" listedOnly={listLimited("fetches")} />
+          <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{FetchRow}</For></ul>
+        </section>}</For>
+      </details>
+    </Show>;
+  };
 
   const failure = () => <p class="overview-status" role="status">{props.summary ? "Couldn’t refresh the commands for this view." : "Couldn’t load the commands for this recording."}<button class="text-button" onClick={props.retry}>Retry</button></p>;
 
@@ -90,24 +145,31 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
     <Show when={props.summary} fallback={<Show when={props.failed} fallback={<div class="overview-loading" role="status"><span class="visually-hidden">Loading commands…</span><div class="skeleton-row" /><div class="skeleton-row" /><div class="skeleton-row" /></div>}>{failure()}</Show>}>{summary => <>
       <Show when={props.failed}>{failure()}</Show>
       <p class="overview-scope">Whole recording<Show when={summary().commandRuns}> · {plural(summary().commandRuns, "run")} of {plural(summary().commandCount, "command")}</Show></p>
+      <Show when={hasOmissions()}><p class="overview-note">Counts marked “Listed” exclude omitted commands, searches, or fetches; each listed entry still counts all its calls.</p></Show>
       <Show when={!summary().commandRuns}><p class="overview-empty">No shell commands recorded.</p></Show>
-      <For each={summary().commands} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={group().name === "Other" ? "Other commands" : `Commands starting with ${group().name}`}>
-        <h3><Icon name="terminal" size={14} /><span>{group().name}</span></h3>
-        <Tally group={group()} noun="run" />
-        <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{CommandRow}</For></ul>
-      </section>}</For>
+      <For each={groups("shell")} keyed={group => group.name}>{group => <Program group={group()} />}</For>
+      <For each={categories} keyed={category => category.key}>{category => <Category key={category().key} label={category().label} />}</For>
       <Show when={summary().searches.length}>
-        <details class="overview-reads overview-searches">
-          <summary><Icon name="chevron" size={13} />Searches · {summary().searchCount.toLocaleString()}</summary>
+        <details class="overview-reads overview-searches overview-command-category" aria-label="Searches">
+          <summary>
+            <Icon name="chevron" size={13} /><span>Searches</span>
+            <span class="overview-category-tally">
+              <Show when={listLimited("searches")}>Listed: </Show>
+              <span>{entryCount(summary().searches).toLocaleString()} distinct · {plural(searchTotals().count, "call")}</span>
+              <Show when={searchTotals().errors}><span class="overview-file-error"> · {plural(searchTotals().errors, "error")}</span></Show>
+              <Show when={searchTotals().stopped}><span class="overview-file-stopped"> · {searchTotals().stopped.toLocaleString()} stopped</span></Show>
+            </span>
+          </summary>
+          <Show when={listLimited("searches")}><p class="overview-note">Whole recording: {plural(summary().searchCount, "distinct search")} across {plural(summary().searchRuns, "call")}.</p></Show>
           <For each={summary().searches} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={`${group().name} searches`}>
             <h3><Icon name="search" size={14} /><span>{group().name}</span></h3>
-            <Tally group={group()} noun="search" />
+            <Tally group={group()} noun="call" listedOnly={listLimited("searches")} />
             <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{SearchRow}</For></ul>
           </section>}</For>
         </details>
       </Show>
-      <Show when={summary().limited}><p class="overview-note">Very long recordings show a shortened list of programs, commands, and runs.</p></Show>
-      <p class="overview-note">From Bash and PowerShell calls in this recording. A recorded error means the call failed; a call that succeeded isn’t proof the command did, such as one whose output was piped elsewhere or one run in the background. Commands run by subagents aren’t listed.</p>
+      <Show when={summary().limited}><p class="overview-note">Very long recordings show shortened lists of programs, commands, searches, fetches, and individual calls.</p></Show>
+      <p class="overview-note">Shell counts cover Bash and PowerShell calls only; searches and WebFetch calls are listed separately. A recorded error means the call failed; a call that succeeded isn’t proof the command did, such as one whose output was piped elsewhere or one run in the background. Commands run by subagents aren’t listed.</p>
     </>}</Show>
   </nav>;
 }
