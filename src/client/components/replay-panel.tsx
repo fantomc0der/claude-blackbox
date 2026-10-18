@@ -42,7 +42,7 @@ function summaryRecord(summary: SessionSummary, id: string): SummaryRecord | und
     const change = file.changes.find(entry => entry.id === id);
     if (change) return change;
   }
-  return summary.read.find(file => file.id === id);
+  return summary.read.find(file => file.id === id) ?? summary.prompts.find(prompt => prompt.id === id);
 }
 
 function outlineLabel(event: ReplayEvent): string {

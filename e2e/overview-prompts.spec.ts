@@ -74,6 +74,25 @@ test("a prompt the active view hides opens in All events", async ({ page }) => {
   await expect(page.locator(".replay-event-selected")).toContainText("Add retries to the upload client");
 }, wide);
 
+test("a prompt chosen while fresh positions are still loading opens once they arrive", async ({ page }) => {
+  const { view, prompts } = await openRecording(page, "Overview prompts verification");
+  await view.selectOption("prompts");
+  await expect(prompts.getByText("Whole recording · 6 prompts")).toBeVisible();
+  // Hold the refetch a view change starts, so the rail still shows the previous list while its positions are stale.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/summary?**", async route => { await held; await route.continue(); });
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Tools", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await prompts.getByRole("button", { name: /^Prompt 5, / }).click();
+  await expect(page.locator(".replay-event-selected")).toHaveCount(0);
+  release();
+  // Tools hides the prompt, so the fresh positions send it to All events with its context.
+  await expect(page.getByRole("button", { name: "All events", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".replay-event-selected")).toContainText("Add retries to the upload client");
+  await expect(prompts.locator(".overview-prompt.selected")).toContainText("Add retries to the upload client");
+}, wide);
+
 test("a recording with one prompt lists it alone", async ({ page }) => {
   const { view, prompts } = await openRecording(page, "Hidden-only reasoning verification");
   await expect(view.locator('option[value="prompts"]')).toHaveText("Prompts · 1");
