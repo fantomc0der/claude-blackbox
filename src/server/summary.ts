@@ -1,11 +1,11 @@
 import { posix, win32 } from "node:path";
 import { createHash } from "node:crypto";
 import { stripAnsi } from "../shared/ansi";
-import { commandCategory, commandParts } from "./command-parts";
+import { commandCategory, commandParts, commandSteps } from "./command-parts";
 import { object, promptLine, string } from "./normalize";
 import type { Decision } from "../shared/decisions";
 import type { SessionSummary, SummaryChange, SummaryCommand, SummaryCommandGroup, SummaryFile, SummaryFolder, SummaryPrompt, SummaryRead, SummaryRecord, SummaryRun, SummaryScratchpad } from "../shared/types";
-export { commandParts } from "./command-parts";
+export { commandParts, commandSteps } from "./command-parts";
 
 /** Tools whose calls change the file their input names. Read is collected separately. */
 export const changeTools = ["edit", "write", "multiedit", "notebookedit"] as const;
@@ -166,10 +166,11 @@ const tally = (entry: Tally, run: Pick<SummaryRun, "error" | "decision">) => {
  * Deduplicates a recording's shell commands by a single program or Other, and its searches and fetches by tool.
  * A command is the same whenever its recorded text is, whichever shell ran it; a search or fetch is
  * the same when its tool, text, and detail are. Each command keeps its latest runs, so the last run is always listed,
- * and the groups of programs run most sit first, with the catch-all group last.
+ * and the groups of programs run most sit first, with the catch-all group last. A multi-step command stays in Other
+ * and is also listed, as a step row, under each program it calls at the top level, as `commandSteps()` finds them.
  */
 export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "commands" | "searches" | "fetches" | "commandCount" | "commandRuns" | "searchCount" | "searchRuns" | "fetchCount" | "fetchRuns" | "limited"> {
-  type Entry = { command: SummaryCommand; program: string; first: number; last: number };
+  type Entry = { command: SummaryCommand; text: string; tool: string; program: string; first: number; last: number };
   const commands = new Map<string, Entry>();
   const searches = new Map<string, Entry>();
   const fetches = new Map<string, Entry>();
@@ -185,9 +186,10 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
     let entry = entries.get(key);
     if (!entry) {
       const { program, head, lines } = search || fetch ? { program: call.tool, head: cap(collapse(text), lineLimit), lines: 1 } : commandParts(text, call.tool);
-      entries.set(key, entry = { command: { key: createHash("sha256").update(key).digest("hex"), text: cap(text, textLimit), head, lines, detail: cap(call.detail, lineLimit), count: 0, errors: 0, stopped: 0, runs: [] }, program, first: order, last: order });
+      entries.set(key, entry = { command: { key: createHash("sha256").update(key).digest("hex"), text: cap(text, textLimit), head, lines, detail: cap(call.detail, lineLimit), count: 0, errors: 0, stopped: 0, runs: [] }, text, tool: call.tool, program, first: order, last: order });
     } else if (!search && !fetch && entry.program !== commandParts(text, call.tool).program) {
       entry.program = "";
+      entry.tool = "";
     }
     totals[search ? "searches" : fetch ? "fetches" : "commands"]++;
     tally(entry.command, call);
@@ -200,26 +202,52 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
   // is last. It is kept apart from the named groups rather than under a reserved name, so a program that happens to be
   // called "other" keeps a group of its own. Within a group the command run latest sits first.
   const group = (entries: Map<string, Entry>) => {
-    type Group = { group: SummaryCommandGroup; first: number };
+    type Group = { group: SummaryCommandGroup; first: number; rows: { command: SummaryCommand; last: number }[] };
     const groups = new Map<string, Group>();
     let other: Group | null = null;
     const list = [...entries.values()].sort((left, right) => right.last - left.last);
     if (list.length > commandLimit) limited = true;
-    for (const entry of list.slice(0, commandLimit)) {
+    const listed = list.slice(0, commandLimit);
+    const open = (name: string, first: number): Group => ({ group: { name, category: entries === searches ? "search" : entries === fetches ? "network" : commandCategory(name), count: 0, errors: 0, stopped: 0, commands: [] }, first, rows: [] });
+    const place = (found: Group, entry: Entry, command: SummaryCommand) => {
+      found.group.count += command.count; found.group.errors += command.errors; found.group.stopped += command.stopped;
+      found.first = Math.min(found.first, entry.first);
+      found.rows.push({ command, last: entry.last });
+    };
+    for (const entry of listed) {
       const key = entry.program.toLowerCase();
       let found = groups.get(key);
-      if (!found && key && groups.size < groupLimit) groups.set(key, found = { group: { name: entry.program, category: entries === searches ? "search" : entries === fetches ? "network" : commandCategory(entry.program), count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first });
+      if (!found && key && groups.size < groupLimit) groups.set(key, found = open(entry.program, entry.first));
       if (!found) {
         if (key) limited = true;
-        found = other ??= { group: { name: otherProgram, category: "other", count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first };
+        found = other ??= { group: { name: otherProgram, category: "other", count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first, rows: [] };
       }
-      found.group.count += entry.command.count; found.group.errors += entry.command.errors; found.group.stopped += entry.command.stopped;
-      found.first = Math.min(found.first, entry.first);
-      found.group.commands.push(entry.command);
+      place(found, entry, entry.command);
+    }
+    // A multi-step command's top-level calls join the groups of the programs that have a category and of the programs
+    // run on their own, so a chain never adds a group for `cd` or `echo`. A program lists the command once, from its
+    // first call, and the command's Other row names the groups that list it.
+    if (entries === commands) for (const entry of listed) {
+      if (entry.program || !entry.tool) continue;
+      const rows = new Map<string, { found: Group; command: SummaryCommand }>();
+      for (const step of commandSteps(entry.text, entry.tool)) {
+        const key = step.program.toLowerCase();
+        if (step.consumer || rows.has(key)) continue;
+        let found = groups.get(key);
+        if (!found && commandCategory(step.program) !== "shell" && groups.size < groupLimit) groups.set(key, found = open(step.program, entry.first));
+        if (found) rows.set(key, { found, command: { ...entry.command, key: `${entry.command.key}:${key}`, head: step.head, step: { line: step.line, step: step.step, steps: step.steps } } });
+      }
+      if (!rows.size) continue;
+      const names = [...rows.values()].map(row => row.found.group.name);
+      entry.command.also = names;
+      for (const row of rows.values()) {
+        row.command.also = names.filter(name => name !== row.found.group.name);
+        place(row.found, entry, row.command);
+      }
     }
     const sorted = [...groups.values()].sort((left, right) => right.group.count - left.group.count || left.first - right.first);
     if (other) sorted.push(other);
-    return sorted.map(entry => entry.group);
+    return sorted.map(entry => ({ ...entry.group, commands: entry.rows.sort((left, right) => right.last - left.last).map(row => row.command) }));
   };
   return { commands: group(commands), searches: group(searches), fetches: group(fetches), commandCount: commands.size, commandRuns: totals.commands, searchCount: searches.size, searchRuns: totals.searches, fetchCount: fetches.size, fetchRuns: totals.fetches, limited };
 }

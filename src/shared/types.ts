@@ -336,9 +336,17 @@ export interface SummaryRun extends SummaryRecord { tool: string; error: boolean
  * `detail` is a search's scope or a WebFetch prompt, or "". `count`,
  * `errors`, and `stopped` cover every run, even when `runs` keeps only the last of them.
  */
-export interface SummaryCommand { key: string; text: string; head: string; lines: number; detail: string; count: number; errors: number; stopped: number; runs: SummaryRun[] }
+export interface SummaryCommand { key: string; text: string; head: string; lines: number; detail: string; count: number; errors: number; stopped: number; runs: SummaryRun[]; step?: SummaryStep; also?: string[] }
 
-export type SummaryCommandCategory = "shell" | "language" | "network" | "other" | "search";
+/**
+ * Where a program group's row for a multi-step command comes from: the 1-based line of the call among the command's
+ * non-empty lines, and the call's 1-based position among the top-level calls on that line. The row's `head` is the
+ * call's own text, after "…" when the line has text before it, and its `also` names the other groups listing the
+ * command. The command's own Other row carries `also` without a `step`.
+ */
+export interface SummaryStep { line: number; step: number; steps: number }
+
+export type SummaryCommandCategory = "shell" | "source" | "files" | "language" | "network" | "other" | "search";
 
 /**
  * Single-program commands, ambiguous shell input, or calls to one search/fetch tool. `category` controls the overview

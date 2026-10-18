@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addedDirectory, buildCommands, buildPrompts, buildSummary, commandParts, isAddDirCommand, otherProgram, placeSummary, resolveRecorded, scratchpadRoot, summaryRecordIds, within, type SummaryCall, type SummaryMessage, type SummaryRoot, type SummaryRunCall } from "../src/server/summary";
+import { addedDirectory, buildCommands, buildPrompts, buildSummary, commandParts, commandSteps, isAddDirCommand, otherProgram, placeSummary, resolveRecorded, scratchpadRoot, summaryRecordIds, within, type SummaryCall, type SummaryMessage, type SummaryRoot, type SummaryRunCall } from "../src/server/summary";
 
 const sgr = (code: string) => `\u001b[${code}m`;
 const record = (id: string) => ({ id, position: null, timestamp: "2026-10-11T01:26:42.000Z" });
@@ -273,7 +273,7 @@ describe("recording summary commands", () => {
     expect(built.commands.map(group => [group.name, group.category])).toEqual([
       ["python3.12", "language"], ["dotnet", "language"], ["go", "language"], ["cargo", "language"],
       ["curl", "network"], ["wget", "network"], ["Invoke-WebRequest", "network"],
-      ["wc", "shell"], ["ls", "shell"], ["Other", "shell"], ["Other", "other"],
+      ["wc", "files"], ["ls", "files"], ["Other", "shell"], ["python", "language"], ["Other", "other"],
     ]);
     expect(built.commands.at(-1)?.count).toBe(2);
     const mixed = buildCommands([run("b", "Bash", "FOO=1 python test.py"), run("p", "PowerShell", "FOO=1 python test.py")]);
@@ -312,13 +312,16 @@ describe("recording summary commands", () => {
       run("c11", "Bash", "FOO=1"),
     ]);
     expect(built.commands.map(group => [group.name, group.count, group.errors, group.stopped, group.commands.map(command => [command.text, command.head, command.count, command.runs.map(run => run.id)])])).toEqual([
+      ["bun", 4, 1, 1, [["bun run dev", "bun run dev", 1, ["c7"]], ["cd /work && bun test", "…bun test", 3, ["c1", "c3", "c6"]]]],
       ["git", 3, 0, 0, [["/usr/bin/git diff --stat", "/usr/bin/git diff --stat", 1, ["c5"]], ["git status", "git status", 2, ["c2", "c4"]]]],
-      ["bun", 1, 0, 0, [["bun run dev", "bun run dev", 1, ["c7"]]]],
       ["cargo", 1, 0, 0, [["cargo test", "cargo test", 1, ["c8"]]]],
       ["Other", 5, 1, 1, [["FOO=1", "FOO=1", 2, ["c10", "c11"]], ["cd /work && bun test", "cd /work && bun test", 3, ["c1", "c3", "c6"]]]],
     ]);
     expect(built.commands[3].commands[1].runs.map(run => [run.tool, run.error, run.decision])).toEqual([["Bash", true, null], ["Bash", false, "denied"], ["Bash", false, null]]);
-    expect(built.commands[1].commands[0].runs[0]).toMatchObject({ background: true, pending: false });
+    expect(built.commands[0].commands[0].runs[0]).toMatchObject({ background: true, pending: false });
+    expect(built.commands[0].commands[1]).toMatchObject({ key: `${built.commands[3].commands[1].key}:bun`, step: { line: 1, step: 2, steps: 2 }, also: [] });
+    expect(built.commands[3].commands[1]).toMatchObject({ also: ["bun"] });
+    expect(built.commands[3].commands[1].step).toBeUndefined();
     expect(built.commands[2].commands[0].runs[0]).toMatchObject({ background: false, pending: true });
     expect(built).toMatchObject({ commandCount: 6, commandRuns: 10, searchCount: 0, searchRuns: 0, searches: [], limited: false });
   });
@@ -381,8 +384,8 @@ describe("recording summary commands", () => {
       run("c3", "Bash", JSON.stringify(["webfetch", "Find setup", "https://example.test"])),
     ]);
     const keys = [...built.commands, ...built.searches, ...built.fetches].flatMap(group => group.commands.map(command => command.key));
-    expect(keys).toHaveLength(5);
-    expect(new Set(keys).size).toBe(5);
+    expect(keys).toHaveLength(6);
+    expect(new Set(keys).size).toBe(6);
   });
 
   test("caps displayed entries while whole-recording totals still count omitted entries", () => {
@@ -433,5 +436,79 @@ describe("recording summary commands", () => {
     expect(placed.commands[0].commands[0].runs[0].position).toBe(7);
     expect(placed.searches[0].commands[0].runs[0].position).toBeNull();
     expect(summary).toMatchObject({ commandCount: 1, commandRuns: 1, searchCount: 1, searchRuns: 1, changedFiles: 1 });
+  });
+
+  test.each<[string, [string, string, number, string, boolean][], string]>([
+    ["git add -A && git commit -m 'x && y' && git push", [["git", "git add -A && git commit -m 'x && y' && git push", 1, "1/3", false], ["git", "…git commit -m 'x && y' && git push", 1, "2/3", false], ["git", "…git push", 1, "3/3", false]], "Bash"],
+    ["cd app && bun test | tail -3", [["cd", "cd app && bun test | tail -3", 1, "1/3", false], ["bun", "…bun test | tail -3", 1, "2/3", false], ["tail", "…tail -3", 1, "3/3", true]], "Bash"],
+    ["F=/tmp/scratch\npython \"$F/check.py\"\n\nwc -l \"$F/output.txt\"", [["python", 'python "$F/check.py"', 2, "1/1", false], ["wc", 'wc -l "$F/output.txt"', 3, "1/1", false]], "Bash"],
+    ["cat <<'EOF' > x.txt\ngh pr view\n\nEOF\necho done", [["cat", "cat <<'EOF' > x.txt", 1, "1/1", false], ["echo", "echo done", 4, "1/1", false]], "Bash"],
+    ["cat <<-EOF\n\tgh pr view\n\tEOF\ngh pr list", [["cat", "cat <<-EOF", 1, "1/1", false], ["gh", "gh pr list", 4, "1/1", false]], "Bash"],
+    ["gh api repos/x/pulls/1 --jq '.[] | \"id=\\(.id)\"' | head -5", [["gh", "gh api repos/x/pulls/1 --jq '.[] | \"id=\\(.id)\"' | head -5", 1, "1/2", false], ["head", "…head -5", 1, "2/2", true]], "Bash"],
+    ['echo "$(cat file)" && ls', [["echo", 'echo "$(cat file)" && ls', 1, "1/2", false], ["ls", "…ls", 1, "2/2", false]], "Bash"],
+    ["echo `cat file` && diff <(cat a) <(cat b)", [["echo", "echo `cat file` && diff <(cat a) <(cat b)", 1, "1/2", false], ["diff", "…diff <(cat a) <(cat b)", 1, "2/2", false]], "Bash"],
+    ["if true; then ls; fi", [["true", "…true; then ls; fi", 1, "1/3", false], ["ls", "…ls; fi", 1, "2/3", false]], "Bash"],
+    ["for f in *.ts; do cat $f; done", [["cat", "…cat $f; done", 1, "2/3", false]], "Bash"],
+    ["(cd app && make) && mv file.{a,b}", [["cd", "…cd app && make) && mv file.{a,b}", 1, "1/3", false], ["make", "…make) && mv file.{a,b}", 1, "2/3", false], ["mv", "…mv file.{a,b}", 1, "3/3", false]], "Bash"],
+    ["{ git status; git diff; } | cat", [["git", "…git status; git diff; } | cat", 1, "1/3", false], ["git", "…git diff; } | cat", 1, "2/3", false], ["cat", "…cat", 1, "3/3", true]], "Bash"],
+    ["# comment\n\ncargo test --locked # trailing && ignored", [["cargo", "cargo test --locked # trailing && ignored", 1, "1/1", false]], "Bash"],
+    ["echo one\\;two && ls \\\n  -la", [["echo", "echo one\\;two && ls \\", 1, "1/2", false], ["ls", "…ls \\", 1, "2/2", false]], "Bash"],
+    ["S=/tmp 2>output python test.py; FOO=1 BAR=2 bun test &", [["bun", "…bun test &", 1, "2/2", false]], "Bash"],
+    ["cat file > out 2>&1 && gh pr view 1 >/dev/null", [["cat", "cat file > out 2>&1 && gh pr view 1 >/dev/null", 1, "1/2", false], ["gh", "…gh pr view 1 >/dev/null", 1, "2/2", false]], "Bash"],
+    ["echo ${VAR:-$(cat file)} && gh --version", [["echo", "echo ${VAR:-$(cat file)} && gh --version", 1, "1/2", false], ["gh", "…gh --version", 1, "2/2", false]], "Bash"],
+    ["python -c \"print(1)\nprint(2)\"", [["python", 'python -c "print(1)', 1, "1/1", false]], "Bash"],
+    [">output python test.py", [], "Bash"],
+    ["2>&1 python test.py", [], "Bash"],
+    ["'unfinished && ls", [], "Bash"],
+    ["$cmd --version; \"$ROOT/bin/python\" test.py; `which gh` x; ${GH} auth", [], "Bash"],
+    ["git commit -m @'\nmulti line\n'@; git push", [["git", "git commit -m @'", 1, "1/1", false], ["git", "…git push", 3, "1/1", false]], "PowerShell"],
+    ['$sp = "C:\\Temp"; & "$sp/test.ps1"; & "C:\\Tools\\git.exe" status | Select-String x', [["git", '…& "C:\\Tools\\git.exe" status | Select-String x', 1, "3/4", false], ["Select-String", "…Select-String x", 1, "4/4", true]], "PowerShell"],
+    ["if ($x) { Get-ChildItem -Recurse } else { Remove-Item x }", [["Get-ChildItem", "…Get-ChildItem -Recurse } else { Remove-Item x }", 1, "2/3", false], ["Remove-Item", "…Remove-Item x }", 1, "3/3", false]], "PowerShell"],
+    ["foreach ($f in Get-ChildItem) { Get-Content $f }", [["Get-Content", "…Get-Content $f }", 1, "2/2", false]], "PowerShell"],
+    ["git --% log --format=%H; gh pr list", [["git", "git --% log --format=%H; gh pr list", 1, "1/1", false]], "PowerShell"],
+    ["<# block\ncomment #> git status; \"C:\\x.exe\" run", [["git", "…git status; \"C:\\x.exe\" run", 2, "1/2", false]], "PowerShell"],
+    ["git status `\n  --short; (Get-Date) && gh pr list", [["git", "git status `", 1, "1/1", false], ["gh", "…gh pr list", 2, "2/2", false]], "PowerShell"],
+  ])("finds the top-level calls of a multi-step command: %s", (text, expected, tool) => {
+    expect(commandSteps(text, tool).map(step => [step.program, step.head, step.line, `${step.step}/${step.steps}`, step.consumer])).toEqual(expected);
+  });
+
+  test("caps a step's preview and counts lines as commandParts does", () => {
+    const text = `cd app && gh ${"x".repeat(300)}\n\n\ngit push`;
+    const steps = commandSteps(text);
+    expect(steps.map(step => [step.program, step.head.length, step.line])).toEqual([["cd", 200, 1], ["gh", 200, 1], ["git", 8, 2]]);
+    expect(steps[1].head.startsWith("…gh xxx")).toBe(true);
+    expect(steps[1].head.endsWith("…")).toBe(true);
+    expect(commandParts(text).lines).toBe(2);
+  });
+
+  test("lists a multi-step command under each categorized or standalone program it calls, once, and names those groups on its Other row", () => {
+    const built = buildCommands([
+      run("c1", "Bash", "git add -A && git commit -m 'x' && git push"),
+      run("c2", "Bash", "cd app && bun test | tail -3", { error: true }),
+      run("c3", "Bash", 'netstat -ano | grep -q ":12003" && echo BUSY'),
+      run("c4", "Bash", "echo hi && cat f && ls", { decision: "denied" }),
+      run("c5", "Bash", "netstat -ano"),
+      run("p1", "PowerShell", "git commit -m @'\nmsg\n'@; git push"),
+      run("c6", "Bash", "herdr status"),
+    ]);
+    expect(built.commands.map(group => [group.name, group.category, group.count, group.errors, group.stopped, group.commands.map(command => [command.head, command.step ?? null, command.also ?? null])])).toEqual([
+      ["git", "source", 2, 0, 0, [["git commit -m @'", { line: 1, step: 1, steps: 1 }, []], ["git add -A && git commit -m 'x' && git push", { line: 1, step: 1, steps: 3 }, []]]],
+      ["netstat", "shell", 2, 0, 0, [["netstat -ano", null, null], ['netstat -ano | grep -q ":12003" && echo BUSY', { line: 1, step: 1, steps: 3 }, []]]],
+      ["bun", "language", 1, 1, 0, [["…bun test | tail -3", { line: 1, step: 2, steps: 3 }, []]]],
+      ["cat", "files", 1, 0, 1, [["…cat f && ls", { line: 1, step: 2, steps: 3 }, ["ls"]]]],
+      ["ls", "files", 1, 0, 1, [["…ls", { line: 1, step: 3, steps: 3 }, ["cat"]]]],
+      ["herdr", "shell", 1, 0, 0, [["herdr status", null, null]]],
+      [otherProgram, "other", 5, 1, 1, [["git commit -m @'", null, ["git"]], ["echo hi && cat f && ls", null, ["cat", "ls"]], ['netstat -ano | grep -q ":12003" && echo BUSY', null, ["netstat"]], ["cd app && bun test | tail -3", null, ["bun"]], ["git add -A && git commit -m 'x' && git push", null, ["git"]]]],
+    ]);
+    const other = built.commands.at(-1)!.commands;
+    expect(built.commands[0].commands.map(command => command.key)).toEqual([`${other[0].key}:git`, `${other[4].key}:git`]);
+    expect(built.commands[0].commands[1].runs).toEqual(other[4].runs);
+    expect(built).toMatchObject({ commandCount: 7, commandRuns: 7, limited: false });
+    // A step cannot open a group past the group limit, and the command stays listed under Other without naming it.
+    const many = buildCommands([...Array.from({ length: 30 }, (_, index) => run(`p${index}`, "Bash", `tool${index} run`)), run("x", "Bash", "cd app && git status")]);
+    expect(many.commands).toHaveLength(31);
+    expect(many.commands.some(group => group.name === "git")).toBe(false);
+    expect(many.commands.at(-1)!.commands[0].also).toBeUndefined();
+    expect(many.limited).toBe(false);
   });
 });

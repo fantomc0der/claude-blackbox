@@ -5,16 +5,27 @@ import { decisionLabels } from "../../shared/decisions";
 import { Icon } from "./icon";
 
 const plural = (count: number, word: string) => `${count.toLocaleString()} ${word}${count === 1 ? "" : word.endsWith("ch") ? "es" : "s"}`;
-const entryCount = (groups: SummaryCommandGroup[]) => groups.reduce((count, group) => count + group.commands.length, 0);
+const entryCount = (groups: SummaryCommandGroup[]) => groups.reduce((count, group) => count + group.commands.filter(command => !command.step).length, 0);
+const stepCount = (group: SummaryCommandGroup) => group.commands.reduce((count, command) => count + (command.step ? command.count : 0), 0);
 const categories = [
+  { key: "source", label: "Source control" },
+  { key: "files", label: "Files & text" },
   { key: "language", label: "Language & build tools" },
   { key: "network", label: "Network" },
   { key: "other", label: "Other commands" },
 ] as const;
+const otherLabel = "Other commands";
+const shownPrograms = 3;
 const hiddenText = "Opens in All events, because the current view hides it.";
 const hiddenNote = (record: SummaryRecord) => record.position === null ? ` ${hiddenText}` : "";
 const HiddenNote = (props: { record: SummaryRecord }) => <Show when={props.record.position === null}><span class="visually-hidden"> {hiddenText}</span></Show>;
 let runLists = 0;
+
+/** "git and gh", "git, gh, and cat": the names of the groups a command is also listed under, as prose. */
+const listNames = (names: string[]) => names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+
+/** Where a step sits in its command: "step 2 of 3" on a one-line chain, "line 3 of 6" in a script. */
+const stepPlace = (command: SummaryCommand) => command.lines > 1 ? `line ${command.step!.line} of ${command.lines}` : `step ${command.step!.step} of ${command.step!.steps}`;
 
 /** What a run's result records, as the run list labels it: "" for a plain success. */
 function runOutcome(run: SummaryRun): string {
@@ -40,7 +51,8 @@ function runPhrase(run: SummaryRun, subject: string): string {
 
 /** The overview rail's Commands run view: shell commands deduplicated and grouped by program, with their searches. */
 export function OverviewCommands(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: string }) {
-  // Rows keep their full-input identity across refreshes, even when their displayed text and detail are capped.
+  // Rows keep their full-input identity across refreshes, even when their displayed text and detail are capped. A
+  // step row's identity adds its program, so each listing of a multi-step command opens and closes on its own.
   const keyOf = (command: SummaryCommand) => command.key;
   const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set());
   const toggle = (command: SummaryCommand) => setExpanded(current => {
@@ -51,21 +63,31 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
   });
 
   // Each row opens its last run, since the final attempt answers whether a command worked; the first run only says when
-  // the work began.
+  // the work began. A step row shows one call of a multi-step command, from that call to the end of its line, and
+  // opens the same run as the command's Other row.
   const Row = (noun: string) => (command: () => SummaryCommand) => {
     const listId = `overview-runs-${++runLists}`;
     const open = () => expanded().has(keyOf(command()));
     const last = () => command().runs.at(-1)!;
-    const secondary = () => command().lines > 1 ? `+${plural(command().lines - 1, "line")}` : command().detail;
+    const head = () => command().head.startsWith("…") ? command().head.slice(1) : command().head;
+    const also = () => command().also ?? [];
+    const secondary = () => {
+      if (command().step) return stepPlace(command());
+      const lines = command().lines > 1 ? `+${plural(command().lines - 1, "line")}` : "";
+      const under = also().length > 2 ? `also under ${plural(also().length, "group")}` : also().length ? `also under ${also().join(", ")}` : "";
+      return [lines, under].filter(Boolean).join(" · ") || command().detail;
+    };
+    const listed = () => command().step ? ` ${stepPlace(command())} in a multi-step command also listed under ${listNames([otherLabel, ...also()])},` : also().length ? ` also listed under ${listNames(also())},` : "";
     const listName = () => `${noun === "run" ? "Runs" : noun === "fetch" ? "Fetches" : "Searches"} of ${truncate(command().head, 100)}`;
     const subject = () => command().count > 1 ? `Last ${noun}` : `The ${noun}`;
-    const name = () => `${truncate(command().head, 100)}${command().detail ? `${noun === "fetch" ? ": " : " in "}${command().detail}` : ""}, ${plural(command().count, noun)}${command().errors ? `, ${plural(command().errors, "error")}` : ""}${command().stopped ? `, ${command().stopped.toLocaleString()} stopped` : ""}. ${runPhrase(last(), subject())} Show the ${command().count > 1 ? "last " : ""}${noun}.${hiddenNote(last())}`;
-    return <li class={['overview-file', 'overview-command', { selected: command().runs.some(run => run.id === props.selected) }]}>
-      <button class="overview-file-open" title={command().detail ? `${command().text}\n${command().detail}` : command().text} aria-label={name()} onClick={() => props.show(last())}>
+    const name = () => `${truncate(command().head, 100)}${command().detail ? `${noun === "fetch" ? ": " : " in "}${command().detail}` : ""},${listed()} ${plural(command().count, noun)}${command().errors ? `, ${plural(command().errors, "error")}` : ""}${command().stopped ? `, ${command().stopped.toLocaleString()} stopped` : ""}. ${runPhrase(last(), subject())} Show the ${command().count > 1 ? "last " : ""}${noun}.${hiddenNote(last())}`;
+    const title = () => `${command().text}${command().detail ? `\n${command().detail}` : ""}${also().length ? `\nAlso listed under ${listNames(command().step ? [otherLabel, ...also()] : also())}` : command().step ? `\nAlso listed under ${otherLabel}` : ""}`;
+    return <li class={['overview-file', 'overview-command', { selected: command().runs.some(run => run.id === props.selected), step: !!command().step }]}>
+      <button class="overview-file-open" title={title()} aria-label={name()} onClick={() => props.show(last())}>
         <span class={['overview-run-glyph', runGlyph(last()).tone]} aria-hidden="true">{runGlyph(last()).glyph}</span>
-        <span class="overview-file-name">{command().head}</span>
+        <span class="overview-file-name"><Show when={command().head.startsWith("…")}><span class="overview-step-ellipsis">…</span></Show>{head()}</span>
         <span class="overview-file-count" aria-hidden="true">{command().count.toLocaleString()}</span>
-        <Show when={secondary()}><span class="overview-file-dir">{secondary()}</span></Show>
+        <Show when={secondary()}><span class={['overview-file-dir', { 'overview-step-meta': !!command().step }]}><Show when={command().step}><Icon name="link" size={12} /></Show><span>{secondary()}</span></span></Show>
         <Show when={command().errors || command().stopped}><span class="overview-file-outcome" aria-hidden="true"><Show when={command().errors}><span class="overview-file-error">{plural(command().errors, "error")}</span></Show><Show when={command().stopped}><span class="overview-file-stopped">{command().stopped.toLocaleString()} stopped</span></Show></span></Show>
       </button>
       <Show when={command().runs.length > 1}>
@@ -95,15 +117,29 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
   const hasOmissions = () => listLimited("commands") || listLimited("searches") || listLimited("fetches");
   const searchTotals = () => (props.summary?.searches ?? []).reduce((total, group) => ({ count: total.count + group.count, errors: total.errors + group.errors, stopped: total.stopped + group.stopped }), { count: 0, errors: 0, stopped: 0 });
 
+  // A program's tally counts every row under it, so the runs its step rows add are named beside the total.
   const Tally = (props: { group: SummaryCommandGroup; noun: string; listedOnly?: boolean }) => <p class="overview-provenance">
     <Show when={props.listedOnly}><span>Listed:</span></Show>
-    <span>{plural(props.group.count, props.noun)}</span>
+    <span>{plural(props.group.count, props.noun)}<Show when={stepCount(props.group)}>{steps => <>, {steps() === 1 ? "1 as a step" : `${steps().toLocaleString()} as steps`}</>}</Show></span>
     <Show when={props.group.errors}><span class="meta-dot" aria-hidden="true">·</span><span class="overview-file-error">{plural(props.group.errors, "error")}</span></Show>
     <Show when={props.group.stopped}><span class="meta-dot" aria-hidden="true">·</span><span class="overview-file-stopped">{props.group.stopped.toLocaleString()} stopped</span></Show>
   </p>;
 
+  // A closed category still names the programs in it, the most run first, so the rail answers whether a program was
+  // involved without opening anything; the whole list is in the summary's accessible name.
+  const Programs = (props: { groups: SummaryCommandGroup[] }) => {
+    const names = () => props.groups.map(group => `${group.name} ${group.count.toLocaleString()}`);
+    const hidden = () => Math.max(0, names().length - shownPrograms);
+    return <Show when={names().length}>
+      <span class="overview-category-programs">
+        <span>{names().slice(0, shownPrograms).join(" · ")}</span>
+        <Show when={hidden()}><span aria-hidden="true"> +{hidden().toLocaleString()} more</span><span class="visually-hidden">, {names().slice(shownPrograms).join(", ")}</span></Show>
+      </span>
+    </Show>;
+  };
+
   const groups = (category: SummaryCommandCategory) => props.summary?.commands.filter(group => group.category === category) ?? [];
-  const Program = (props: { group: SummaryCommandGroup }) => <section class="overview-folder" aria-label={`Commands starting with ${props.group.name}`}>
+  const Program = (props: { group: SummaryCommandGroup }) => <section class="overview-folder" aria-label={`Commands that call ${props.group.name}`}>
     <h3><Icon name="terminal" size={14} /><span>{props.group.name}</span></h3>
     <Tally group={props.group} noun="run" listedOnly={listLimited("commands")} />
     <ul class="overview-file-list"><For each={props.group.commands} keyed={keyOf}>{CommandRow}</For></ul>
@@ -125,9 +161,10 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
             <Show when={errors()}><span class="overview-file-error"> · {plural(errors(), "error")}</span></Show>
             <Show when={stopped()}><span class="overview-file-stopped"> · {stopped().toLocaleString()} stopped</span></Show>
           </span>
+          <Show when={category.key !== "other"}><Programs groups={[...shell(), ...fetches()]} /></Show>
         </summary>
         <Show when={category.key === "other"} fallback={<For each={shell()} keyed={group => group.name}>{group => <Program group={group()} />}</For>}>
-          <p class="overview-note overview-category-note">Multi-step or ambiguous commands, plus programs beyond the overview’s group limit. Previews keep the recorded first line; select one to see the full call.</p>
+          <p class="overview-note overview-category-note">Multi-step or ambiguous commands, plus programs beyond the overview’s group limit. Previews keep the recorded first line; select one to see the full call. A multi-step command is also listed under each program it calls.</p>
           <For each={shell()} keyed={group => group.name}>{group => <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{CommandRow}</For></ul>}</For>
         </Show>
         <For each={fetches()} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={`${group().name} fetches`}>
@@ -159,8 +196,10 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
               <Show when={searchTotals().errors}><span class="overview-file-error"> · {plural(searchTotals().errors, "error")}</span></Show>
               <Show when={searchTotals().stopped}><span class="overview-file-stopped"> · {searchTotals().stopped.toLocaleString()} stopped</span></Show>
             </span>
+            <Programs groups={summary().searches} />
           </summary>
           <Show when={listLimited("searches")}><p class="overview-note">Whole recording: {plural(summary().searchCount, "distinct search")} across {plural(summary().searchRuns, "call")}.</p></Show>
+          <p class="overview-note overview-category-note">Grep, Glob, and WebSearch calls. Shell grep and rg commands are under Files & text.</p>
           <For each={summary().searches} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={`${group().name} searches`}>
             <h3><Icon name="search" size={14} /><span>{group().name}</span></h3>
             <Tally group={group()} noun="call" listedOnly={listLimited("searches")} />
@@ -169,7 +208,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
         </details>
       </Show>
       <Show when={summary().limited}><p class="overview-note">Very long recordings show shortened lists of programs, commands, searches, fetches, and individual calls.</p></Show>
-      <p class="overview-note">Shell counts cover Bash and PowerShell calls only; searches and WebFetch calls are listed separately. A recorded error means the call failed; a call that succeeded isn’t proof the command did, such as one whose output was piped elsewhere or one run in the background. Commands run by subagents aren’t listed.</p>
+      <p class="overview-note">Shell counts cover Bash and PowerShell calls only; searches and WebFetch calls are listed separately. A multi-step command is listed under each program it calls and under Other commands, so group counts overlap, and a step shows the outcome of its whole command. A recorded error means the call failed; a call that succeeded isn’t proof the command did, such as one whose output was piped elsewhere or one run in the background. Commands run by subagents aren’t listed.</p>
     </>}</Show>
   </nav>;
 }
