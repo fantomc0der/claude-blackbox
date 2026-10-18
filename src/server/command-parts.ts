@@ -24,28 +24,50 @@ function programName(token: string): string {
   return !/^[A-Za-z0-9_][A-Za-z0-9_.+-]*$/.test(program) || shellPrograms.has(program.toLowerCase()) ? "" : program;
 }
 
+/**
+ * The program of a command that makes one call, or "" when it chains, pipes, substitutes, or makes no recognizable
+ * call. A newline ends the call unless a quote holds it, a backslash (a backtick in PowerShell) continues the line, or
+ * a heredoc body follows it: `python -c "…"` around a multi-line script, `cat <<'EOF'` with its body, and `ls \` with
+ * its options on the next line are each one call, while `cd app` and `bun test` on separate lines are two.
+ */
 function singleProgram(command: string, tool: string): string {
-  if (/[\r\n]/.test(command)) return "";
   const powershell = tool.toLowerCase() === "powershell";
-  const input = command.trim().replace(/^&\s+/, "");
+  const input = command.trim().replace(/\r\n?/g, "\n").replace(/^&\s+/, "");
   const words: { raw: string; value: string }[] = [];
   let quote = "";
   let raw = "";
   let value = "";
+  let heredocWord: { strip: boolean } | null = null;
+  const heredocs: { delimiter: string; strip: boolean }[] = [];
   const flush = () => {
-    if (raw) words.push({ raw, value });
+    if (!raw) return;
+    if (heredocWord) heredocs.push({ delimiter: value, strip: heredocWord.strip });
+    else words.push({ raw, value });
+    heredocWord = null;
     raw = "";
     value = "";
+  };
+  const lineEnd = (from: number) => { const end = input.indexOf("\n", from); return end === -1 ? input.length : end; };
+  const program = () => {
+    flush();
+    let first = 0;
+    if (!powershell) while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[first]?.raw ?? "")) first++;
+    if (powershell && !/^&\s+/.test(command.trim()) && /^["']/.test(words[first]?.raw ?? "")) return "";
+    return programName(words[first]?.value ?? "");
   };
   for (let index = 0; index < input.length; index++) {
     const char = input[index];
     const next = input[index + 1];
-    if (quote !== "'" && (char === "`" || char === "$" && /[({]/.test(next ?? ""))) return "";
-    if (!powershell && char === "\\" && quote !== "'" && next && /[\s\\"'$;&|<>#()]/.test(next)) {
-      raw += char + next;
-      value += next;
-      index++;
-      continue;
+    if (quote !== "'" && (char === "`" && !powershell || char === "$" && /[({]/.test(next ?? ""))) return "";
+    if (quote !== "'" && (char === "\\" && !powershell || char === "`" && powershell)) {
+      // An escaped newline continues the line, joining the halves of a word it splits; any other escaped character is literal.
+      if (next === "\n") { index++; continue; }
+      if (next && (powershell || /[\s\\"'$;&|<>#()]/.test(next))) {
+        raw += char + next;
+        value += next;
+        index++;
+        continue;
+      }
     }
     if (quote) {
       raw += char;
@@ -53,17 +75,49 @@ function singleProgram(command: string, tool: string): string {
       else value += char;
       continue;
     }
+    if (char === "\n") {
+      flush();
+      if (!heredocs.length) return "";
+      // The heredoc bodies run to their delimiter lines; anything after them is another call.
+      let position = index + 1;
+      for (const heredoc of heredocs.splice(0)) {
+        while (position < input.length) {
+          const end = lineEnd(position);
+          const body = input.slice(position, end);
+          position = end + 1;
+          if ((heredoc.strip ? body.replace(/^\t+/, "") : body) === heredoc.delimiter) break;
+        }
+      }
+      return input.slice(position).trim() ? "" : program();
+    }
     if (char === "'" || char === '"') {
+      if (powershell && raw === "@") {
+        // A here-string runs to the line that closes it and is opaque.
+        const close = input.indexOf(`\n${char}@`, index + 1);
+        if (close === -1) return "";
+        raw += `${char}…${char}@`;
+        value += "…";
+        index = close + 2;
+        continue;
+      }
       quote = char;
       raw += char;
     } else if (char === "#" && !raw) {
-      break;
+      index = lineEnd(index) - 1;
     } else if (/[;&|(){}]/.test(char)) {
       return "";
     } else if (char === "<" || char === ">") {
-      if (char === "<" && next === "<" || next === "(") return "";
+      if (next === "(") return "";
       if (![...words, { raw, value }].some(word => word.raw && !/^\d+$/.test(word.raw) && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word.raw))) return "";
+      if (/^\d+$/.test(raw)) { raw = ""; value = ""; }
       flush();
+      if (char === "<" && next === "<") {
+        // A here-string's word is an ordinary argument; a heredoc's names the delimiter of the body that follows the line.
+        if (input[index + 2] === "<") { index += 2; continue; }
+        heredocWord = { strip: input[index + 2] === "-" };
+        index += heredocWord.strip ? 2 : 1;
+        continue;
+      }
       if (next === char) index++;
       if (input[index + 1] === "&") {
         const redirect = /^[0-9-]+/.exec(input.slice(index + 2));
@@ -78,11 +132,7 @@ function singleProgram(command: string, tool: string): string {
     }
   }
   if (quote) return "";
-  flush();
-  let first = 0;
-  if (!powershell) while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[first]?.raw ?? "")) first++;
-  if (powershell && !/^&\s+/.test(command.trim()) && /^["']/.test(words[first]?.raw ?? "")) return "";
-  return programName(words[first]?.value ?? "");
+  return program();
 }
 
 export function commandParts(command: string, tool = "Bash"): { program: string; head: string; lines: number } {
@@ -217,11 +267,11 @@ export function commandSteps(command: string, tool = "Bash"): CommandStep[] {
       continue;
     }
     if (!powershell && char === "\\") {
-      if (next === "\n") { flush(); index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
+      if (next === "\n") { index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
       continue;
     }
     if (powershell && char === "`") {
-      if (next === "\n") { flush(); index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
+      if (next === "\n") { index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
       continue;
     }
     if (char === "#" && !raw) {

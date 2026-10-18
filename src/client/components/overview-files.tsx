@@ -1,7 +1,8 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { SessionSummary, SummaryFile, SummaryRead, SummaryRecord } from "../../shared/types";
 import { formatEventTime } from "../lib/content";
 import { folderLabels, folderName } from "../lib/format";
+import { revealSelected } from "../lib/overview-reveal";
 import { decisionLabels } from "../../shared/decisions";
 import { Icon } from "./icon";
 
@@ -21,8 +22,13 @@ const HiddenNote = (props: { record: SummaryRecord }) => <Show when={props.recor
 let changeLists = 0;
 
 /** The overview rail's Files changed view: changed files grouped under the folders the recording worked in. */
-export function OverviewFiles(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: string }) {
+export function OverviewFiles(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: ReadonlySet<string> }) {
   const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set());
+  // A file is selected when one of its changes, or its first read, is the selected event; a selection made elsewhere
+  // is brought into view once the list exists.
+  const isSelected = (file: SummaryFile) => file.changes.some(change => props.selected.has(change.id));
+  let rail!: HTMLElement;
+  createEffect(() => props.summary && props.selected, (selected, previous) => { if (selected && selected !== previous) revealSelected(rail); });
   const toggle = (path: string) => setExpanded(current => {
     const next = new Set(current);
     if (!next.delete(path)) next.add(path);
@@ -44,8 +50,8 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
     const open = () => expanded().has(file().path);
     const first = () => file().changes[0];
     const name = () => `${parts().name}${parts().dir ? ` in ${parts().dir}` : ""}, ${plural(file().count, "change")}${file().errors ? `, ${plural(file().errors, "error")}` : ""}${file().stopped ? `, ${file().stopped.toLocaleString()} stopped` : ""}. Show the ${file().count > 1 ? "first " : ""}change.${hiddenNote(first())}`;
-    return <li class={['overview-file', { selected: file().changes.some(change => change.id === props.selected) }]}>
-      <button class="overview-file-open" title={file().path} aria-label={name()} onClick={() => props.show(first())}>
+    return <li class={['overview-file', { selected: isSelected(file()) }]}>
+      <button class="overview-file-open" title={file().path} aria-label={name()} aria-current={isSelected(file()) ? "true" : undefined} onClick={() => props.show(first())}>
         <span class="overview-file-name">{parts().name}</span>
         <span class="overview-file-count" aria-hidden="true">{file().count.toLocaleString()}</span>
         <Show when={parts().dir}><span class="overview-file-dir">{parts().dir}</span></Show>
@@ -57,7 +63,7 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
       <Show when={open()}>
         <ol class="overview-changes" id={listId} aria-label={`Changes to ${parts().name}`}>
           <For each={file().changes} keyed={change => change.id}>{change => <li>
-            <button aria-current={change().id === props.selected ? "true" : undefined} title={change().position === null ? hiddenText : undefined} onClick={() => props.show(change())}>
+            <button aria-current={props.selected.has(change().id) ? "true" : undefined} title={change().position === null ? hiddenText : undefined} onClick={() => props.show(change())}>
               <span>{change().tool}</span>{" "}<span aria-hidden="true">·</span>{" "}<span>{formatEventTime(change().timestamp)}</span><Show when={change().error}>{" "}<span class="overview-file-error">error</span></Show><Show when={change().decision}>{decision => <>{" "}<span class="overview-file-stopped">{decisionLabels[decision()].toLowerCase()}</span></>}</Show><HiddenNote record={change()} />
             </button>
           </li>}</For>
@@ -73,8 +79,8 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
       const separator = file().display.includes("\\") ? "\\" : "/";
       return [label(file().folder), parts().dir].filter(Boolean).join(separator);
     };
-    return <li class={['overview-file', { selected: file().id === props.selected }]}>
-      <button class="overview-file-open" title={file().path} aria-label={`${parts().name}${dir() ? ` in ${dir()}` : ""}, ${plural(file().reads, "read")}. Show the first read.${hiddenNote(file())}`} onClick={() => props.show(file())}>
+    return <li class={['overview-file', { selected: props.selected.has(file().id) }]}>
+      <button class="overview-file-open" title={file().path} aria-label={`${parts().name}${dir() ? ` in ${dir()}` : ""}, ${plural(file().reads, "read")}. Show the first read.${hiddenNote(file())}`} aria-current={props.selected.has(file().id) ? "true" : undefined} onClick={() => props.show(file())}>
         <span class="overview-file-name">{parts().name}</span>
         <span class="overview-file-count" aria-hidden="true">{file().reads.toLocaleString()}</span>
         <Show when={dir()}><span class="overview-file-dir">{dir()}</span></Show>
@@ -84,7 +90,7 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
 
   const failure = () => <p class="overview-status" role="status">{props.summary ? "Couldn’t refresh the files for this view." : "Couldn’t load the files for this recording."}<button class="text-button" onClick={props.retry}>Retry</button></p>;
 
-  return <nav class="overview-files" aria-label="Files changed in this recording">
+  return <nav class="overview-files" aria-label="Files changed in this recording" ref={rail}>
     <Show when={props.summary} fallback={<Show when={props.failed} fallback={<div class="overview-loading" role="status"><span class="visually-hidden">Loading files…</span><div class="skeleton-row" /><div class="skeleton-row" /><div class="skeleton-row" /></div>}>{failure()}</Show>}>{summary => <>
       <Show when={props.failed}>{failure()}</Show>
       <p class="overview-scope">Whole recording · {plural(summary().folders.length, "folder")}</p>
@@ -115,7 +121,7 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
         </section>
       </Show>
       <Show when={summary().read.length}>
-        <details class="overview-reads">
+        <details class={['overview-reads', { 'has-selected': summary().read.some(file => props.selected.has(file.id)) }]}>
           <summary><Icon name="chevron" size={13} />Read, not changed · {summary().readFiles.toLocaleString()}</summary>
           <ul class="overview-file-list"><For each={summary().read} keyed={file => file.path}>{ReadRow}</For></ul>
         </details>

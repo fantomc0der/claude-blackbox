@@ -1,6 +1,7 @@
-import { For, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
 import type { SessionSummary, SummaryPrompt, SummaryRecord } from "../../shared/types";
 import { formatEventTime } from "../lib/content";
+import { revealSelected } from "../lib/overview-reveal";
 
 const plural = (count: number, word: string) => `${count.toLocaleString()} ${word}${count === 1 ? "" : "s"}`;
 const hiddenText = "Opens in All events, because the current view hides it.";
@@ -18,12 +19,15 @@ const clockTime = (timestamp: string) => {
 };
 
 /** The overview rail's Prompts view: what the user typed across the whole recording, each with the outcomes that followed. */
-export function OverviewPrompts(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: string }) {
+export function OverviewPrompts(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: ReadonlySet<string> }) {
+  // A prompt selected elsewhere is brought into view once the list exists.
+  let rail!: HTMLElement;
+  createEffect(() => props.summary && props.selected, (selected, previous) => { if (selected && selected !== previous) revealSelected(rail); });
   const failure = () => <p class="overview-status" role="status">{props.summary ? "Couldn’t refresh the prompts for this view." : "Couldn’t load the prompts for this recording."}<button class="text-button" onClick={props.retry}>Retry</button></p>;
   const outcome = (prompt: SummaryPrompt) => [prompt.errors ? plural(prompt.errors, "error") : "", prompt.stopped ? `${prompt.stopped.toLocaleString()} stopped` : ""].filter(Boolean).join(", ");
   const name = (prompt: SummaryPrompt, index: number) => `${kindLabels[prompt.kind]} ${index + 1}, ${formatEventTime(prompt.timestamp)}${outcome(prompt) ? `, ${outcome(prompt)}` : ""}: ${prompt.text}. Show it.${hiddenNote(prompt)}`;
 
-  return <nav class="overview-prompts" aria-label="Prompts in this recording">
+  return <nav class="overview-prompts" aria-label="Prompts in this recording" ref={rail}>
     <Show when={props.summary} fallback={<Show when={props.failed} fallback={<div class="overview-loading" role="status"><span class="visually-hidden">Loading prompts…</span><div class="skeleton-row" /><div class="skeleton-row" /><div class="skeleton-row" /></div>}>{failure()}</Show>}>{summary => <>
       <Show when={props.failed}>{failure()}</Show>
       <p class="overview-scope">Whole recording · {plural(summary().promptCount, "prompt")}</p>
@@ -31,8 +35,8 @@ export function OverviewPrompts(props: { summary: SessionSummary | null; failed:
       <ol class="overview-prompt-list">
         <For each={summary().prompts} keyed={prompt => prompt.id}>{(prompt, index) => {
           const newDay = () => index() > 0 && dayOf(prompt().timestamp) !== dayOf(summary().prompts[index() - 1].timestamp);
-          return <li class={['overview-prompt', { selected: prompt().id === props.selected, typed: prompt().kind !== "prompt" }]}>
-            <button aria-current={prompt().id === props.selected ? "true" : undefined} aria-label={name(prompt(), index())} title={`${formatEventTime(prompt().timestamp)}. Show this ${kindLabels[prompt().kind].toLowerCase()}.${hiddenNote(prompt())}`} onClick={() => props.show(prompt())}>
+          return <li class={['overview-prompt', { selected: props.selected.has(prompt().id), typed: prompt().kind !== "prompt" }]}>
+            <button aria-current={props.selected.has(prompt().id) ? "true" : undefined} aria-label={name(prompt(), index())} title={`${formatEventTime(prompt().timestamp)}. Show this ${kindLabels[prompt().kind].toLowerCase()}.${hiddenNote(prompt())}`} onClick={() => props.show(prompt())}>
               <span class="overview-prompt-meta" aria-hidden="true">
                 <span class="overview-prompt-index">{(index() + 1).toLocaleString()}</span>
                 <Show when={clockTime(prompt().timestamp)}>{time => <span class="overview-when">{newDay() ? `${dayOf(prompt().timestamp)} · ` : ""}{time()}</span>}</Show>

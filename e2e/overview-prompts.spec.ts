@@ -61,6 +61,22 @@ test("the overview lists what was typed across the whole recording and opens eac
   await expect(prompts.locator(".overview-prompt-text").first()).toHaveText("Overview prompts verification");
 }, wide);
 
+test("a prompt selected by a find match is marked and shown in the rail", async ({ page }) => {
+  const { view, prompts } = await openRecording(page, "Overview prompts verification");
+  await view.selectOption("prompts");
+  await expect(prompts.getByText("Whole recording · 6 prompts")).toBeVisible();
+  await expect(prompts.locator(".overview-prompt.selected")).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Find in this recording" }).fill("Ship it");
+  await expect(page.locator(".replay-match-count")).toHaveText("1 match");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".replay-event-selected")).toContainText("Ship it");
+  const selected = prompts.locator(".overview-prompt.selected");
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toContainText("Ship it");
+  await expect(selected).toBeInViewport();
+  await expect(prompts.getByRole("button", { name: /^Prompt 6, / })).toHaveAttribute("aria-current", "true");
+}, wide);
+
 test("a prompt the active view hides opens in All events", async ({ page }) => {
   const { view, prompts } = await openRecording(page, "Overview prompts verification");
   await view.selectOption("prompts");
