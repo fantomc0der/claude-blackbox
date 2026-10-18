@@ -215,7 +215,7 @@ test("command categories disclose faithful previews, steps, outcomes, and WebFet
   await expect(checkout).toHaveAttribute("title", "git fetch origin && gh pr checkout 143 | tail -1\nAlso listed under Other commands and git");
   await expect(other.getByRole("button", { name: /^git fetch origin && gh pr checkout 143 \| tail -1, also listed under git and gh,/ }).locator(".overview-file-also")).toHaveText("also under git, gh");
   await checkout.click();
-  await expect(page.locator(".replay-event-selected")).toContainText("Switched to branch");
+  await expect(page.locator(".replay-event-selected")).toContainText("git fetch origin && gh pr checkout 143 | tail -1");
   await expect(commands.locator(".overview-file.selected")).toHaveCount(3);
   await expect(commands).toContainText("A multi-step command is listed under Other commands and under the grouped programs it calls directly");
 
