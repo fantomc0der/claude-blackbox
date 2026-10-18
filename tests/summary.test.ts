@@ -360,6 +360,20 @@ describe("recording summary commands", () => {
     expect(named.limited).toBe(false);
   });
 
+  test("caps displayed entries while whole-recording totals still count omitted entries", () => {
+    const calls = Array.from({ length: 501 }, (_, index) => [
+      run(`c${index}`, "Bash", `python test${index}.py`),
+      run(`s${index}`, "Grep", `pattern${index}`),
+      run(`f${index}`, "WebFetch", `https://example.test/${index}`),
+    ]).flat();
+    const built = buildCommands(calls);
+    expect(built).toMatchObject({ limited: true, commandCount: 501, commandRuns: 501, searchCount: 501, searchRuns: 501, fetchCount: 501, fetchRuns: 501 });
+    for (const groups of [built.commands, built.searches, built.fetches]) {
+      expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(500);
+      expect(groups.reduce((count, group) => count + group.count, 0)).toBe(500);
+    }
+  });
+
   test("keeps capped script and fetch previews distinct with stable full-input keys", () => {
     const prefix = `S="${"x".repeat(1100)}"\npython `;
     const calls = [run("a", "Bash", `${prefix}a.py`), run("b", "Bash", `${prefix}b.py`)];

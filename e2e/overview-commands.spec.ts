@@ -56,7 +56,7 @@ test("the overview groups the commands run by program and opens each command's l
   await expect(selected).toContainText("1 fail");
   await expect(runs.getByRole("button", { name: / error$/ })).toHaveAttribute("aria-current", "true");
 
-  await commands.getByText("Searches · 3").click();
+  await commands.locator('details[aria-label="Searches"] > summary').click();
   await expect(commands.getByRole("heading", { level: 3 })).toHaveText(["git", "rm", "bun", "cargo", "Grep", "Glob", "WebSearch"]);
   const grep = commands.getByRole("region", { name: "Grep searches" }).getByRole("button", { name: "backoffCeiling in src · *.ts, 1 search. The search succeeded. Show the search." });
   await expect(grep.locator(".overview-file-dir")).toHaveText("src · *.ts");
@@ -96,6 +96,23 @@ test("a recording without shell commands says so", async ({ page }) => {
   await expect(commands.getByRole("heading", { level: 3 })).toHaveCount(0);
 }, wide);
 
+test("Other commands explains and opens single-program overflow past the group limit", async ({ page }) => {
+  const { view, commands } = await openRecording(page, "Overview command overflow verification");
+  await view.selectOption("commands");
+  await expect(commands.getByText("Whole recording · 31 runs of 31 commands")).toBeVisible();
+  await expect(commands.getByText(/Counts marked “Listed”/)).toHaveCount(0);
+  await expect(commands.getByRole("heading", { level: 3 })).toHaveCount(30);
+  const other = commands.locator('details[aria-label="Other commands"]');
+  await expect(other).not.toHaveAttribute("open", "");
+  await expect(other.locator("summary")).toContainText("1 run");
+  await other.locator("summary").click();
+  await expect(other.locator(".overview-category-note")).toContainText("programs beyond the overview’s group limit");
+  const overflow = other.getByRole("button", { name: /^overflow-tool-0 --version, 1 run\./ });
+  await expect(overflow).toBeVisible();
+  await overflow.click();
+  await expect(page.locator(".replay-event-selected")).toContainText("overflow-tool-0 --version");
+}, wide);
+
 test("command categories disclose faithful previews, outcomes, and WebFetch navigation", async ({ page }) => {
   const { rail, view, commands } = await openRecording(page, "Overview command categories verification");
   await view.selectOption("commands");
@@ -107,7 +124,10 @@ test("command categories disclose faithful previews, outcomes, and WebFetch navi
   await expect(language.locator("summary")).toContainText("2 runs");
   await expect(network.locator("summary")).toContainText("1 run · 2 fetches · 1 error");
   await expect(other.locator("summary")).toContainText("3 runs · 1 error · 1 stopped");
-  for (const disclosure of [language, network, other]) await expect(disclosure).not.toHaveAttribute("open", "");
+  const searches = commands.locator('details[aria-label="Searches"]');
+  await expect(searches.locator("summary")).toContainText("2 distinct · 3 calls · 1 error · 1 stopped");
+  for (const disclosure of [language, network, other, searches]) await expect(disclosure).not.toHaveAttribute("open", "");
+  await expect(commands.getByText(/Counts marked “Listed”/)).toHaveCount(0);
 
   for (const theme of ["Dark", "Light"]) {
     await page.getByRole("button", { name: theme, exact: true }).click();
@@ -158,4 +178,26 @@ test("command categories disclose faithful previews, outcomes, and WebFetch navi
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(rail).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+}, wide);
+
+test("truncated command, search, and fetch lists label partial group tallies", async ({ page }) => {
+  await page.route("**/summary?**", async route => {
+    const response = await route.fetch();
+    const summary = await response.json();
+    await route.fulfill({ json: { ...summary, limited: true, commandCount: summary.commandCount + 1, commandRuns: summary.commandRuns + 1, searchCount: summary.searchCount + 1, searchRuns: summary.searchRuns + 1, fetchCount: summary.fetchCount + 1, fetchRuns: summary.fetchRuns + 1 } });
+  });
+  const { view, commands } = await openRecording(page, "Overview command categories verification");
+  await view.selectOption("commands");
+  await expect(commands.getByText("Whole recording · 8 runs of 8 commands")).toBeVisible();
+  await expect(commands.getByText(/Counts marked “Listed” exclude omitted/)).toBeVisible();
+  await expect(commands.getByRole("region", { name: "Commands starting with ls" }).locator(".overview-provenance")).toHaveText("Listed:1 run");
+  for (const category of ["Language & build tools", "Network", "Other commands", "Searches"]) {
+    const disclosure = commands.locator(`details[aria-label="${category}"]`);
+    await expect(disclosure.locator(".overview-category-tally")).toContainText("Listed:");
+    await disclosure.locator("summary").click();
+    for (const tally of await disclosure.locator(".overview-provenance").all()) await expect(tally).toContainText("Listed:");
+  }
+  const searches = commands.locator('details[aria-label="Searches"]');
+  await expect(searches.locator(".overview-category-tally")).toHaveText("Listed: 2 distinct · 3 calls · 1 error · 1 stopped");
+  await expect(searches.getByText("Whole recording: 3 distinct searches across 4 calls.")).toBeVisible();
 }, wide);

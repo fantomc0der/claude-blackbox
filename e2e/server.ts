@@ -414,6 +414,13 @@ await writeFile(join(folder, "overview-commands.jsonl"), [
   commandCall("commands-cargo-1", "Bash", { command: "cargo test --locked" }),
   commandText("The tests pass now.", "assistant"),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+await writeFile(join(folder, "overview-command-overflow.jsonl"), [
+  commandText("Overview command overflow verification"),
+  ...Array.from({ length: 31 }, (_, index) => [
+    commandCall(`overflow-${index}`, "Bash", { command: `overflow-tool-${index} --version` }),
+    commandResult(`overflow-${index}`, `Synthetic program ${index}`),
+  ]).flat(),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 await writeFile(join(folder, "overview-command-categories.jsonl"), [
   commandText("Overview command categories verification"),
   commandCall("categories-ls", "Bash", { command: "ls src" }),
@@ -436,6 +443,10 @@ await writeFile(join(folder, "overview-command-categories.jsonl"), [
   commandResult("categories-powershell", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", true, { toolDenialKind: "cancelled" }),
   commandCall("categories-search", "Grep", { pattern: "backoffCeiling", path: "src" }),
   commandResult("categories-search", "src/main.ts: backoffCeiling"),
+  commandCall("categories-search-repeat", "Grep", { pattern: "backoffCeiling", path: "src" }),
+  commandResult("categories-search-repeat", "Search failed", true),
+  commandCall("categories-search-stopped", "Glob", { pattern: "**/*.ts" }),
+  commandResult("categories-search-stopped", "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.", true, { toolDenialKind: "cancelled" }),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
 // messages, the interruption marker it writes as a user record after the interrupted result, plus one genuine failure:
