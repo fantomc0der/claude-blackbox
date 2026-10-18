@@ -615,6 +615,18 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
   const pinnedCard = createMemo(() => pinned() ? cardOf(pinned()) : "");
   // A record opened another way, such as Show surrounding context or a search hit, takes the selection from the rail.
   createEffect(() => props.anchor, anchor => { if (anchor && anchor !== untrack(pinned)) setPinned(""); });
+  // The selected card, whichever way it was chosen: a find match first, then a rail choice, then the anchor.
+  const selectedCard = createMemo(() => matchCard() || pinnedCard() || anchorCard());
+  // The records the rail marks as selected: every record this page shows on the selected card, and the rail's own choice
+  // while the page that holds it is still loading. The set keeps its identity while its records stay the same, so the
+  // rail reacts to a new selection and not to every page load.
+  const selectedRecords = createMemo<ReadonlySet<string>>(previous => {
+    const ids = new Set<string>();
+    if (pinned() && !matchCard()) ids.add(pinned());
+    const card = selectedCard();
+    if (card) for (const event of page()?.items ?? []) if (event.id === card || cardOf(event.id) === card) ids.add(event.id);
+    return previous && previous.size === ids.size && [...ids].every(id => previous.has(id)) ? previous : ids;
+  });
   let pendingShow = "";
   // Opens a summary entry's record as find stepping opens a match: in place on this page, or on the page that holds it.
   // A record the active view hides opens in All events with its context, as Show in context does, and so does any
@@ -669,7 +681,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const data = summaryState()?.data;
     return data ? `Commands run · ${data.commandCount.toLocaleString()}` : "Commands run";
   };
-  const summaryProps = () => ({ summary: summaryState()?.data ?? null, failed: summaryFailed(), retry: () => { setSummaryFailed(false); setSummaryRetry(value => value + 1); }, show: showRecord, selected: pinned() });
+  const summaryProps = () => ({ summary: summaryState()?.data ?? null, failed: summaryFailed(), retry: () => { setSummaryFailed(false); setSummaryRetry(value => value + 1); }, show: showRecord, selected: selectedRecords() });
 
   return <section class={['replay-panel', { 'overview-hidden': !props.overviewVisible }]} aria-label="Session replay">
     <header class="replay-panel-heading">
@@ -758,7 +770,7 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <div class="replay-timeline"><Show when={pending() && !page()} fallback={<>
         <div class="timeline-marker"><span /><Icon name="clock" size={12} />{timelineLabel()}<span /></div>
         <Show when={page()?.offset}><button class="load-events" onClick={() => { const previous = Math.max(0, page()!.offset - 60); setOffset(previous); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: previous ? String(previous) : null }); }}><Icon name="back" size={14} />Previous events</button></Show>
-        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !narrowTerm() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} calls={page()?.calls} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={matchCard() ? event().id === matchCard() : pinnedCard() ? event().id === pinnedCard() : event().id === anchorCard()} onShowContext={revealContext} subagents={subagentNavigation()} requestMessages={requestMessages().get(event().id)} />}</For>
+        <For each={visibleEvents()} keyed={event => event.id} fallback={<Show when={kind() === "thinking" && !narrowTerm() && !errorsOnly() && !tool() && !model() && !cwd() && !after() && !before() && page()?.hiddenTotal} fallback={<div class="empty-state compact"><Icon name="search" size={27} /><h3>No events match these filters.</h3><p>Reset filters to return to the conversation, or choose All events for the full chronology.</p><button class="secondary-button" onClick={resetReplay}>Reset replay filters</button></div>}><div class="empty-state compact"><Icon name="search" size={27} /><h3>No readable reasoning in this session.</h3><p>The model reasoned, but the API did not return the text. Choose All events to see where it paused to think.</p><button class="secondary-button" onClick={() => changeKind("all")}>Show all events</button><button class="text-button" onClick={resetReplay}>Reset replay filters</button></div></Show>}>{event => <EventCard event={event()} results={page()?.results} calls={page()?.calls} highlight={highlight()} showWorkspace={workspaceChanges().has(event().id)} sessionId={props.id} filtered={isFiltered()} selected={event().id === selectedCard()} onShowContext={revealContext} subagents={subagentNavigation()} requestMessages={requestMessages().get(event().id)} />}</For>
         <Show when={page() && page()!.offset + page()!.limit < page()!.total} fallback={<div class="timeline-end"><span class="end-dot" />{extraFilterCount() ? "End of matching records." : "You're all caught up."}<small>{extraFilterCount() ? "Reset filters to return to the conversation." : "New activity appears here automatically."}</small></div>}><button class="load-events" onClick={() => { const next = page()!.offset + page()!.limit; setOffset(next); updateReplay({ replayKind: kind(), replayErrors: errorsOnly() ? "1" : null, replayOffset: String(next) }); }}>Next {Math.min(60, page()!.total - page()!.offset - page()!.limit)} events<Icon name="arrow" size={14} /></button></Show>
       </>}><div class="skeleton-list"><For each={[1, 2, 3]}>{() => <div class="skeleton-event" />}</For></div></Show></div>
     </div><aside id="recording-overview" class="replay-inspector" aria-label="Recording overview" ref={setRail}>

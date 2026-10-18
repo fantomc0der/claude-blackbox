@@ -80,16 +80,18 @@ test("a change the active view hides opens in All events", async ({ page }) => {
   await expect(page.locator(".replay-event-selected")).toContainText("src/app.ts");
 }, wide);
 
-test("a record opened another way takes the selection from the rail", async ({ page }) => {
+test("a record opened another way moves the rail's mark to its own row", async ({ page }) => {
   const { view, files } = await openRecording(page, "Overview files verification");
   await view.selectOption("files");
   await files.getByRole("button", { name: /^format\.ts in lib, 1 change\./ }).click();
   const selected = page.locator(".replay-event-selected");
   await expect(selected).toContainText("/synthetic/overview-shared/lib/format.ts");
+  await expect(files.locator(".overview-file.selected .overview-file-name")).toHaveText("format.ts");
   await page.locator(".replay-event").filter({ hasText: "/synthetic/elsewhere/notes.md" }).getByRole("button", { name: "Show surrounding context" }).click();
   await expect(selected).toHaveCount(1);
   await expect(selected).toContainText("/synthetic/elsewhere/notes.md");
-  await expect(files.locator(".overview-file.selected")).toHaveCount(0);
+  await expect(files.locator(".overview-file.selected .overview-file-name")).toHaveText("notes.md");
+  await expect(files.locator(".overview-file.selected")).toBeInViewport();
 }, wide);
 
 test("a summary that cannot refresh offers Retry and still opens files", async ({ page }) => {

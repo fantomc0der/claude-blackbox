@@ -141,7 +141,7 @@ test("Other commands explains and opens single-program overflow past the group l
 test("command categories disclose faithful previews, steps, outcomes, and WebFetch navigation", async ({ page }) => {
   const { rail, view, commands } = await openRecording(page, "Overview command categories verification");
   await view.selectOption("commands");
-  await expect(commands.getByText("Whole recording · 11 runs of 11 commands")).toBeVisible();
+  await expect(commands.getByText("Whole recording · 12 runs of 12 commands")).toBeVisible();
   await expect(commands.getByRole("heading", { level: 3 })).toHaveCount(0);
   const source = commands.locator('details[aria-label="Source control"]');
   const files = commands.locator('details[aria-label="Files & text"]');
@@ -151,7 +151,7 @@ test("command categories disclose faithful previews, steps, outcomes, and WebFet
   const searches = commands.locator('details[aria-label="Searches"]');
   await expect(source.locator("summary")).toContainText("4 runs");
   await expect(files.locator("summary")).toContainText("6 runs · 1 error · 1 stopped");
-  await expect(language.locator("summary")).toContainText("4 runs · 1 error");
+  await expect(language.locator("summary")).toContainText("5 runs · 1 error");
   await expect(network.locator("summary")).toContainText("1 run · 2 fetches · 1 error");
   await expect(other.locator("summary")).toContainText("6 runs · 1 error · 1 stopped");
   await expect(searches.locator("summary")).toContainText("2 distinct · 3 calls · 1 error · 1 stopped");
@@ -160,7 +160,7 @@ test("command categories disclose faithful previews, steps, outcomes, and WebFet
   await expect(files.locator(".overview-category-programs")).toHaveText("Programs: ls 2 · cat 2 · wc 1 +1 more · Get-ChildItem 1");
   await expect(files.locator(".overview-category-programs > span:nth-child(2)")).toHaveText("ls 2 · cat 2 · wc 1");
   await expect(files.locator(".overview-category-programs .visually-hidden").last()).toHaveText("· Get-ChildItem 1");
-  await expect(language.locator(".overview-category-programs")).toHaveText("Programs: python 3 · dotnet 1");
+  await expect(language.locator(".overview-category-programs")).toHaveText("Programs: python 4 · dotnet 1");
   await expect(network.locator(".overview-category-programs")).toHaveText("Programs: WebFetch 2 · curl 1");
   await expect(other.locator(".overview-category-programs")).toHaveCount(0);
   await expect(searches.locator(".overview-category-programs")).toHaveText("Programs: Grep 2 · Glob 1");
@@ -197,11 +197,18 @@ test("command categories disclose faithful previews, steps, outcomes, and WebFet
   // Each program lists the multi-step commands that call it as steps: the chain's call from the program on, the
   // script's call with its line, and the tally names what the steps add. The pipe's tail stage joins nothing.
   const python = language.getByRole("region", { name: "Commands that call python" });
-  await expect(python.locator(".overview-provenance")).toHaveText("3 runs, 2 as steps·1 error");
+  await expect(python.locator(".overview-provenance")).toHaveText("4 runs, 2 as steps·1 error");
   await expect(python.getByRole("button", { name: /^python "\$S\/check.py" 2>&1 \| tail -8, step 2 of 3 in a multi-step command also listed under Other commands, 1 run\./ }).locator(".overview-step-meta")).toHaveText("step 2 of 3");
   const script = python.getByRole("button", { name: /^python "\$F\/check.py", line 2 of 3 in a multi-step command also listed under Other commands and wc, 1 run, 1 error\. The run had an error\./ });
   await expect(script.locator(".overview-file-name")).toHaveText('python "$F/check.py"');
   await expect(script.locator(".overview-step-meta")).toHaveText("line 2 of 3");
+  // A multi-line script inside a quoted argument is one python call, listed under python alone with its recorded first line.
+  const quoted = python.getByRole("button", { name: 'python -X utf8 -c ", 1 run. The run succeeded. Show the run.' });
+  await expect(quoted.locator(".overview-file-name")).toHaveText('python -X utf8 -c "');
+  await expect(quoted.locator(".overview-file-dir")).toHaveText("+3 lines");
+  await expect(quoted).toHaveAttribute("title", 'python -X utf8 -c "\nimport re\nprint(re.findall(r\'class=\\"([^\\"]+)\\"\', open(\'overview.html\').read()))\n"');
+  await expect(quoted.locator(".overview-step-meta")).toHaveCount(0);
+  await expect(other.getByRole("button", { name: /^python -X utf8 -c/ })).toHaveCount(0);
   await expect(files.getByRole("region", { name: "Commands that call wc" }).getByRole("button", { name: /^wc -l "\$F\/output.txt", line 3 of 3 in a multi-step command also listed under Other commands and python, 1 run, 1 error\./ })).toBeVisible();
   await expect(files.getByRole("region", { name: "Commands that call Get-ChildItem" }).locator(".overview-provenance")).toHaveText("1 run, 1 as a step·1 stopped");
   await expect(files.getByRole("region", { name: "Commands that call ls" }).getByRole("button", { name: /^ls -la, step 4 of 4 in a multi-step command also listed under Other commands, cat, and git, 1 run\./ }).locator(".overview-file-name")).toHaveText("…ls -la");
@@ -251,6 +258,42 @@ test("command categories disclose faithful previews, steps, outcomes, and WebFet
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 }, wide);
 
+test("the rail marks every row that opens the selected event and reveals a selection made elsewhere", async ({ page }) => {
+  const { view, commands } = await openRecording(page, "Overview command categories verification");
+  await view.selectOption("commands");
+  const source = commands.locator('details[aria-label="Source control"]');
+  const files = commands.locator('details[aria-label="Files & text"]');
+  const language = commands.locator('details[aria-label="Language & build tools"]');
+  const other = commands.locator('details[aria-label="Other commands"]');
+  const selected = commands.locator(".overview-file.selected");
+  await expect(commands.getByText("Whole recording · 12 runs of 12 commands")).toBeVisible();
+  await expect(selected).toHaveCount(0);
+  // A find match selects the script's call: the rail opens the categories that hold its rows and marks each of them.
+  await page.getByRole("textbox", { name: "Find in this recording" }).fill("Missing output.txt");
+  await expect(page.locator(".replay-match-count")).toHaveText("1 match");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".replay-event-selected")).toContainText('python "$F/check.py"');
+  await expect(selected).toHaveCount(3);
+  await expect(commands.locator('.overview-file-open[aria-current="true"]')).toHaveCount(3);
+  for (const disclosure of [files, language, other]) await expect(disclosure).toHaveAttribute("open", "");
+  for (const row of await selected.all()) await expect(row).toBeVisible();
+  await expect(selected.first()).toBeInViewport();
+  await expect(source).not.toHaveAttribute("open", "");
+  await expect(source).not.toHaveClass(/has-selected/);
+  // A category closed again still says that it holds a marked row.
+  await language.locator("summary").click();
+  await expect(language).not.toHaveAttribute("open", "");
+  await expect(language).toHaveClass(/has-selected/);
+  // Choosing a row in the rail moves the marks without moving the rail: the category closed by hand stays closed.
+  await other.getByRole("button", { name: /^cd "\/synthetic\/skills"/ }).click();
+  await expect(page.locator(".replay-event-selected")).toContainText('cd "/synthetic/skills"');
+  await expect(selected).toHaveCount(2);
+  await expect(language).not.toHaveAttribute("open", "");
+  await expect(language).toHaveClass(/has-selected/);
+  await expect(files).not.toHaveClass(/has-selected/);
+  await expect(other.getByRole("button", { name: /^F=\/tmp\/scratch/ })).not.toHaveAttribute("aria-current", "true");
+}, wide);
+
 test("truncated command, search, and fetch lists label partial group tallies", async ({ page }) => {
   await page.route("**/summary?**", async route => {
     const response = await route.fetch();
@@ -259,7 +302,7 @@ test("truncated command, search, and fetch lists label partial group tallies", a
   });
   const { view, commands } = await openRecording(page, "Overview command categories verification");
   await view.selectOption("commands");
-  await expect(commands.getByText("Whole recording · 12 runs of 12 commands")).toBeVisible();
+  await expect(commands.getByText("Whole recording · 13 runs of 13 commands")).toBeVisible();
   await expect(commands.getByText(/Counts marked “Listed” exclude omitted/)).toBeVisible();
   for (const category of ["Source control", "Files & text", "Language & build tools", "Network", "Other commands", "Searches"]) {
     const disclosure = commands.locator(`details[aria-label="${category}"]`);

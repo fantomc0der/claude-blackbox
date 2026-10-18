@@ -1,6 +1,7 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import type { SessionSummary, SummaryCommand, SummaryCommandCategory, SummaryCommandGroup, SummaryRecord, SummaryRun } from "../../shared/types";
 import { formatEventTime, truncate } from "../lib/content";
+import { revealSelected } from "../lib/overview-reveal";
 import { decisionLabels } from "../../shared/decisions";
 import { Icon } from "./icon";
 
@@ -51,10 +52,16 @@ function runPhrase(run: SummaryRun, subject: string): string {
 }
 
 /** The overview rail's Commands run view: shell commands deduplicated and grouped by program, with their searches. */
-export function OverviewCommands(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: string }) {
+export function OverviewCommands(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: ReadonlySet<string> }) {
   // Rows keep their full-input identity across refreshes, even when their displayed text and detail are capped. A
   // step row's identity adds its program, so each listing of a multi-step command opens and closes on its own.
   const keyOf = (command: SummaryCommand) => command.key;
+  // A row is selected when it opens the selected event, so every listing of a multi-step command is marked at once,
+  // and a closed category says that it holds one. A selection made elsewhere is brought into view once the list exists.
+  const isSelected = (command: SummaryCommand) => command.runs.some(run => props.selected.has(run.id));
+  const holdsSelected = (groups: SummaryCommandGroup[]) => groups.some(group => group.commands.some(isSelected));
+  let rail!: HTMLElement;
+  createEffect(() => props.summary && props.selected, (selected, previous) => { if (selected && selected !== previous) revealSelected(rail); });
   const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set());
   const toggle = (command: SummaryCommand) => setExpanded(current => {
     const next = new Set(current);
@@ -80,8 +87,8 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
     const subject = () => command().count > 1 ? `Last ${noun}` : `The ${noun}`;
     const name = () => `${truncate(head(), 100)}${command().detail ? `${noun === "fetch" ? ": " : " in "}${command().detail}` : ""},${listed()} ${plural(command().count, noun)}${command().errors ? `, ${plural(command().errors, "error")}` : ""}${command().stopped ? `, ${command().stopped.toLocaleString()} stopped` : ""}. ${runPhrase(last(), subject())} Show the ${command().count > 1 ? "last " : ""}${noun}.${hiddenNote(last())}`;
     const title = () => `${command().text}${command().detail ? `\n${command().detail}` : ""}${also().length ? `\nAlso listed under ${listNames(command().step ? [otherLabel, ...also()] : also())}` : command().step ? `\nAlso listed under ${otherLabel}` : ""}`;
-    return <li class={['overview-file', 'overview-command', { selected: command().runs.some(run => run.id === props.selected), step: !!command().step }]}>
-      <button class="overview-file-open" title={title()} aria-label={name()} onClick={() => props.show(last())}>
+    return <li class={['overview-file', 'overview-command', { selected: isSelected(command()), step: !!command().step }]}>
+      <button class="overview-file-open" title={title()} aria-label={name()} aria-current={isSelected(command()) ? "true" : undefined} onClick={() => props.show(last())}>
         <span class={['overview-run-glyph', runGlyph(last()).tone]} aria-hidden="true">{runGlyph(last()).glyph}</span>
         <span class="overview-file-name"><Show when={command().head.startsWith("…")}><span class="overview-step-ellipsis">…</span></Show>{head()}</span>
         <span class="overview-file-count" aria-hidden="true">{command().count.toLocaleString()}</span>
@@ -95,7 +102,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
       <Show when={open()}>
         <ol class="overview-changes" id={listId} aria-label={listName()}>
           <For each={command().runs} keyed={run => run.id}>{run => <li>
-            <button aria-current={run().id === props.selected ? "true" : undefined} title={run().position === null ? hiddenText : undefined} onClick={() => props.show(run())}>
+            <button aria-current={props.selected.has(run().id) ? "true" : undefined} title={run().position === null ? hiddenText : undefined} onClick={() => props.show(run())}>
               <span>{formatEventTime(run().timestamp)}</span><Show when={runOutcome(run())}>{outcome => <>{" "}<span aria-hidden="true">·</span>{" "}<span class={run().error ? "overview-file-error" : run().decision ? "overview-file-stopped" : ""}>{outcome()}</span></>}</Show><HiddenNote record={run()} />
             </button>
           </li>}</For>
@@ -152,7 +159,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
     const errors = () => [...shell(), ...fetches()].reduce((total, group) => total + group.errors, 0);
     const stopped = () => [...shell(), ...fetches()].reduce((total, group) => total + group.stopped, 0);
     return <Show when={shell().length || fetches().length}>
-      <details class="overview-reads overview-searches overview-command-category" aria-label={category.label}>
+      <details class={['overview-reads', 'overview-searches', 'overview-command-category', { 'has-selected': holdsSelected([...shell(), ...fetches()]) }]} aria-label={category.label}>
         <summary>
           <Icon name="chevron" size={13} /><span>{category.label}</span>
           <span class="overview-category-tally">
@@ -178,7 +185,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
 
   const failure = () => <p class="overview-status" role="status">{props.summary ? "Couldn’t refresh the commands for this view." : "Couldn’t load the commands for this recording."}<button class="text-button" onClick={props.retry}>Retry</button></p>;
 
-  return <nav class="overview-files overview-commands" aria-label="Commands run in this recording">
+  return <nav class="overview-files overview-commands" aria-label="Commands run in this recording" ref={rail}>
     <Show when={props.summary} fallback={<Show when={props.failed} fallback={<div class="overview-loading" role="status"><span class="visually-hidden">Loading commands…</span><div class="skeleton-row" /><div class="skeleton-row" /><div class="skeleton-row" /></div>}>{failure()}</Show>}>{summary => <>
       <Show when={props.failed}>{failure()}</Show>
       <p class="overview-scope">Whole recording<Show when={summary().commandRuns}> · {plural(summary().commandRuns, "run")} of {plural(summary().commandCount, "command")}</Show></p>
@@ -187,7 +194,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
       <For each={groups("shell")} keyed={group => group.name}>{group => <Program group={group()} />}</For>
       <For each={categories} keyed={category => category.key}>{category => <Category key={category().key} label={category().label} />}</For>
       <Show when={summary().searches.length}>
-        <details class="overview-reads overview-searches overview-command-category" aria-label="Searches">
+        <details class={['overview-reads', 'overview-searches', 'overview-command-category', { 'has-selected': holdsSelected(summary().searches) }]} aria-label="Searches">
           <summary>
             <Icon name="chevron" size={13} /><span>Searches</span>
             <span class="overview-category-tally">

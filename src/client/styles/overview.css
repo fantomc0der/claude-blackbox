@@ -27,8 +27,10 @@
   .overview-file-stopped { color: var(--caution); font-size: var(--text-meta); white-space: nowrap; }
   .overview-file-outcome { grid-column: 2; grid-row: 2; justify-self: end; display: inline-flex; gap: 8px; }
   .overview-file-open:hover .overview-file-name { color: var(--accent); }
-  .overview-file.selected { background: var(--accent-dim); border-radius: 4px; }
+  .overview-file.selected { background: var(--accent-dim); border-radius: 4px; box-shadow: inset 2px 0 0 var(--accent); }
   .overview-file.selected .overview-file-name { color: var(--accent); }
+  .overview-reads.has-selected:not([open]) > summary { box-shadow: inset 2px 0 0 var(--accent); }
+  .overview-reads.has-selected:not([open]) > summary > span:first-of-type { color: var(--accent); }
   .overview-file-toggle { grid-column: 2; margin-top: 4px; }
   .overview-file-toggle svg { transition: transform .15s; }
   .overview-file-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
@@ -44,7 +46,7 @@
   .overview-prompt-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: var(--text-support); }
   .overview-prompt.typed .overview-prompt-text { font-family: var(--mono); }
   .overview-prompt button:hover .overview-prompt-text, .overview-prompt button[aria-current="true"] .overview-prompt-text { color: var(--accent); }
-  .overview-prompt.selected { background: var(--accent-dim); border-radius: 4px; }
+  .overview-prompt.selected { background: var(--accent-dim); border-radius: 4px; box-shadow: inset 2px 0 0 var(--accent); }
 
   .overview-command .overview-file-open { position: relative; }
   .overview-run-glyph { position: absolute; top: 9px; left: 2px; width: 15px; font: 600 var(--text-meta)/1.4 var(--mono); text-align: center; color: var(--muted); }

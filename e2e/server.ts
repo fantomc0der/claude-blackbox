@@ -427,6 +427,8 @@ await writeFile(join(folder, "overview-command-categories.jsonl"), [
   commandResult("categories-ls", "main.ts"),
   commandCall("categories-python", "Bash", { command: "python -X utf8 -B tests/check.py" }),
   commandResult("categories-python", "1 pass"),
+  commandCall("categories-script", "Bash", { command: 'python -X utf8 -c "\nimport re\nprint(re.findall(r\'class=\\"([^\\"]+)\\"\', open(\'overview.html\').read()))\n"' }),
+  commandResult("categories-script", "['lesson-title']"),
   commandCall("categories-dotnet", "PowerShell", { command: "dotnet test" }),
   commandResult("categories-dotnet", "1 pass"),
   commandCall("categories-curl", "Bash", { command: 'curl "https://example.test/?a=1&b=2"' }),
