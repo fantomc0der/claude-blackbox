@@ -105,13 +105,18 @@
   .index-status .index-refresh.active { display: inline-block; animation: breathe .8s infinite; }
   .index-status.index-failed .index-refresh { display: inline-block; background: var(--danger); animation: none; }
   .index-status.index-failed .index-label { color: var(--danger); }
-  .index-progress { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; line-height: 1.35; }
-  .index-idle .index-progress { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
+  .index-progress { position: relative; display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; min-width: 0; gap: 2px 6px; line-height: 1.35; }
   .index-label { color: var(--muted); }
   .index-count { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: 6px; font-variant-numeric: tabular-nums; }
   .index-label, .index-count-value { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .index-status > button { flex-shrink: 0; min-width: 44px; min-height: 44px; }
   .index-unrecognized { display: inline-flex; flex-shrink: 0; color: var(--muted); }
+  .index-count-toggle { overflow: visible; position: relative; padding: 0; font: inherit; font-variant-numeric: inherit; cursor: pointer; border-radius: 3px; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; transition: text-decoration-color .15s; }
+  .index-count-toggle::before { content: ""; position: absolute; inset: -10px -5px; }
+  .index-count-toggle:hover { text-decoration-color: currentColor; }
+  .index-measure { position: absolute; inset: 0 auto auto 0; width: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
+  .index-measure-line { display: inline-flex; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .index-measure-dot { width: 4px; }
   .sidebar-footer .version-label { flex-shrink: 0; margin-left: auto; font: .6875rem/1.2 var(--mono); letter-spacing: .4px; color: #798181; }
   .version-label span { font-size: .6875rem; }
   .breadcrumbs, .topbar-actions { display: flex; align-items: center; gap: 12px; font-size: var(--text-support); color: var(--muted); min-width: 0; }
