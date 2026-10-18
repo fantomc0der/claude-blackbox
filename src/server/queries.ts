@@ -9,7 +9,7 @@ import { displaySnippet, normalize, object, pathName, requestMessageType, string
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
-import { addedDirectory, buildSummary, changeTools, contentBlocks, isAddDirCommand, placeSummary, recordText, summaryRecordIds, type SummaryCall, type SummaryRoot } from "./summary";
+import { addedDirectory, buildSummary, changeTools, commandTools, contentBlocks, isAddDirCommand, placeSummary, recordText, searchTools, summaryRecordIds, type SummaryCall, type SummaryRoot, type SummaryRunCall } from "./summary";
 
 const timelineBucketLimit = 1500;
 const findMatchLimit = 5000;
@@ -651,24 +651,39 @@ export class RecordingQueries {
     }
     roots.sort((left, right) => left.sequence - right.sequence);
 
-    const tools = [...changeTools, "read"];
+    const tools = [...changeTools, "read", ...commandTools, ...searchTools];
     const calls: SummaryCall[] = [];
+    const runs: SummaryRunCall[] = [];
     const source = this.db.query<{ raw: string }, [number]>("SELECT raw FROM events WHERE rowid=?");
     let parsed = null as { row: number; blocks: unknown[] } | null;
-    for (const row of this.db.query<{ toolId: string; name: string; row: number; id: string; timestamp: string; cwd: string; flagged: string | null }, SQLQueryBindings[]>(
-      `SELECT call.tool_id AS toolId, call.name, call.event_row AS row, e.event_id AS id, e.timestamp, e.cwd, CASE WHEN instr(result.raw,'"is_error":true')>0 THEN result.raw END AS flagged
+    for (const row of this.db.query<{ toolId: string; name: string; row: number; id: string; timestamp: string; cwd: string; flagged: string | null; answered: number }, SQLQueryBindings[]>(
+      `SELECT call.tool_id AS toolId, call.name, call.event_row AS row, e.event_id AS id, e.timestamp, e.cwd, CASE WHEN instr(result.raw,'"is_error":true')>0 THEN result.raw END AS flagged,
+        result.tool_id IS NOT NULL AS answered
         FROM tool_calls call JOIN events e ON e.rowid=call.event_row
         LEFT JOIN tool_results result ON result.session_id=call.session_id AND result.tool_id=call.tool_id
         WHERE call.session_id=? AND lower(call.name) IN (${tools.map(() => "?").join(",")}) ORDER BY e.sequence`).all(id, ...tools)) {
       if (parsed?.row !== row.row) parsed = { row: row.row, blocks: contentBlocks(JSON.parse(source.get(row.row)?.raw || "{}")) };
       const block = object(parsed.blocks.find(entry => object(entry).type === "tool_use" && object(entry).id === row.toolId));
       const input = object(block.input);
+      const decision = row.flagged ? resultDecision(jsonRecord(row.flagged) as ContentBlock) : null;
+      const outcome = { error: row.flagged !== null && !decision, decision, record: record(row) };
+      const tool = row.name.toLowerCase();
+      if ((commandTools as readonly string[]).includes(tool)) {
+        const text = string(input.command);
+        if (text.trim()) runs.push({ tool: row.name, text, detail: "", background: input.run_in_background === true, pending: !row.answered, ...outcome });
+        continue;
+      }
+      if ((searchTools as readonly string[]).includes(tool)) {
+        const text = string(input.pattern) || string(input.query);
+        const detail = [string(input.path), string(input.glob)].map(value => value.trim()).filter(Boolean).join(" · ");
+        if (text.trim()) runs.push({ tool: row.name, text, detail, background: false, pending: !row.answered, ...outcome });
+        continue;
+      }
       const path = string(input.file_path) || string(input.notebook_path);
       if (!path) continue;
-      const decision = row.flagged ? resultDecision(jsonRecord(row.flagged) as ContentBlock) : null;
-      calls.push({ tool: row.name, path, cwd: row.cwd, error: row.flagged !== null && !decision, decision, record: record(row) });
+      calls.push({ tool: row.name, path, cwd: row.cwd, ...outcome });
     }
-    return buildSummary(roots, calls);
+    return buildSummary(roots, calls, runs);
   }
 
   // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Undated

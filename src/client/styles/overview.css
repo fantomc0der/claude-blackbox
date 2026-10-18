@@ -36,12 +36,19 @@
   .overview-changes button { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; min-height: 28px; padding: 2px 0; text-align: left; font-size: var(--text-meta); color: var(--muted); }
   .overview-changes button:hover, .overview-changes button[aria-current="true"] { color: var(--accent); }
 
+  .overview-command .overview-file-open { position: relative; }
+  .overview-run-glyph { position: absolute; top: 9px; left: 2px; width: 15px; font: 600 var(--text-meta)/1.4 var(--mono); text-align: center; color: var(--muted); }
+  .overview-run-glyph.error { color: var(--danger); }
+  .overview-run-glyph.stopped { color: var(--caution); }
+  .overview-searches .overview-folder { padding-top: 10px; }
+
   .overview-reads { margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--line); }
   .overview-reads > summary { display: flex; align-items: center; gap: 6px; min-height: 32px; list-style: none; font-size: var(--text-support); color: var(--muted); }
   .overview-reads > summary:hover { color: var(--accent); }
   .overview-reads > summary svg { transition: transform .15s; }
   .overview-reads[open] > summary svg { transform: rotate(90deg); }
   .overview-reads .overview-file-open { padding-left: 19px; }
+  .overview-searches .overview-file-open { padding-left: 21px; }
   .overview-note { margin: 16px 0 0; font-size: var(--text-meta); line-height: 1.5; color: var(--muted); }
 
   @media (pointer: coarse) {

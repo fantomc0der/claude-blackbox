@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addedDirectory, buildSummary, isAddDirCommand, resolveRecorded, scratchpadRoot, within, type SummaryCall, type SummaryRoot } from "../src/server/summary";
+import { addedDirectory, buildCommands, buildSummary, commandParts, isAddDirCommand, otherProgram, placeSummary, resolveRecorded, scratchpadRoot, summaryRecordIds, within, type SummaryCall, type SummaryRoot, type SummaryRunCall } from "../src/server/summary";
 
 const sgr = (code: string) => `\u001b[${code}m`;
 const record = (id: string) => ({ id, position: null, timestamp: "2026-10-11T01:26:42.000Z" });
@@ -166,5 +166,112 @@ describe("recording summary grouping", () => {
     expect(summary.folders[0].files).toHaveLength(500);
     expect(summary.folders[0].files.slice(0, 3).map(file => file.display)).toEqual(["src/file-0.ts", "src/file-1.ts", "src/file-2.ts"]);
     expect(summary.folders[0].files.at(-1)!.display).toBe("src/file-499.ts");
+  });
+});
+
+describe("recording summary commands", () => {
+  const run = (id: string, tool: string, text: string, options: Partial<Pick<SummaryRunCall, "detail" | "background" | "error" | "decision" | "pending">> = {}): SummaryRunCall =>
+    ({ tool, text, detail: "", background: false, error: false, decision: null, pending: false, ...options, record: record(id) });
+
+  test("reads the program a command starts with past its cd steps, environment settings, and comments", () => {
+    expect(commandParts("bun test")).toEqual({ program: "bun", lead: "", head: "bun test", lines: 1 });
+    expect(commandParts("cd /home/me/app && bun test tests/foo.test.ts")).toEqual({ program: "bun", lead: "cd /home/me/app &&", head: "bun test tests/foo.test.ts", lines: 1 });
+    expect(commandParts("cd \"/home/me/my app\"; FOO=1 BAR=\"x y\" bun run check 2>&1 | tail -5")).toEqual({ program: "bun", lead: "cd \"/home/me/my app\"; FOO=1 BAR=\"x y\"", head: "bun run check 2>&1 | tail -5", lines: 1 });
+    expect(commandParts("# the tests\n\ncargo test --locked")).toEqual({ program: "cargo", lead: "# the tests", head: "cargo test --locked", lines: 1 });
+    expect(commandParts("cd app\nbun test")).toEqual({ program: "bun", lead: "cd app", head: "bun test", lines: 1 });
+    expect(commandParts("/usr/bin/git status").program).toBe("git");
+    expect(commandParts("./scripts/dev.sh --watch").program).toBe("dev.sh");
+    expect(commandParts("& \"C:\\Tools\\git.exe\" status").program).toBe("git");
+    expect(commandParts("'C:\\Program Files\\Git\\bin\\git.exe' log").program).toBe("git");
+    expect(commandParts("Get-ChildItem -Recurse").program).toBe("Get-ChildItem");
+    // A wrapper is the program, since it is what ran first, and a chain belongs to its first program.
+    expect(commandParts("sudo apt install x").program).toBe("sudo");
+    expect(commandParts("git add -A && git commit -m 'x'").program).toBe("git");
+    expect(commandParts("ls;").program).toBe("ls");
+    // The head is the first line from the program on; a heredoc body stays in the text.
+    expect(commandParts("cat <<'EOF' > x.txt\nhello\n\nEOF")).toMatchObject({ head: "cat <<'EOF' > x.txt", lines: 3 });
+    expect(commandParts("   ")).toEqual({ program: "", lead: "", head: "", lines: 0 });
+    expect(commandParts(`bun ${"x".repeat(300)}`).head).toHaveLength(200);
+  });
+
+  test("deduplicates commands by their text, groups them by program, and keeps every run's outcome", () => {
+    const built = buildCommands([
+      run("c1", "Bash", "cd /work && bun test", { error: true }),
+      run("c2", "Bash", "git status"),
+      run("c3", "Bash", "cd /work && bun test\r\n", { decision: "denied" }),
+      run("c4", "PowerShell", "git status"),
+      run("c5", "Bash", "/usr/bin/git diff --stat"),
+      run("c6", "Bash", "cd /work && bun test"),
+      run("c7", "Bash", "bun run dev", { background: true }),
+      run("c8", "Bash", "cargo test", { pending: true }),
+      run("c9", "Bash", "   "),
+      run("c10", "Bash", "\u001b[1mFOO=1\u001b[0m"),
+      run("c11", "Bash", "FOO=1"),
+    ]);
+    expect(built.commands.map(group => [group.name, group.count, group.errors, group.stopped, group.commands.map(command => [command.text, command.head, command.lead, command.count, command.runs.map(run => run.id)])])).toEqual([
+      ["bun", 4, 1, 1, [["bun run dev", "bun run dev", "", 1, ["c7"]], ["cd /work && bun test", "bun test", "cd /work &&", 3, ["c1", "c3", "c6"]]]],
+      ["git", 3, 0, 0, [["/usr/bin/git diff --stat", "/usr/bin/git diff --stat", "", 1, ["c5"]], ["git status", "git status", "", 2, ["c2", "c4"]]]],
+      ["FOO=1", 2, 0, 0, [["FOO=1", "FOO=1", "", 2, ["c10", "c11"]]]],
+      ["cargo", 1, 0, 0, [["cargo test", "cargo test", "", 1, ["c8"]]]],
+    ]);
+    expect(built.commands[0].commands[1].runs.map(run => [run.tool, run.error, run.decision])).toEqual([["Bash", true, null], ["Bash", false, "denied"], ["Bash", false, null]]);
+    expect(built.commands[0].commands[0].runs[0]).toMatchObject({ background: true, pending: false });
+    expect(built.commands[3].commands[0].runs[0]).toMatchObject({ background: false, pending: true });
+    expect(built).toMatchObject({ commandCount: 6, commandRuns: 10, searchCount: 0, searchRuns: 0, searches: [], limited: false });
+  });
+
+  test("groups searches by tool, apart from the commands, telling scopes apart", () => {
+    const built = buildCommands([
+      run("s1", "Grep", "retry", { detail: "src · *.ts" }),
+      run("s2", "Glob", "**/*.test.ts"),
+      run("s3", "Grep", "retry", { detail: "src · *.ts" }),
+      run("s4", "Grep", "retry"),
+      run("s5", "WebSearch", "bun test timeout"),
+      run("c1", "Bash", "bun test"),
+    ]);
+    expect(built.searches.map(group => [group.name, group.count, group.commands.map(command => [command.text, command.detail, command.count])])).toEqual([
+      ["Grep", 3, [["retry", "", 1], ["retry", "src · *.ts", 2]]],
+      ["Glob", 1, [["**/*.test.ts", "", 1]]],
+      ["WebSearch", 1, [["bun test timeout", "", 1]]],
+    ]);
+    expect(built).toMatchObject({ commandCount: 1, commandRuns: 1, searchCount: 4, searchRuns: 5 });
+  });
+
+  test("orders the programs run most first, their latest command first, and the catch-all last", () => {
+    const built = buildCommands([
+      run("c1", "Bash", "ls"), run("c2", "Bash", "git status"), run("c3", "Bash", "git diff"), run("c4", "Bash", "bun test"),
+      run("c5", "Bash", "bun run check"), run("c6", "Bash", "git status"), run("c7", "Bash", "bun test"), run("c8", "Bash", "ls"),
+    ]);
+    expect(built.commands.map(group => [group.name, group.count, group.commands.map(command => command.text)])).toEqual([
+      ["git", 3, ["git status", "git diff"]], ["bun", 3, ["bun test", "bun run check"]], ["ls", 2, ["ls"]],
+    ]);
+    // Programs past the group limit and commands without a program share the Other group, which sits last whatever its size.
+    const many = buildCommands([...Array.from({ length: 35 }, (_, index) => run(`p${index}`, "Bash", `tool${index} run`)), ...Array.from({ length: 5 }, (_, index) => run(`q${index}`, "Bash", "# only a comment"))]);
+    expect(many.commands).toHaveLength(31);
+    expect(many.commands.at(-1)).toMatchObject({ name: otherProgram, count: 10 });
+    expect(many.commands.at(-1)!.commands.map(command => command.text)).toEqual(["# only a comment", ...Array.from({ length: 5 }, (_, index) => `tool${4 - index} run`)]);
+    expect(many.limited).toBe(true);
+  });
+
+  test("keeps the latest runs of a command run very often, and counts every run", () => {
+    const built = buildCommands(Array.from({ length: 150 }, (_, index) => run(`r${index}`, "Bash", "bun test", { error: index % 50 === 0 })));
+    const command = built.commands[0].commands[0];
+    expect(command).toMatchObject({ count: 150, errors: 3, stopped: 0 });
+    expect(command.runs).toHaveLength(100);
+    expect(command.runs[0].id).toBe("r50");
+    expect(command.runs.at(-1)!.id).toBe("r149");
+    expect(built.limited).toBe(true);
+    const long = buildCommands([run("l1", "Bash", `echo ${"y".repeat(2000)}`)]);
+    expect(long.commands[0].commands[0].text).toHaveLength(1000);
+    expect(long.commands[0].commands[0].lines).toBe(1);
+  });
+
+  test("places every run under the replay filters with the files", () => {
+    const summary = buildSummary([{ path: "/work", added: false, record: record("cwd") }], [call("e1", "Edit", "/work/app.ts", false, "/work")], [run("c1", "Bash", "bun test"), run("s1", "Grep", "ready")]);
+    expect(summaryRecordIds(summary).sort()).toEqual(["c1", "cwd", "e1", "s1"]);
+    const placed = placeSummary(summary, new Map([["c1", 7]]));
+    expect(placed.commands[0].commands[0].runs[0].position).toBe(7);
+    expect(placed.searches[0].commands[0].runs[0].position).toBeNull();
+    expect(summary).toMatchObject({ commandCount: 1, commandRuns: 1, searchCount: 1, searchRuns: 1, changedFiles: 1 });
   });
 });
