@@ -295,6 +295,10 @@ describe("recording summary commands", () => {
     expect(many.commands.at(-1)).toMatchObject({ name: otherProgram, count: 10 });
     expect(many.commands.at(-1)!.commands.map(command => command.text)).toEqual(["# only a comment", ...Array.from({ length: 5 }, (_, index) => `tool${4 - index} run`)]);
     expect(many.limited).toBe(true);
+    // A program that happens to be called "other" keeps a group of its own, apart from the catch-all.
+    const named = buildCommands([run("o1", "Bash", "Other --version"), run("o2", "Bash", "other --help"), run("o3", "Bash", "# nothing")]);
+    expect(named.commands.map(group => [group.name, group.commands.map(command => command.text)])).toEqual([["other", ["other --help", "Other --version"]], [otherProgram, ["# nothing"]]]);
+    expect(named.limited).toBe(false);
   });
 
   test("keeps the latest runs of a command run very often, and counts every run", () => {

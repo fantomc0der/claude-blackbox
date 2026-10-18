@@ -213,27 +213,26 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
   });
 
   // The groups of the programs run most sit first, ties in the order the programs were first run; the catch-all group
-  // is last. Within a group the command run latest sits first.
-  const otherKey = otherProgram.toLowerCase();
+  // is last. It is kept apart from the named groups rather than under a reserved name, so a program that happens to be
+  // called "other" keeps a group of its own. Within a group the command run latest sits first.
   const group = (entries: Map<string, Entry>) => {
-    const groups = new Map<string, { group: SummaryCommandGroup; first: number }>();
+    type Group = { group: SummaryCommandGroup; first: number };
+    const groups = new Map<string, Group>();
+    let other: Group | null = null;
     const list = [...entries.values()].sort((left, right) => right.last - left.last);
     if (list.length > commandLimit) limited = true;
     for (const entry of list.slice(0, commandLimit)) {
-      let key = entry.program.toLowerCase();
-      const named = groups.size - (groups.has(otherKey) ? 1 : 0);
-      if (!groups.has(key) && (named >= groupLimit || !key)) {
-        if (key) limited = true;
-        key = otherKey;
-      }
+      const key = entry.program.toLowerCase();
       let found = groups.get(key);
-      if (!found) groups.set(key, found = { group: { name: key === otherKey ? otherProgram : entry.program, count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first });
+      if (!found && key && groups.size < groupLimit) groups.set(key, found = { group: { name: entry.program, count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first });
+      if (!found) {
+        if (key) limited = true;
+        found = other ??= { group: { name: otherProgram, count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first };
+      }
       found.group.count += entry.command.count; found.group.errors += entry.command.errors; found.group.stopped += entry.command.stopped;
       found.first = Math.min(found.first, entry.first);
       found.group.commands.push(entry.command);
     }
-    const other = groups.get(otherKey);
-    groups.delete(otherKey);
     const sorted = [...groups.values()].sort((left, right) => right.group.count - left.group.count || left.first - right.first);
     if (other) sorted.push(other);
     return sorted.map(entry => entry.group);
