@@ -1,14 +1,18 @@
 import { posix, win32 } from "node:path";
+import { createHash } from "node:crypto";
 import { stripAnsi } from "../shared/ansi";
+import { commandCategory, commandParts } from "./command-parts";
 import { object, promptLine, string } from "./normalize";
 import type { Decision } from "../shared/decisions";
 import type { SessionSummary, SummaryChange, SummaryCommand, SummaryCommandGroup, SummaryFile, SummaryFolder, SummaryPrompt, SummaryRead, SummaryRecord, SummaryRun, SummaryScratchpad } from "../shared/types";
+export { commandParts } from "./command-parts";
 
 /** Tools whose calls change the file their input names. Read is collected separately. */
 export const changeTools = ["edit", "write", "multiedit", "notebookedit"] as const;
 /** Tools whose calls run a shell command, and the search tools the Commands run view lists beside them. */
 export const commandTools = ["bash", "powershell"] as const;
 export const searchTools = ["grep", "glob", "websearch"] as const;
+export const fetchTools = ["webfetch"] as const;
 
 const fileLimit = 500;
 const changeLimit = 100;
@@ -39,8 +43,8 @@ export interface SummaryOutcome { sequence: number; error: boolean; stopped: boo
 export interface SummaryCall { tool: string; path: string; cwd: string; error: boolean; decision: Decision | null; record: SummaryRecord }
 
 /**
- * One Bash, PowerShell, Grep, Glob, or WebSearch call. `text` is the command, pattern, or query as recorded, `detail`
- * the path and glob a search was scoped to, `background` whether a command was started in the background, and
+ * One shell, search, or WebFetch call. `text` is the command, pattern, query, or URL as recorded, `detail`
+ * the search scope or fetch prompt, `background` whether a command was started in the background, and
  * `pending` whether the recording holds no result for it yet. `error` and `decision` read its result as a
  * `SummaryCall`'s do.
  */
@@ -48,30 +52,6 @@ export interface SummaryRunCall { tool: string; text: string; detail: string; ba
 
 const collapse = (value: string) => value.replace(/\s+/g, " ").trim();
 const cap = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
-
-/**
- * The program a shell command starts with, the lead before it, the head the row shows, and the command's line count.
- * The lead is the `cd` steps, environment settings, blank lines, and comment lines before the program, collapsed to one
- * line; the head is the first line from the program on, and `lines` counts the non-empty lines from there. The program
- * is the first word's file name without its directory, quotes, a PowerShell call operator, or a Windows executable
- * extension, so `/usr/bin/git`, `& "C:\Tools\git.exe"`, and `git` group together. A wrapper such as `sudo`, `npx`, or
- * `time` is the program, since it is what ran first. `program` is "" when no word can be read.
- */
-export function commandParts(command: string): { program: string; lead: string; head: string; lines: number } {
-  let rest = command;
-  const skip = (pattern: RegExp) => {
-    const match = pattern.exec(rest);
-    if (!match) return false;
-    rest = rest.slice(match[0].length);
-    return true;
-  };
-  while (skip(/^\s+/) || skip(/^#[^\n]*/) || skip(/^cd(?:\s+(?:"[^"\n]*"|'[^'\n]*'|[^\s;&|]+))?\s*(?:&&|;|\n)/) || skip(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s;&|]*)(?=\s)/)) {}
-  const word = /^(?:[&.]\s+)?(?:"([^"\n]*)"|'([^'\n]*)'|([^\s"']+))/.exec(rest);
-  const token = (word?.[1] ?? word?.[2] ?? word?.[3] ?? "").replace(/[;&|)]+$/, "");
-  const program = (token.split(/[\\/]/).at(-1) || "").replace(/\.(?:exe|cmd|bat)$/i, "");
-  const lines = rest.split("\n").map(line => line.trim()).filter(Boolean);
-  return { program, lead: cap(collapse(command.slice(0, command.length - rest.length)), lineLimit), head: cap(collapse(lines[0] ?? ""), lineLimit), lines: lines.length };
-}
 
 // Recorded paths come from whichever machine made the recording, not the one serving it, so the style follows the
 // path itself: a drive letter, a UNC prefix, or a backslash means Windows.
@@ -183,29 +163,33 @@ const tally = (entry: Tally, run: Pick<SummaryRun, "error" | "decision">) => {
 };
 
 /**
- * Deduplicates a recording's shell commands and searches and groups the commands by the program they start with and the
- * searches by tool. A command is the same command whenever its recorded text is, whichever shell ran it; a search is
- * the same when its tool, text, and scope are. Each command keeps its latest runs, so the last run is always listed,
+ * Deduplicates a recording's shell commands by a single program or Other, and its searches and fetches by tool.
+ * A command is the same whenever its recorded text is, whichever shell ran it; a search or fetch is
+ * the same when its tool, text, and detail are. Each command keeps its latest runs, so the last run is always listed,
  * and the groups of programs run most sit first, with the catch-all group last.
  */
-export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "commands" | "searches" | "commandCount" | "commandRuns" | "searchCount" | "searchRuns" | "limited"> {
+export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "commands" | "searches" | "fetches" | "commandCount" | "commandRuns" | "searchCount" | "searchRuns" | "fetchCount" | "fetchRuns" | "limited"> {
   type Entry = { command: SummaryCommand; program: string; first: number; last: number };
   const commands = new Map<string, Entry>();
   const searches = new Map<string, Entry>();
+  const fetches = new Map<string, Entry>();
   let limited = false;
-  const totals = { commands: 0, searches: 0 };
+  const totals = { commands: 0, searches: 0, fetches: 0 };
   runs.forEach((call, order) => {
     const search = (searchTools as readonly string[]).includes(call.tool.toLowerCase());
+    const fetch = (fetchTools as readonly string[]).includes(call.tool.toLowerCase());
     const text = stripAnsi(call.text).replace(/\r\n?/g, "\n").trim();
     if (!text) return;
-    const key = search ? `${call.tool.toLowerCase()}\n${call.detail}\n${text}` : text;
-    const entries = search ? searches : commands;
+    const key = search || fetch ? `${call.tool.toLowerCase()}\n${call.detail}\n${text}` : text;
+    const entries = search ? searches : fetch ? fetches : commands;
     let entry = entries.get(key);
     if (!entry) {
-      const { program, lead, head, lines } = search ? { program: call.tool, lead: "", head: cap(collapse(text), lineLimit), lines: 1 } : commandParts(text);
-      entries.set(key, entry = { command: { text: cap(text, textLimit), head, lead, lines, detail: call.detail, count: 0, errors: 0, stopped: 0, runs: [] }, program, first: order, last: order });
+      const { program, head, lines } = search || fetch ? { program: call.tool, head: cap(collapse(text), lineLimit), lines: 1 } : commandParts(text, call.tool);
+      entries.set(key, entry = { command: { key: createHash("sha256").update(key).digest("hex"), text: cap(text, textLimit), head, lines, detail: cap(call.detail, lineLimit), count: 0, errors: 0, stopped: 0, runs: [] }, program, first: order, last: order });
+    } else if (!search && !fetch && entry.program !== commandParts(text, call.tool).program) {
+      entry.program = "";
     }
-    totals[search ? "searches" : "commands"]++;
+    totals[search ? "searches" : fetch ? "fetches" : "commands"]++;
     tally(entry.command, call);
     entry.last = order;
     if (entry.command.runs.length >= runLimit) { entry.command.runs.shift(); limited = true; }
@@ -224,10 +208,10 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
     for (const entry of list.slice(0, commandLimit)) {
       const key = entry.program.toLowerCase();
       let found = groups.get(key);
-      if (!found && key && groups.size < groupLimit) groups.set(key, found = { group: { name: entry.program, count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first });
+      if (!found && key && groups.size < groupLimit) groups.set(key, found = { group: { name: entry.program, category: entries === searches ? "search" : entries === fetches ? "network" : commandCategory(entry.program), count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first });
       if (!found) {
         if (key) limited = true;
-        found = other ??= { group: { name: otherProgram, count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first };
+        found = other ??= { group: { name: otherProgram, category: "other", count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first };
       }
       found.group.count += entry.command.count; found.group.errors += entry.command.errors; found.group.stopped += entry.command.stopped;
       found.first = Math.min(found.first, entry.first);
@@ -237,7 +221,7 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
     if (other) sorted.push(other);
     return sorted.map(entry => entry.group);
   };
-  return { commands: group(commands), searches: group(searches), commandCount: commands.size, commandRuns: totals.commands, searchCount: searches.size, searchRuns: totals.searches, limited };
+  return { commands: group(commands), searches: group(searches), fetches: group(fetches), commandCount: commands.size, commandRuns: totals.commands, searchCount: searches.size, searchRuns: totals.searches, fetchCount: fetches.size, fetchRuns: totals.fetches, limited };
 }
 
 /**
@@ -367,7 +351,7 @@ export function summaryRecordIds(summary: SessionSummary): string[] {
   for (const file of files) for (const change of file.changes) ids.add(change.id);
   for (const file of summary.read) ids.add(file.id);
   for (const prompt of summary.prompts) ids.add(prompt.id);
-  for (const group of [...summary.commands, ...summary.searches]) for (const command of group.commands) for (const run of command.runs) ids.add(run.id);
+  for (const group of [...summary.commands, ...summary.searches, ...summary.fetches]) for (const command of group.commands) for (const run of command.runs) ids.add(run.id);
   return [...ids];
 }
 
@@ -385,5 +369,6 @@ export function placeSummary(summary: SessionSummary, positions: Map<string, num
     prompts: summary.prompts.map(at),
     commands: summary.commands.map(group),
     searches: summary.searches.map(group),
+    fetches: summary.fetches.map(group),
   };
 }

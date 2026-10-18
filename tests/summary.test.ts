@@ -217,25 +217,84 @@ describe("recording summary commands", () => {
   const run = (id: string, tool: string, text: string, options: Partial<Pick<SummaryRunCall, "detail" | "background" | "error" | "decision" | "pending">> = {}): SummaryRunCall =>
     ({ tool, text, detail: "", background: false, error: false, decision: null, pending: false, ...options, record: record(id) });
 
-  test("reads the program a command starts with past its cd steps, environment settings, and comments", () => {
-    expect(commandParts("bun test")).toEqual({ program: "bun", lead: "", head: "bun test", lines: 1 });
-    expect(commandParts("cd /home/me/app && bun test tests/foo.test.ts")).toEqual({ program: "bun", lead: "cd /home/me/app &&", head: "bun test tests/foo.test.ts", lines: 1 });
-    expect(commandParts("cd \"/home/me/my app\"; FOO=1 BAR=\"x y\" bun run check 2>&1 | tail -5")).toEqual({ program: "bun", lead: "cd \"/home/me/my app\"; FOO=1 BAR=\"x y\"", head: "bun run check 2>&1 | tail -5", lines: 1 });
-    expect(commandParts("# the tests\n\ncargo test --locked")).toEqual({ program: "cargo", lead: "# the tests", head: "cargo test --locked", lines: 1 });
-    expect(commandParts("cd app\nbun test")).toEqual({ program: "bun", lead: "cd app", head: "bun test", lines: 1 });
+  test("recognizes single programs without rewriting their recorded preview", () => {
+    expect(commandParts("bun test")).toEqual({ program: "bun", head: "bun test", lines: 1 });
+    expect(commandParts('FOO=1 BAR="x y" bun test')).toEqual({ program: "bun", head: 'FOO=1 BAR="x y" bun test', lines: 1 });
     expect(commandParts("/usr/bin/git status").program).toBe("git");
     expect(commandParts("./scripts/dev.sh --watch").program).toBe("dev.sh");
     expect(commandParts("& \"C:\\Tools\\git.exe\" status").program).toBe("git");
     expect(commandParts("'C:\\Program Files\\Git\\bin\\git.exe' log").program).toBe("git");
     expect(commandParts("Get-ChildItem -Recurse").program).toBe("Get-ChildItem");
-    // A wrapper is the program, since it is what ran first, and a chain belongs to its first program.
     expect(commandParts("sudo apt install x").program).toBe("sudo");
-    expect(commandParts("git add -A && git commit -m 'x'").program).toBe("git");
-    expect(commandParts("ls;").program).toBe("ls");
-    // The head is the first line from the program on; a heredoc body stays in the text.
-    expect(commandParts("cat <<'EOF' > x.txt\nhello\n\nEOF")).toMatchObject({ head: "cat <<'EOF' > x.txt", lines: 3 });
-    expect(commandParts("   ")).toEqual({ program: "", lead: "", head: "", lines: 0 });
+    expect(commandParts("   ")).toEqual({ program: "", head: "", lines: 0 });
     expect(commandParts(`bun ${"x".repeat(300)}`).head).toHaveLength(200);
+  });
+
+  test.each([
+    'S="C:/Temp/scratch"', 'F=/tmp/scratch', '$sp = "C:\\Temp\\scratch"',
+    'cd /work && S="/tmp/scratch" && python "$S/test.py" 2>&1 | tail -8',
+    'S="/tmp/scratch" && python "$S/test.py"', 'M=/tmp; cat "$M"',
+    "git add -A && git commit -m 'x'", "ls | wc -l", "git status || echo failed", "ls;", "bun test &",
+    "cd app\nbun test", "# tests\n\ncargo test --locked", "cat <<'EOF' > x.txt\nhello\n\nEOF",
+    'python -c "print(1)\nprint(2)"', 'bash -c "python test.py | tail -8"', 'pwsh -Command "Get-ChildItem"',
+    'echo "$(cat file)"', 'echo `cat file`', 'diff <(cat a) <(cat b)', 'if true; then ls; fi',
+    '"Test-Path F:\\ => "', '"unfinished', '$command --version', '"$ROOT/bin/python" test.py',
+    'echo ${VALUE:-$(cat file)}', '# only a comment', '&& python test.py', '>output python test.py',
+    'S=/tmp 2>output python test.py', '2>&1 python test.py',
+  ])("keeps ambiguous shell input in Other: %s", text => {
+    expect(commandParts(text).program).toBe("");
+    expect(commandParts(text).head).toBe(text.split("\n")[0]);
+    expect(commandParts(text).lines).toBe(text.split("\n").filter(line => line.trim()).length);
+  });
+
+  test.each([
+    ['python -c "print(1); print(2)"', "python"],
+    ["printf '%s' 'a && b | c'", "printf"],
+    ['curl "https://example.test/?a=1&b=2"', "curl"],
+    ['S="/tmp/a;b" python "$S/test.py" 2>&1', "python"],
+    ["cat file > output.txt 2>&1", "cat"],
+    ["echo one\\;two", "echo"],
+    ["git status # && ignored", "git"],
+  ])("does not confuse quoted arguments or redirects with chains: %s", (text, program) => {
+    expect(commandParts(text).program).toBe(program);
+    expect(commandParts(text).head).toBe(text);
+  });
+
+  test("treats PowerShell assignments and dynamic invocations conservatively", () => {
+    expect(commandParts('& "C:\\Tools\\python.exe" test.py', "PowerShell").program).toBe("python");
+    expect(commandParts('$sp = "C:\\Temp"; & "$sp/test.ps1"', "PowerShell").program).toBe("");
+    expect(commandParts('FOO=1 python test.py', "PowerShell").program).toBe("");
+    expect(commandParts('"C:\\Tools\\python.exe"', "PowerShell").program).toBe("");
+  });
+
+  test("groups language and network tools without assigning a purpose to unknown utilities", () => {
+    const commands = ["python3.12 test.py", "dotnet test", "go test ./...", "cargo test", "curl https://example.test", "wget https://example.test", "Invoke-WebRequest https://example.test", "wc -l file", "ls", "Other --help", "S=/tmp", "python test.py | tail -8"];
+    const built = buildCommands(commands.map((text, index) => run(`r${index}`, "Bash", text)));
+    expect(built.commands.map(group => [group.name, group.category])).toEqual([
+      ["python3.12", "language"], ["dotnet", "language"], ["go", "language"], ["cargo", "language"],
+      ["curl", "network"], ["wget", "network"], ["Invoke-WebRequest", "network"],
+      ["wc", "shell"], ["ls", "shell"], ["Other", "shell"], ["Other", "other"],
+    ]);
+    expect(built.commands.at(-1)?.count).toBe(2);
+    const mixed = buildCommands([run("b", "Bash", "FOO=1 python test.py"), run("p", "PowerShell", "FOO=1 python test.py")]);
+    expect(mixed.commands).toMatchObject([{ category: "other", count: 2 }]);
+  });
+
+  test("keeps fetches distinct by URL and prompt, outside shell and search totals", () => {
+    const summary = buildSummary([], [], [], [], [
+      run("f1", "WebFetch", "https://example.test/docs", { detail: "Find setup", error: true }),
+      run("f2", "webfetch", "https://example.test/docs", { detail: "Find setup" }),
+      run("f3", "WebFetch", "https://example.test/docs", { detail: "Find API", pending: true }),
+    ]);
+    expect(summary).toMatchObject({ commandCount: 0, commandRuns: 0, searchCount: 0, searchRuns: 0, fetchCount: 2, fetchRuns: 3 });
+    expect(summary.fetches).toMatchObject([{ category: "network", count: 3, errors: 1, commands: [
+      { detail: "Find API", count: 1, runs: [{ id: "f3", pending: true }] },
+      { detail: "Find setup", count: 2, errors: 1, runs: [{ id: "f1" }, { id: "f2" }] },
+    ] }]);
+    expect(summaryRecordIds(summary).sort()).toEqual(["f1", "f2", "f3"]);
+    const placed = placeSummary(summary, new Map([["f3", 7]]));
+    expect(placed.fetches[0].commands[0].runs[0].position).toBe(7);
+    expect(placed.fetches[0].commands[1].runs[0].position).toBeNull();
   });
 
   test("deduplicates commands by their text, groups them by program, and keeps every run's outcome", () => {
@@ -252,15 +311,15 @@ describe("recording summary commands", () => {
       run("c10", "Bash", "\u001b[1mFOO=1\u001b[0m"),
       run("c11", "Bash", "FOO=1"),
     ]);
-    expect(built.commands.map(group => [group.name, group.count, group.errors, group.stopped, group.commands.map(command => [command.text, command.head, command.lead, command.count, command.runs.map(run => run.id)])])).toEqual([
-      ["bun", 4, 1, 1, [["bun run dev", "bun run dev", "", 1, ["c7"]], ["cd /work && bun test", "bun test", "cd /work &&", 3, ["c1", "c3", "c6"]]]],
-      ["git", 3, 0, 0, [["/usr/bin/git diff --stat", "/usr/bin/git diff --stat", "", 1, ["c5"]], ["git status", "git status", "", 2, ["c2", "c4"]]]],
-      ["FOO=1", 2, 0, 0, [["FOO=1", "FOO=1", "", 2, ["c10", "c11"]]]],
-      ["cargo", 1, 0, 0, [["cargo test", "cargo test", "", 1, ["c8"]]]],
+    expect(built.commands.map(group => [group.name, group.count, group.errors, group.stopped, group.commands.map(command => [command.text, command.head, command.count, command.runs.map(run => run.id)])])).toEqual([
+      ["git", 3, 0, 0, [["/usr/bin/git diff --stat", "/usr/bin/git diff --stat", 1, ["c5"]], ["git status", "git status", 2, ["c2", "c4"]]]],
+      ["bun", 1, 0, 0, [["bun run dev", "bun run dev", 1, ["c7"]]]],
+      ["cargo", 1, 0, 0, [["cargo test", "cargo test", 1, ["c8"]]]],
+      ["Other", 5, 1, 1, [["FOO=1", "FOO=1", 2, ["c10", "c11"]], ["cd /work && bun test", "cd /work && bun test", 3, ["c1", "c3", "c6"]]]],
     ]);
-    expect(built.commands[0].commands[1].runs.map(run => [run.tool, run.error, run.decision])).toEqual([["Bash", true, null], ["Bash", false, "denied"], ["Bash", false, null]]);
-    expect(built.commands[0].commands[0].runs[0]).toMatchObject({ background: true, pending: false });
-    expect(built.commands[3].commands[0].runs[0]).toMatchObject({ background: false, pending: true });
+    expect(built.commands[3].commands[1].runs.map(run => [run.tool, run.error, run.decision])).toEqual([["Bash", true, null], ["Bash", false, "denied"], ["Bash", false, null]]);
+    expect(built.commands[1].commands[0].runs[0]).toMatchObject({ background: true, pending: false });
+    expect(built.commands[2].commands[0].runs[0]).toMatchObject({ background: false, pending: true });
     expect(built).toMatchObject({ commandCount: 6, commandRuns: 10, searchCount: 0, searchRuns: 0, searches: [], limited: false });
   });
 
@@ -299,6 +358,20 @@ describe("recording summary commands", () => {
     const named = buildCommands([run("o1", "Bash", "Other --version"), run("o2", "Bash", "other --help"), run("o3", "Bash", "# nothing")]);
     expect(named.commands.map(group => [group.name, group.commands.map(command => command.text)])).toEqual([["other", ["other --help", "Other --version"]], [otherProgram, ["# nothing"]]]);
     expect(named.limited).toBe(false);
+  });
+
+  test("keeps capped script and fetch previews distinct with stable full-input keys", () => {
+    const prefix = `S="${"x".repeat(1100)}"\npython `;
+    const calls = [run("a", "Bash", `${prefix}a.py`), run("b", "Bash", `${prefix}b.py`)];
+    const initial = buildCommands(calls).commands[0].commands;
+    expect(initial[0].text).toBe(initial[1].text);
+    expect(initial[0].key).not.toBe(initial[1].key);
+    const refreshed = buildCommands([...calls, run("c", "Bash", `${prefix}a.py`)]).commands[0].commands;
+    expect(refreshed[0].key).toBe(initial[1].key);
+    const detail = "x".repeat(220);
+    const fetched = buildCommands([run("f1", "WebFetch", "https://example.test", { detail: `${detail}a` }), run("f2", "WebFetch", "https://example.test", { detail: `${detail}b` })]).fetches[0].commands;
+    expect(fetched[0].detail).toBe(fetched[1].detail);
+    expect(fetched[0].key).not.toBe(fetched[1].key);
   });
 
   test("keeps the latest runs of a command run very often, and counts every run", () => {
