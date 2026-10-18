@@ -360,6 +360,31 @@ describe("recording summary commands", () => {
     expect(named.limited).toBe(false);
   });
 
+  test.each(["Grep", "WebFetch"])("keeps newline boundaries distinct in %s inputs", tool => {
+    const built = buildCommands([
+      run("a", tool, "https://example.test", { detail: "Find setup\ninstructions", error: true }),
+      run("b", tool, "instructions\nhttps://example.test", { detail: "Find setup" }),
+    ]);
+    const commands = (tool === "Grep" ? built.searches : built.fetches)[0].commands;
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toMatchObject({ count: 1, errors: 0, runs: [{ id: "b" }] });
+    expect(commands[1]).toMatchObject({ count: 1, errors: 1, runs: [{ id: "a" }] });
+    expect(commands[0].key).not.toBe(commands[1].key);
+  });
+
+  test("keeps shell row identities separate from structured search and fetch identities", () => {
+    const built = buildCommands([
+      run("s", "Grep", "ready", { detail: "src" }),
+      run("f", "WebFetch", "https://example.test", { detail: "Find setup" }),
+      run("c1", "Bash", "grep\nsrc\nready"),
+      run("c2", "Bash", JSON.stringify(["grep", "src", "ready"])),
+      run("c3", "Bash", JSON.stringify(["webfetch", "Find setup", "https://example.test"])),
+    ]);
+    const keys = [...built.commands, ...built.searches, ...built.fetches].flatMap(group => group.commands.map(command => command.key));
+    expect(keys).toHaveLength(5);
+    expect(new Set(keys).size).toBe(5);
+  });
+
   test("caps displayed entries while whole-recording totals still count omitted entries", () => {
     const calls = Array.from({ length: 501 }, (_, index) => [
       run(`c${index}`, "Bash", `python test${index}.py`),

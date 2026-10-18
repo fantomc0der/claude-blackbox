@@ -180,7 +180,7 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
     const fetch = (fetchTools as readonly string[]).includes(call.tool.toLowerCase());
     const text = stripAnsi(call.text).replace(/\r\n?/g, "\n").trim();
     if (!text) return;
-    const key = search || fetch ? `${call.tool.toLowerCase()}\n${call.detail}\n${text}` : text;
+    const key = JSON.stringify(search || fetch ? [call.tool.toLowerCase(), call.detail, text] : ["shell", text]);
     const entries = search ? searches : fetch ? fetches : commands;
     let entry = entries.get(key);
     if (!entry) {
