@@ -60,8 +60,8 @@ function singleProgram(command: string, tool: string): string {
     const next = input[index + 1];
     if (quote !== "'" && (char === "`" && !powershell || char === "$" && /[({]/.test(next ?? ""))) return "";
     if (quote !== "'" && (char === "\\" && !powershell || char === "`" && powershell)) {
-      // An escaped newline continues the line; any other escaped character is literal.
-      if (next === "\n") { if (!quote) flush(); index++; continue; }
+      // An escaped newline continues the line, joining the halves of a word it splits; any other escaped character is literal.
+      if (next === "\n") { index++; continue; }
       if (next && (powershell || /[\s\\"'$;&|<>#()]/.test(next))) {
         raw += char + next;
         value += next;
@@ -267,11 +267,11 @@ export function commandSteps(command: string, tool = "Bash"): CommandStep[] {
       continue;
     }
     if (!powershell && char === "\\") {
-      if (next === "\n") { flush(); index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
+      if (next === "\n") { index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
       continue;
     }
     if (powershell && char === "`") {
-      if (next === "\n") { flush(); index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
+      if (next === "\n") { index++; line++; } else if (next) { add(char + next, next); index++; } else add(char);
       continue;
     }
     if (char === "#" && !raw) {

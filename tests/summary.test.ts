@@ -251,6 +251,7 @@ describe("recording summary commands", () => {
     ['python -X utf8 -c "\nimport re\nh = open(r\'C:/x.html\').read()\ni = h.find(\'class=\\"title\\"\')\n# a comment\nprint(seg[i-600:i+120])\n"', "python", 7],
     ['python -c "print(1)\nprint(2)"', "python", 2],
     ["ls \\\n  -la", "ls", 2],
+    ["py\\\nthon -c 'print(1)'", "python", 2],
     ["cat <<'EOF' > x.txt\nhello\n\nEOF", "cat", 3],
     ["python - <<EOF\nimport sys; print(sys.argv) && echo\nEOF", "python", 3],
     ["cat <<-EOF\n\tgh pr view\n\tEOF", "cat", 3],
@@ -263,6 +264,7 @@ describe("recording summary commands", () => {
 
   test("reads PowerShell continuations, escapes, and here-strings as one call", () => {
     expect(commandParts("git status `\n  --short", "PowerShell").program).toBe("git");
+    expect(commandParts("gi`\nt status", "PowerShell").program).toBe("git");
     expect(commandParts('Get-Content "a`nb" -Tail 5', "PowerShell").program).toBe("Get-Content");
     expect(commandParts("python -c @\"\nprint(\"hi\"); exit(1)\n\"@", "PowerShell")).toEqual({ program: "python", head: 'python -c @"', lines: 3 });
     expect(commandParts("python -c @'\nprint(1)\n'@; git push", "PowerShell").program).toBe("");
@@ -475,6 +477,7 @@ describe("recording summary commands", () => {
     ["{ git status; git diff; } | cat", [["git", "…git status; git diff; } | cat", 1, "1/3", false], ["git", "…git diff; } | cat", 1, "2/3", false], ["cat", "…cat", 1, "3/3", true]], "Bash"],
     ["# comment\n\ncargo test --locked # trailing && ignored", [["cargo", "cargo test --locked # trailing && ignored", 1, "1/1", false]], "Bash"],
     ["echo one\\;two && ls \\\n  -la", [["echo", "echo one\\;two && ls \\", 1, "1/2", false], ["ls", "…ls \\", 1, "2/2", false]], "Bash"],
+    ["gi\\\nt status && ls", [["git", "gi\\", 1, "1/1", false], ["ls", "…ls", 2, "1/1", false]], "Bash"],
     ["S=/tmp 2>output python test.py; FOO=1 BAR=2 bun test &", [["bun", "…bun test &", 1, "2/2", false]], "Bash"],
     ["cat file > out 2>&1 && gh pr view 1 >/dev/null", [["cat", "cat file > out 2>&1 && gh pr view 1 >/dev/null", 1, "1/2", false], ["gh", "…gh pr view 1 >/dev/null", 1, "2/2", false]], "Bash"],
     ["echo ${VAR:-$(cat file)} && gh --version", [["echo", "echo ${VAR:-$(cat file)} && gh --version", 1, "1/2", false], ["gh", "…gh --version", 1, "2/2", false]], "Bash"],
