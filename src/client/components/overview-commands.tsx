@@ -16,6 +16,7 @@ const categories = [
 ] as const;
 const otherLabel = "Other commands";
 const shownPrograms = 3;
+const shownNames = 2;
 const hiddenText = "Opens in All events, because the current view hides it.";
 const hiddenNote = (record: SummaryRecord) => record.position === null ? ` ${hiddenText}` : "";
 const HiddenNote = (props: { record: SummaryRecord }) => <Show when={props.record.position === null}><span class="visually-hidden"> {hiddenText}</span></Show>;
@@ -71,16 +72,13 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
     const last = () => command().runs.at(-1)!;
     const head = () => command().head.startsWith("…") ? command().head.slice(1) : command().head;
     const also = () => command().also ?? [];
-    const secondary = () => {
-      if (command().step) return stepPlace(command());
-      const lines = command().lines > 1 ? `+${plural(command().lines - 1, "line")}` : "";
-      const under = also().length > 2 ? `also under ${plural(also().length, "group")}` : also().length ? `also under ${also().join(", ")}` : "";
-      return [lines, under].filter(Boolean).join(" · ") || command().detail;
-    };
+    const secondary = () => command().step ? stepPlace(command()) : command().lines > 1 ? `+${plural(command().lines - 1, "line")}` : command().detail;
+    // The groups that also list a command sit on their own line, cut at whole names, so an outcome badge never hides them.
+    const under = () => `also under ${also().slice(0, shownNames).join(", ")}${also().length > shownNames ? ` +${(also().length - shownNames).toLocaleString()} more` : ""}`;
     const listed = () => command().step ? ` ${stepPlace(command())} in a multi-step command also listed under ${listNames([otherLabel, ...also()])},` : also().length ? ` also listed under ${listNames(also())},` : "";
-    const listName = () => `${noun === "run" ? "Runs" : noun === "fetch" ? "Fetches" : "Searches"} of ${truncate(command().head, 100)}`;
+    const listName = () => `${noun === "run" ? "Runs" : noun === "fetch" ? "Fetches" : "Searches"} of ${truncate(head(), 100)}`;
     const subject = () => command().count > 1 ? `Last ${noun}` : `The ${noun}`;
-    const name = () => `${truncate(command().head, 100)}${command().detail ? `${noun === "fetch" ? ": " : " in "}${command().detail}` : ""},${listed()} ${plural(command().count, noun)}${command().errors ? `, ${plural(command().errors, "error")}` : ""}${command().stopped ? `, ${command().stopped.toLocaleString()} stopped` : ""}. ${runPhrase(last(), subject())} Show the ${command().count > 1 ? "last " : ""}${noun}.${hiddenNote(last())}`;
+    const name = () => `${truncate(head(), 100)}${command().detail ? `${noun === "fetch" ? ": " : " in "}${command().detail}` : ""},${listed()} ${plural(command().count, noun)}${command().errors ? `, ${plural(command().errors, "error")}` : ""}${command().stopped ? `, ${command().stopped.toLocaleString()} stopped` : ""}. ${runPhrase(last(), subject())} Show the ${command().count > 1 ? "last " : ""}${noun}.${hiddenNote(last())}`;
     const title = () => `${command().text}${command().detail ? `\n${command().detail}` : ""}${also().length ? `\nAlso listed under ${listNames(command().step ? [otherLabel, ...also()] : also())}` : command().step ? `\nAlso listed under ${otherLabel}` : ""}`;
     return <li class={['overview-file', 'overview-command', { selected: command().runs.some(run => run.id === props.selected), step: !!command().step }]}>
       <button class="overview-file-open" title={title()} aria-label={name()} onClick={() => props.show(last())}>
@@ -89,6 +87,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
         <span class="overview-file-count" aria-hidden="true">{command().count.toLocaleString()}</span>
         <Show when={secondary()}><span class={['overview-file-dir', { 'overview-step-meta': !!command().step }]}><Show when={command().step}><Icon name="link" size={12} /></Show><span>{secondary()}</span></span></Show>
         <Show when={command().errors || command().stopped}><span class="overview-file-outcome" aria-hidden="true"><Show when={command().errors}><span class="overview-file-error">{plural(command().errors, "error")}</span></Show><Show when={command().stopped}><span class="overview-file-stopped">{command().stopped.toLocaleString()} stopped</span></Show></span></Show>
+        <Show when={!command().step && also().length}><span class="overview-file-dir overview-file-also">{under()}</span></Show>
       </button>
       <Show when={command().runs.length > 1}>
         <button class="icon-button tiny overview-file-toggle" aria-expanded={open() ? "true" : "false"} aria-controls={open() ? listId : undefined} aria-label={listName()} title={open() ? "Hide the list" : `List each ${noun}`} onClick={() => toggle(command())}><Icon name="down" size={14} /></button>
@@ -132,8 +131,9 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
     const hidden = () => Math.max(0, names().length - shownPrograms);
     return <Show when={names().length}>
       <span class="overview-category-programs">
+        <span class="visually-hidden">Programs: </span>
         <span>{names().slice(0, shownPrograms).join(" · ")}</span>
-        <Show when={hidden()}><span aria-hidden="true"> +{hidden().toLocaleString()} more</span><span class="visually-hidden">, {names().slice(shownPrograms).join(", ")}</span></Show>
+        <Show when={hidden()}><span aria-hidden="true"> +{hidden().toLocaleString()} more</span><span class="visually-hidden"> · {names().slice(shownPrograms).join(" · ")}</span></Show>
       </span>
     </Show>;
   };
@@ -164,7 +164,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
           <Show when={category.key !== "other"}><Programs groups={[...shell(), ...fetches()]} /></Show>
         </summary>
         <Show when={category.key === "other"} fallback={<For each={shell()} keyed={group => group.name}>{group => <Program group={group()} />}</For>}>
-          <p class="overview-note overview-category-note">Multi-step or ambiguous commands, plus programs beyond the overview’s group limit. Previews keep the recorded first line; select one to see the full call. A multi-step command is also listed under each program it calls.</p>
+          <p class="overview-note overview-category-note">Multi-step or ambiguous commands, plus programs beyond the overview’s group limit. Previews keep the recorded first line; select one to see the full call. A multi-step command is also listed under the grouped programs it calls directly.</p>
           <For each={shell()} keyed={group => group.name}>{group => <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{CommandRow}</For></ul>}</For>
         </Show>
         <For each={fetches()} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={`${group().name} fetches`}>
@@ -208,7 +208,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
         </details>
       </Show>
       <Show when={summary().limited}><p class="overview-note">Very long recordings show shortened lists of programs, commands, searches, fetches, and individual calls.</p></Show>
-      <p class="overview-note">Shell counts cover Bash and PowerShell calls only; searches and WebFetch calls are listed separately. A multi-step command is listed under each program it calls and under Other commands, so group counts overlap, and a step shows the outcome of its whole command. A recorded error means the call failed; a call that succeeded isn’t proof the command did, such as one whose output was piped elsewhere or one run in the background. Commands run by subagents aren’t listed.</p>
+      <p class="overview-note">Shell counts cover Bash and PowerShell calls only; searches and WebFetch calls are listed separately. A multi-step command is listed under Other commands and under the grouped programs it calls directly, so group counts overlap, and a step shows the outcome of its whole command. A recorded error means the call failed; a call that succeeded isn’t proof the command did, such as one whose output was piped elsewhere or one run in the background. Commands run by subagents aren’t listed.</p>
     </>}</Show>
   </nav>;
 }

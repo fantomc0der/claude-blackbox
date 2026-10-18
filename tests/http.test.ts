@@ -78,11 +78,15 @@ test("serves a recording's file summary with positions under the replay filters"
   expect(summary).toMatchObject({ prompts: [{ kind: "prompt", text: "Hello", position: 0, errors: 1, stopped: 0 }], promptCount: 1 });
   // Shell commands group by program with each run's outcome, and the recording holding no result for a call says so.
   expect(summary).toMatchObject({ commandCount: 2, commandRuns: 2, searchCount: 1, searchRuns: 1, fetchCount: 1, fetchRuns: 1 });
-  expect(summary.commands).toEqual([{ name: "bun", category: "language", count: 1, errors: 0, stopped: 0, commands: [
+  // The chain's bun call is a step row under bun, sharing the Other row's runs and positions.
+  const chain = { id: expect.any(String), position: 2, timestamp: "", tool: "Bash", error: true, decision: null, background: false, pending: false };
+  expect(summary.commands).toEqual([{ name: "bun", category: "language", count: 2, errors: 1, stopped: 0, commands: [
     { key: expect.any(String), text: "bun run dev", head: "bun run dev", lines: 1, detail: "", count: 1, errors: 0, stopped: 0, runs: [{ id: expect.any(String), position: 5, timestamp: "", tool: "Bash", error: false, decision: null, background: true, pending: true }] },
+    { key: expect.stringMatching(/:bun$/), text: "cd /work/example && bun test", head: "…bun test", lines: 1, detail: "", count: 1, errors: 1, stopped: 0, step: { line: 1, step: 2, steps: 2 }, also: [], runs: [chain] },
   ] }, { name: "Other", category: "other", count: 1, errors: 1, stopped: 0, commands: [
-    { key: expect.any(String), text: "cd /work/example && bun test", head: "cd /work/example && bun test", lines: 1, detail: "", count: 1, errors: 1, stopped: 0, runs: [{ id: expect.any(String), position: 2, timestamp: "", tool: "Bash", error: true, decision: null, background: false, pending: false }] },
+    { key: expect.any(String), text: "cd /work/example && bun test", head: "cd /work/example && bun test", lines: 1, detail: "", count: 1, errors: 1, stopped: 0, also: ["bun"], runs: [chain] },
   ] }]);
+  expect(summary.commands[0].commands[1].key).toBe(`${summary.commands[1].commands[0].key}:bun`);
   expect(summary.fetches).toMatchObject([{ name: "WebFetch", category: "network", commands: [{ text: "https://example.test/docs", detail: "Find setup instructions", runs: [{ position: 6, pending: true }] }] }]);
   expect(summary.searches).toMatchObject([{ name: "Grep", count: 1, commands: [{ text: "ready", detail: "src · *.ts", runs: [{ position: 4, pending: true }] }] }]);
   const prompts = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=prompts`))).json();
