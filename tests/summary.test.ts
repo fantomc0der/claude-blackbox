@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addedDirectory, buildSummary, isAddDirCommand, resolveRecorded, scratchpadRoot, within, type SummaryCall, type SummaryRoot } from "../src/server/summary";
+import { addedDirectory, buildPrompts, buildSummary, isAddDirCommand, resolveRecorded, scratchpadRoot, within, type SummaryCall, type SummaryMessage, type SummaryRoot } from "../src/server/summary";
 
 const sgr = (code: string) => `\u001b[${code}m`;
 const record = (id: string) => ({ id, position: null, timestamp: "2026-10-11T01:26:42.000Z" });
@@ -166,5 +166,49 @@ describe("recording summary grouping", () => {
     expect(summary.folders[0].files).toHaveLength(500);
     expect(summary.folders[0].files.slice(0, 3).map(file => file.display)).toEqual(["src/file-0.ts", "src/file-1.ts", "src/file-2.ts"]);
     expect(summary.folders[0].files.at(-1)!.display).toBe("src/file-499.ts");
+  });
+});
+
+describe("recording summary prompts", () => {
+  const message = (id: string, sequence: number, text: string): SummaryMessage => ({ text, sequence, record: { ...record(id), timestamp: `2026-10-11T0${sequence % 10}:00:00.000Z` } });
+  const command = (name: string, args: string) => `<command-name>${name}</command-name>\n<command-message>${name.slice(1)}</command-message>\n<command-args>${args}</command-args>`;
+
+  test("lists what was typed, by kind, and skips the records nothing was typed into", () => {
+    const { prompts, count, limited } = buildPrompts([
+      message("p1", 0, "Add retries to the upload client"),
+      message("c1", 2, command("/compact", "")),
+      message("o1", 3, "<local-command-stdout>Compacted</local-command-stdout>"),
+      message("c2", 4, command("/review", "PR 12")),
+      message("s1", 5, "<bash-input>bun test</bash-input>"),
+      message("o2", 6, "<bash-stdout>186 pass</bash-stdout><bash-stderr></bash-stderr>"),
+      message("i1", 7, "<ide_opened_file>The user opened the file /work/app.ts in the IDE.</ide_opened_file>"),
+      message("p2", 8, "<system-reminder>Follow CLAUDE.md</system-reminder>Ship it"),
+    ], []);
+    expect(prompts.map(prompt => [prompt.id, prompt.kind, prompt.text])).toEqual([
+      ["p1", "prompt", "Add retries to the upload client"], ["c1", "command", "/compact"], ["c2", "command", "/review PR 12"], ["s1", "shell", "! bun test"], ["p2", "prompt", "Ship it"],
+    ]);
+    expect(prompts.every(prompt => prompt.position === null && prompt.errors === 0 && prompt.stopped === 0)).toBe(true);
+    expect([count, limited]).toEqual([5, false]);
+  });
+
+  test("counts each failure and stopped tool under the prompt it followed, up to the next prompt", () => {
+    const { prompts } = buildPrompts([message("p1", 1, "First"), message("p2", 5, "Second"), message("p3", 9, "Third")], [
+      { sequence: 0, error: true, stopped: false },
+      { sequence: 7, error: false, stopped: true },
+      { sequence: 2, error: true, stopped: false },
+      { sequence: 5, error: true, stopped: true },
+      { sequence: 4, error: false, stopped: true },
+    ]);
+    expect(prompts.map(prompt => [prompt.id, prompt.errors, prompt.stopped])).toEqual([["p1", 1, 1], ["p2", 1, 2], ["p3", 0, 0]]);
+  });
+
+  test("bounds very long recordings while still counting every prompt", () => {
+    const messages = Array.from({ length: 502 }, (_, index) => message(`p${index}`, index, `Prompt ${index}`));
+    const { prompts, count, limited } = buildPrompts(messages, [{ sequence: 501, error: true, stopped: false }]);
+    expect([prompts.length, count, limited]).toEqual([500, 502, true]);
+    expect(prompts.at(-1)).toMatchObject({ id: "p499", errors: 0 });
+    const summary = buildSummary([], [], messages, []);
+    expect(summary).toMatchObject({ promptCount: 502, limited: true, changedFiles: 0 });
+    expect(summary.prompts).toHaveLength(500);
   });
 });

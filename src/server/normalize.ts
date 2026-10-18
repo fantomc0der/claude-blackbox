@@ -255,26 +255,43 @@ export function displaySnippet(raw: string, term: string, words = 28): string {
 // Claude Code's own first-prompt picker, which titles its `--resume` listing, skips the records that slash commands, local
 // commands, hooks, interruptions, and the IDE integration write ahead of the user's first prompt, shows a slash command
 // with its arguments as `/name args`, and shows a shell command as `! command`. The same rules keep a recording's title in
-// agreement with it; a record the rules skip gives no title, so the next user record is tried.
-const skippedPrompt = /^(<local-command-stdout>|<local-command-caveat>|<session-start-hook>|\[Request interrupted by user)/;
+// agreement with it; a record the rules skip gives no title, so the next user record is tried. The output a `!` shell
+// command writes back as a user record is skipped as well: it was never typed.
+const skippedPrompt = /^(<local-command-stdout>|<local-command-caveat>|<session-start-hook>|<bash-stdout>|<bash-stderr>|\[Request interrupted by user)/;
 const attachedContext = /<(system-reminder|ide_opened_file|ide_selection)>[\s\S]*?<\/\1>/g;
 
 function titleText(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 180);
 }
 
-export function promptTitle(event: ReplayEvent): string {
-  if (event.role !== "user") return "";
-  const text = stripAnsi(event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" ")).trim();
-  if (skippedPrompt.test(text)) return "";
+/**
+ * The line a user record shows for what was typed: `prompt` for prose, with attached IDE and reminder context removed;
+ * `command` for a slash command, as `/name args`, with `bare` set when it took no arguments; `shell` for a `!` shell
+ * command, as `! command`. Null for a record nothing was typed into: a tool result, a local command's output, a hook's
+ * output, an interruption marker, or attached context alone.
+ */
+export interface PromptLine { kind: "prompt" | "command" | "shell"; text: string; bare: boolean }
+
+export function promptLine(recorded: string): PromptLine | null {
+  const text = stripAnsi(recorded).trim();
+  if (!text || skippedPrompt.test(text)) return null;
   const command = /^<command-name>([\s\S]*?)<\/command-name>/.exec(text);
   if (command) {
-    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "";
-    return args.trim() ? titleText(`${command[1].trim()} ${args}`) : "";
+    const name = command[1].trim();
+    const args = (/<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "").trim();
+    return name ? { kind: "command", text: titleText(args ? `${name} ${args}` : name), bare: !args } : null;
   }
   const shell = /^<bash-input>([\s\S]*?)<\/bash-input>/.exec(text);
-  if (shell) return shell[1].trim() ? titleText(`! ${shell[1]}`) : "";
-  return titleText(text.replace(attachedContext, " ").replace(/<[^>]+>/g, " "));
+  if (shell) return shell[1].trim() ? { kind: "shell", text: titleText(`! ${shell[1]}`), bare: false } : null;
+  const prose = titleText(text.replace(attachedContext, " ").replace(/<[^>]+>/g, " "));
+  return prose ? { kind: "prompt", text: prose, bare: false } : null;
+}
+
+export function promptTitle(event: ReplayEvent): string {
+  if (event.role !== "user") return "";
+  const line = promptLine(event.blocks.filter(block => block.type === "text").map(block => block.text || "").join(" "));
+  // A slash command without arguments names nothing the picker would title a session by.
+  return line && !line.bare ? line.text : "";
 }
 
 /**
