@@ -9,7 +9,7 @@ import { displaySnippet, normalize, object, pathName, requestMessageType, string
 import { dateBound, ftsPhrase, numericBound, pageNumber, parseSearch } from "./search";
 import { addUsage, emptyUsage, normalizeModel, usageColumns } from "./usage";
 import { facetLimit, isFacetValue } from "./facets";
-import { addedDirectory, buildSummary, changeTools, commandTools, contentBlocks, isAddDirCommand, placeSummary, recordText, searchTools, summaryRecordIds, type SummaryCall, type SummaryRoot, type SummaryRunCall } from "./summary";
+import { addedDirectory, buildSummary, changeTools, commandTools, contentBlocks, isAddDirCommand, placeSummary, recordText, searchTools, summaryRecordIds, type SummaryCall, type SummaryMessage, type SummaryOutcome, type SummaryRoot, type SummaryRunCall } from "./summary";
 
 const timelineBucketLimit = 1500;
 const findMatchLimit = 5000;
@@ -683,7 +683,16 @@ export class RecordingQueries {
       if (!path) continue;
       calls.push({ tool: row.name, path, cwd: row.cwd, ...outcome });
     }
-    return buildSummary(roots, calls, runs);
+    // Prompts are the user records that carry text, read from each record's own blocks rather than its searchable text
+    // so the tags that mark slash commands, shell commands, and attached context are still there to read. A tool result
+    // record carries no text, so none is read.
+    const messages: SummaryMessage[] = this.db.query<{ id: string; sequence: number; timestamp: string; raw: string }, [string]>(
+      "SELECT event_id AS id, sequence, timestamp, raw FROM events WHERE session_id=? AND role='user' AND category='message' ORDER BY sequence").all(id)
+      .map(row => ({ text: recordText(JSON.parse(row.raw)), sequence: row.sequence, record: record(row) }));
+    const outcomes: SummaryOutcome[] = this.db.query<{ sequence: number; error: number; decision: number }, [string]>(
+      "SELECT sequence, error, decision FROM events WHERE session_id=? AND (error=1 OR decision=1) ORDER BY sequence").all(id)
+      .map(row => ({ sequence: row.sequence, error: row.error === 1, stopped: row.decision === 1 }));
+    return buildSummary(roots, calls, messages, outcomes, runs);
   }
 
   // Positions are the same ordinals `events()` pages by, so a bucket's `first` is directly a page offset. Undated

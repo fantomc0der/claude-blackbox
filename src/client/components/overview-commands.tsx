@@ -34,10 +34,13 @@ function runPhrase(run: SummaryRun, subject: string): string {
 
 /** The overview rail's Commands run view: shell commands deduplicated and grouped by program, with their searches. */
 export function OverviewCommands(props: { summary: SessionSummary | null; failed: boolean; retry: () => void; show: (record: SummaryRecord) => void; selected: string }) {
-  const [expanded, setExpanded] = createSignal<ReadonlySet<SummaryCommand>>(new Set());
+  // Rows are keyed by their command's text and scope, which a refreshed summary keeps, so an open run list stays open.
+  const keyOf = (command: SummaryCommand) => `${command.text}\n${command.detail}`;
+  const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set());
   const toggle = (command: SummaryCommand) => setExpanded(current => {
     const next = new Set(current);
-    if (!next.delete(command)) next.add(command);
+    const key = keyOf(command);
+    if (!next.delete(key)) next.add(key);
     return next;
   });
 
@@ -45,7 +48,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
   // the work began.
   const Row = (noun: string) => (command: () => SummaryCommand) => {
     const listId = `overview-runs-${++runLists}`;
-    const open = () => expanded().has(command());
+    const open = () => expanded().has(keyOf(command()));
     const last = () => command().runs.at(-1)!;
     const secondary = () => [command().lead, command().lines > 1 ? `+${plural(command().lines - 1, "line")}` : ""].filter(Boolean).join(" · ") || command().detail;
     const subject = () => command().count > 1 ? `Last ${noun}` : `The ${noun}`;
@@ -91,7 +94,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
       <For each={summary().commands} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={group().name === "Other" ? "Other commands" : `Commands starting with ${group().name}`}>
         <h3><Icon name="terminal" size={14} /><span>{group().name}</span></h3>
         <Tally group={group()} noun="run" />
-        <ul class="overview-file-list"><For each={group().commands} keyed={command => command.text + "\n" + command.detail}>{CommandRow}</For></ul>
+        <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{CommandRow}</For></ul>
       </section>}</For>
       <Show when={summary().searches.length}>
         <details class="overview-reads overview-searches">
@@ -99,7 +102,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
           <For each={summary().searches} keyed={group => group.name}>{group => <section class="overview-folder" aria-label={`${group().name} searches`}>
             <h3><Icon name="search" size={14} /><span>{group().name}</span></h3>
             <Tally group={group()} noun="search" />
-            <ul class="overview-file-list"><For each={group().commands} keyed={command => command.text + "\n" + command.detail}>{SearchRow}</For></ul>
+            <ul class="overview-file-list"><For each={group().commands} keyed={keyOf}>{SearchRow}</For></ul>
           </section>}</For>
         </details>
       </Show>

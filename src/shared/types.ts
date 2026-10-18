@@ -346,22 +346,31 @@ export interface SummaryCommand { text: string; head: string; lead: string; line
 export interface SummaryCommandGroup { name: string; count: number; errors: number; stopped: number; commands: SummaryCommand[] }
 
 /**
- * The files a recording changed and read, grouped under the folders it worked in, and the commands it ran. `scratchpads`
- * holds the changed files inside Claude Code's per-session scratchpad directories, and `other` the changed files outside
- * every folder and scratchpad. `commands` groups the Bash and PowerShell commands by the program they start with, and
- * `searches` the Grep, Glob, and WebSearch calls by tool; `commandCount` and `searchCount` are the distinct commands and
- * searches, `commandRuns` and `searchRuns` every run of them. The totals count every file, command, and run even when a
- * list stops at its limit, which `limited` reports.
+ * One thing the user typed, in recording order: `prompt` for prose, `command` for a slash command shown as `/name args`,
+ * `shell` for a `!` shell command shown as `! command`. `text` is its first 180 characters on one line. `errors` and
+ * `stopped` count the failures and the decided, interrupted, or cancelled tools recorded between it and the next prompt.
+ */
+export interface SummaryPrompt extends SummaryRecord { kind: "prompt" | "command" | "shell"; text: string; errors: number; stopped: number }
+
+/**
+ * The files a recording changed and read, grouped under the folders it worked in, the prompts it holds, and the commands
+ * it ran. `scratchpads` holds the changed files inside Claude Code's per-session scratchpad directories, and `other` the
+ * changed files outside every folder and scratchpad. `commands` groups the Bash and PowerShell commands by the program
+ * they start with, and `searches` the Grep, Glob, and WebSearch calls by tool; `commandCount` and `searchCount` are the
+ * distinct commands and searches, `commandRuns` and `searchRuns` every run of them. The totals count every file, prompt,
+ * command, and run even when a list stops at its limit, which `limited` reports.
  */
 export interface SessionSummary {
   folders: SummaryFolder[];
   scratchpads: SummaryScratchpad[];
   other: SummaryFile[];
   read: SummaryRead[];
+  prompts: SummaryPrompt[];
   commands: SummaryCommandGroup[];
   searches: SummaryCommandGroup[];
   changedFiles: number;
   readFiles: number;
+  promptCount: number;
   commandCount: number;
   commandRuns: number;
   searchCount: number;

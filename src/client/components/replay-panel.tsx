@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, flush, For, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, flush, For, Match, Show, Switch, untrack } from "solid-js";
 import type { ContentBlock, EventPage, FindMatches, ReplayEvent, Session, SessionFamily, SessionSummary, SummaryRecord } from "../../shared/types";
 import { stripAnsi } from "../../shared/ansi";
 import { isAbort, request } from "../lib/api";
@@ -16,6 +16,7 @@ import { SubagentDialog } from "./subagent-dialog";
 import { SessionFamilyNavigation } from "./session-family";
 import { ReplayTimeline } from "./replay-timeline";
 import { OverviewFiles } from "./overview-files";
+import { OverviewPrompts } from "./overview-prompts";
 import { OverviewCommands } from "./overview-commands";
 import { isPlainNavigation, recalledReplayPosition, rememberReplayPosition, replayPositionKey, sessionDestination, sessionHref } from "../lib/session-navigation";
 import { decisionLabels } from "../../shared/decisions";
@@ -24,8 +25,9 @@ type ReplayPage = EventPage & { results: Record<string, ContentBlock>; calls: Re
 
 const pageSize = 60;
 const overviewStorageKey = "blackbox:overview-view";
-type OverviewView = "page" | "files" | "commands";
-const overviewViewOf = (value: string | null): OverviewView => value === "files" || value === "commands" ? value : "page";
+type OverviewView = "page" | "prompts" | "files" | "commands";
+const overviewViews: readonly OverviewView[] = ["page", "prompts", "files", "commands"];
+const overviewViewOf = (value: string | null): OverviewView => overviewViews.find(view => view === value) ?? "page";
 
 function savedOverviewView(): OverviewView {
   try { return overviewViewOf(localStorage.getItem(overviewStorageKey)); }
@@ -41,8 +43,8 @@ function summaryRecord(summary: SessionSummary, id: string): SummaryRecord | und
     const change = file.changes.find(entry => entry.id === id);
     if (change) return change;
   }
-  const read = summary.read.find(file => file.id === id);
-  if (read) return read;
+  const found = summary.read.find(file => file.id === id) ?? summary.prompts.find(prompt => prompt.id === id);
+  if (found) return found;
   for (const group of [...summary.commands, ...summary.searches]) for (const command of group.commands) {
     const run = command.runs.find(entry => entry.id === id);
     if (run) return run;
@@ -623,13 +625,13 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     goTo(record.position);
     pendingMatch = seekTarget === record.position ? record.id : "";
   };
-  // On this page needs the summary only for the options' counts, so it fetches once; Files changed and Commands run
-  // follow the filters and live updates, and choosing either refreshes the summary.
+  // On this page needs the summary only for the options' counts, so it fetches once; Prompts, Files changed, and
+  // Commands run follow the filters and live updates, and choosing any of them refreshes the summary.
   createEffect(() => {
-    const whole = overviewView() !== "page";
-    return { id: props.id, shown: railShown(), whole, filters: whole ? filterQuery() : untrack(filterQuery), revision: whole ? props.revision : 0, retry: summaryRetry() };
+    const follows = overviewView() !== "page";
+    return { id: props.id, shown: railShown(), follows, filters: follows ? filterQuery() : untrack(filterQuery), revision: follows ? props.revision : 0, retry: summaryRetry() };
   }, state => {
-    if (!state.shown || (!state.whole && untrack(summaryState) && !untrack(summaryFailed))) return;
+    if (!state.shown || (!state.follows && untrack(summaryState) && !untrack(summaryFailed))) return;
     const controller = new AbortController();
     void request<SessionSummary>(`/api/sessions/${state.id}/summary?${state.filters}`, { signal: controller.signal }).then(data => {
       if (controller.signal.aborted) return;
@@ -650,11 +652,15 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
     const data = summaryState()?.data;
     return data ? `Files changed · ${data.changedFiles.toLocaleString()}` : "Files changed";
   };
+  const promptsOption = () => {
+    const data = summaryState()?.data;
+    return data ? `Prompts · ${data.promptCount.toLocaleString()}` : "Prompts";
+  };
   const commandsOption = () => {
     const data = summaryState()?.data;
     return data ? `Commands run · ${data.commandCount.toLocaleString()}` : "Commands run";
   };
-  const retrySummary = () => { setSummaryFailed(false); setSummaryRetry(value => value + 1); };
+  const summaryProps = () => ({ summary: summaryState()?.data ?? null, failed: summaryFailed(), retry: () => { setSummaryFailed(false); setSummaryRetry(value => value + 1); }, show: showRecord, selected: pinned() });
 
   return <section class={['replay-panel', { 'overview-hidden': !props.overviewVisible }]} aria-label="Session replay">
     <header class="replay-panel-heading">
@@ -750,12 +756,12 @@ export function ReplayPanel(props: { id: string; session: Session | null; revisi
       <p class="eyebrow">AT A GLANCE</p>
       <div class="inspector-stats"><div><strong>{props.session?.messageCount || 0}</strong><span>messages</span></div><div><strong>{props.session?.toolCount || 0}</strong><span>tool calls</span></div><div title={props.session ? errorSummary(props.session) || "No errors" : undefined}><strong>{props.session?.errorCount || 0}</strong><span>errors</span></div></div>
       <div class="overview-section">
-        <select class="overview-view" aria-label="Overview content" value={overviewView()} onChange={event => changeOverviewView(event.currentTarget.value)}><option value="page">On this page</option><option value="files">{filesOption()}</option><option value="commands">{commandsOption()}</option></select>
-        <Show when={overviewView() === "page"} fallback={<Show when={overviewView() === "files"} fallback={<OverviewCommands summary={summaryState()?.data ?? null} failed={summaryFailed()} retry={retrySummary} show={showRecord} selected={pinned()} />}>
-          <OverviewFiles summary={summaryState()?.data ?? null} failed={summaryFailed()} retry={retrySummary} show={showRecord} selected={pinned()} />
-        </Show>}>
-          <nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, decision: !event.error && Boolean(event.decision), user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>
-        </Show>
+        <select class="overview-view" aria-label="Overview content" value={overviewView()} onChange={event => changeOverviewView(event.currentTarget.value)}><option value="page">On this page</option><option value="prompts">{promptsOption()}</option><option value="files">{filesOption()}</option><option value="commands">{commandsOption()}</option></select>
+        <Switch fallback={<nav class="replay-outline" aria-label="Events on this page"><For each={outline()}>{event => <button onClick={() => jumpToEvent(event.id)} title={event.toolNames.join(", ") || event.type}><span class={['outline-dot', { error: event.error, decision: !event.error && Boolean(event.decision), user: event.role === "user" && !isToolResultEvent(event) }]} /><span><small>{outlineLabel(event)}</small>{outlineBody(event)}</span></button>}</For></nav>}>
+          <Match when={overviewView() === "prompts"}><OverviewPrompts {...summaryProps()} /></Match>
+          <Match when={overviewView() === "files"}><OverviewFiles {...summaryProps()} /></Match>
+          <Match when={overviewView() === "commands"}><OverviewCommands {...summaryProps()} /></Match>
+        </Switch>
       </div>
       <p class="inspector-note"><Icon name="shield" size={13} />An original record. Nothing rewritten.</p>
     </aside></div>

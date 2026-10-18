@@ -73,6 +73,8 @@ test("serves a recording's file summary with positions under the replay filters"
   ]);
   const summary = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=all`))).json();
   expect(summary).toMatchObject({ folders: [{ path: "/work/example", added: null, files: [{ path: "/work/example/src/a.ts", display: "src/a.ts", changes: [{ tool: "Edit", error: false, position: 1 }] }] }], changedFiles: 1 });
+  // The prompt counts the failed Bash call recorded after it.
+  expect(summary).toMatchObject({ prompts: [{ kind: "prompt", text: "Hello", position: 0, errors: 1, stopped: 0 }], promptCount: 1 });
   // Shell commands group by program with each run's outcome, and the recording holding no result for a call says so.
   expect(summary).toMatchObject({ commandCount: 2, commandRuns: 2, searchCount: 1, searchRuns: 1 });
   expect(summary.commands).toEqual([{ name: "bun", count: 2, errors: 1, stopped: 0, commands: [
@@ -82,6 +84,7 @@ test("serves a recording's file summary with positions under the replay filters"
   expect(summary.searches).toMatchObject([{ name: "Grep", count: 1, commands: [{ text: "ready", detail: "src · *.ts", runs: [{ position: 4, pending: true }] }] }]);
   const prompts = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=prompts`))).json();
   expect(prompts.folders[0].files[0].changes[0].position).toBeNull();
+  expect(prompts.prompts[0].position).toBe(0);
   expect(prompts.commands[0].commands[0].runs[0].position).toBeNull();
   expect((await handler(new Request(`http://127.0.0.1:12001/api/sessions/${"0".repeat(24)}/summary`))).status).toBe(404);
 });

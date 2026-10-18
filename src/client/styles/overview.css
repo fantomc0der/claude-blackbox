@@ -36,6 +36,16 @@
   .overview-changes button { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; min-height: 28px; padding: 2px 0; text-align: left; font-size: var(--text-meta); color: var(--muted); }
   .overview-changes button:hover, .overview-changes button[aria-current="true"] { color: var(--accent); }
 
+  .overview-prompt-list { list-style: none; margin: 10px 0 0; padding: 0; }
+  .overview-prompt { border-top: 1px solid #252e28; }
+  .overview-prompt button { display: block; width: 100%; padding: 9px 4px; border-radius: 4px; text-align: left; line-height: 1.45; color: var(--text); }
+  .overview-prompt-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; margin-bottom: 2px; font-size: var(--text-meta); color: var(--muted); }
+  .overview-prompt-index { font-variant-numeric: tabular-nums; }
+  .overview-prompt-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: var(--text-support); }
+  .overview-prompt.typed .overview-prompt-text { font-family: var(--mono); }
+  .overview-prompt button:hover .overview-prompt-text, .overview-prompt button[aria-current="true"] .overview-prompt-text { color: var(--accent); }
+  .overview-prompt.selected { background: var(--accent-dim); border-radius: 4px; }
+
   .overview-command .overview-file-open { position: relative; }
   .overview-run-glyph { position: absolute; top: 9px; left: 2px; width: 15px; font: 600 var(--text-meta)/1.4 var(--mono); text-align: center; color: var(--muted); }
   .overview-run-glyph.error { color: var(--danger); }

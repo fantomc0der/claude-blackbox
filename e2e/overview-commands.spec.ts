@@ -47,10 +47,10 @@ test("the overview groups the commands run by program and opens each command's l
   await expect(selected).toContainText("2 pass");
   await expect(selected).toBeInViewport();
   await expect(commands.locator(".overview-file.selected")).toContainText("bun test");
-  await bun.getByRole("list", { name: "Runs of bun test" }).getByRole("button", { name: /· error$/ }).click();
+  await bun.getByRole("list", { name: "Runs of bun test" }).getByRole("button", { name: / error$/ }).click();
   await expect(page.locator(".replay-range")).toContainText("2–61 of 85");
   await expect(selected).toContainText("1 fail");
-  await expect(bun.getByRole("list", { name: "Runs of bun test" }).getByRole("button", { name: /· error$/ })).toHaveAttribute("aria-current", "true");
+  await expect(bun.getByRole("list", { name: "Runs of bun test" }).getByRole("button", { name: / error$/ })).toHaveAttribute("aria-current", "true");
 
   await commands.getByText("Searches · 3").click();
   await expect(commands.getByRole("heading", { level: 3 })).toHaveText(["bun", "git", "rm", "cargo", "Grep", "Glob", "WebSearch"]);
