@@ -127,7 +127,7 @@ export function OverviewCommands(props: { summary: SessionSummary | null; failed
   // A closed category still names the programs in it, the most run first, so the rail answers whether a program was
   // involved without opening anything; the whole list is in the summary's accessible name.
   const Programs = (props: { groups: SummaryCommandGroup[] }) => {
-    const names = () => props.groups.map(group => `${group.name} ${group.count.toLocaleString()}`);
+    const names = () => [...props.groups].sort((left, right) => right.count - left.count).map(group => `${group.name} ${group.count.toLocaleString()}`);
     const hidden = () => Math.max(0, names().length - shownPrograms);
     return <Show when={names().length}>
       <span class="overview-category-programs">

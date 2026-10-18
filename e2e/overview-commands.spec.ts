@@ -161,7 +161,7 @@ test("command categories disclose faithful previews, steps, outcomes, and WebFet
   await expect(files.locator(".overview-category-programs > span:nth-child(2)")).toHaveText("ls 2 · cat 2 · wc 1");
   await expect(files.locator(".overview-category-programs .visually-hidden").last()).toHaveText("· Get-ChildItem 1");
   await expect(language.locator(".overview-category-programs")).toHaveText("Programs: python 3 · dotnet 1");
-  await expect(network.locator(".overview-category-programs")).toHaveText("Programs: curl 1 · WebFetch 2");
+  await expect(network.locator(".overview-category-programs")).toHaveText("Programs: WebFetch 2 · curl 1");
   await expect(other.locator(".overview-category-programs")).toHaveCount(0);
   await expect(searches.locator(".overview-category-programs")).toHaveText("Programs: Grep 2 · Glob 1");
   for (const disclosure of [source, files, language, network, other, searches]) await expect(disclosure).not.toHaveAttribute("open", "");

@@ -187,9 +187,10 @@ export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "com
     if (!entry) {
       const { program, head, lines } = search || fetch ? { program: call.tool, head: cap(collapse(text), lineLimit), lines: 1 } : commandParts(text, call.tool);
       entries.set(key, entry = { command: { key: createHash("sha256").update(key).digest("hex"), text: cap(text, textLimit), head, lines, detail: cap(call.detail, lineLimit), count: 0, errors: 0, stopped: 0, runs: [] }, text, tool: call.tool, program, first: order, last: order });
-    } else if (!search && !fetch && entry.program !== commandParts(text, call.tool).program) {
-      entry.program = "";
-      entry.tool = "";
+    } else if (!search && !fetch) {
+      // A text the shells read differently has no program, and one both shells ran has no steps either way.
+      if (entry.program !== commandParts(text, call.tool).program) entry.program = "";
+      if (entry.tool.toLowerCase() !== call.tool.toLowerCase()) entry.tool = "";
     }
     totals[search ? "searches" : fetch ? "fetches" : "commands"]++;
     tally(entry.command, call);

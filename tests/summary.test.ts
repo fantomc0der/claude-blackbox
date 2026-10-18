@@ -504,6 +504,11 @@ describe("recording summary commands", () => {
     expect(built.commands[0].commands.map(command => command.key)).toEqual([`${other[0].key}:git`, `${other[4].key}:git`]);
     expect(built.commands[0].commands[1].runs).toEqual(other[4].runs);
     expect(built).toMatchObject({ commandCount: 7, commandRuns: 7, limited: false });
+    // A text both shells ran has no steps even when both read it as having no single program.
+    const both = buildCommands([run("b1", "Bash", "cd app && git status"), run("b2", "PowerShell", "cd app && git status")]);
+    expect(both.commands).toHaveLength(1);
+    expect(both.commands[0]).toMatchObject({ name: otherProgram, count: 2 });
+    expect(both.commands[0].commands[0].also).toBeUndefined();
     // A step cannot open a group past the group limit, and the command stays listed under Other without naming it.
     const many = buildCommands([...Array.from({ length: 30 }, (_, index) => run(`p${index}`, "Bash", `tool${index} run`)), run("x", "Bash", "cd app && git status")]);
     expect(many.commands).toHaveLength(31);
