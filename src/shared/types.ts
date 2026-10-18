@@ -323,6 +323,29 @@ export interface SummaryFolder { path: string; working: SummaryRecord | null; ad
 export interface SummaryScratchpad { path: string; files: SummaryFile[] }
 
 /**
+ * One run of a shell command or one search, as `SummaryChange` is one change to a file. `error` and `decision` read
+ * its result the same way; `background` means the command was started in the background, so its result only says it
+ * started, and `pending` that the recording holds no result for it.
+ */
+export interface SummaryRun extends SummaryRecord { tool: string; error: boolean; decision: Decision | null; background: boolean; pending: boolean }
+
+/**
+ * A distinct command or search, with its latest runs in recording order. `text` is the recorded command, pattern, or
+ * query, trimmed and capped; `head` is its first line from the program on, and `lead` the `cd` steps and environment
+ * settings before the program, each on one line, and `lines` how many non-empty lines the command has from the program
+ * on; `detail` is the path
+ * and glob a search was scoped to, or "". `count`,
+ * `errors`, and `stopped` cover every run, even when `runs` keeps only the last of them.
+ */
+export interface SummaryCommand { text: string; head: string; lead: string; lines: number; detail: string; count: number; errors: number; stopped: number; runs: SummaryRun[] }
+
+/**
+ * Commands that start with one program, named by `name`, or the searches one tool made, named by the tool. The counts
+ * cover every run of every command in the group.
+ */
+export interface SummaryCommandGroup { name: string; count: number; errors: number; stopped: number; commands: SummaryCommand[] }
+
+/**
  * One thing the user typed, in recording order: `prompt` for prose, `command` for a slash command shown as `/name args`,
  * `shell` for a `!` shell command shown as `! command`. `text` is its first 180 characters on one line. `errors` and
  * `stopped` count the failures and the decided, interrupted, or cancelled tools recorded between it and the next prompt.
@@ -330,10 +353,12 @@ export interface SummaryScratchpad { path: string; files: SummaryFile[] }
 export interface SummaryPrompt extends SummaryRecord { kind: "prompt" | "command" | "shell"; text: string; errors: number; stopped: number }
 
 /**
- * The files a recording changed and read, grouped under the folders it worked in, and the prompts it holds. `scratchpads`
- * holds the changed files inside Claude Code's per-session scratchpad directories, and `other` the changed files outside
- * every folder and scratchpad. The totals count every file and prompt even when a list stops at its limit, which
- * `limited` reports.
+ * The files a recording changed and read, grouped under the folders it worked in, the prompts it holds, and the commands
+ * it ran. `scratchpads` holds the changed files inside Claude Code's per-session scratchpad directories, and `other` the
+ * changed files outside every folder and scratchpad. `commands` groups the Bash and PowerShell commands by the program
+ * they start with, and `searches` the Grep, Glob, and WebSearch calls by tool; `commandCount` and `searchCount` are the
+ * distinct commands and searches, `commandRuns` and `searchRuns` every run of them. The totals count every file, prompt,
+ * command, and run even when a list stops at its limit, which `limited` reports.
  */
 export interface SessionSummary {
   folders: SummaryFolder[];
@@ -341,8 +366,14 @@ export interface SessionSummary {
   other: SummaryFile[];
   read: SummaryRead[];
   prompts: SummaryPrompt[];
+  commands: SummaryCommandGroup[];
+  searches: SummaryCommandGroup[];
   changedFiles: number;
   readFiles: number;
   promptCount: number;
+  commandCount: number;
+  commandRuns: number;
+  searchCount: number;
+  searchRuns: number;
   limited: boolean;
 }

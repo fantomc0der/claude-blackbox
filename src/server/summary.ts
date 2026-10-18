@@ -2,15 +2,25 @@ import { posix, win32 } from "node:path";
 import { stripAnsi } from "../shared/ansi";
 import { object, promptLine, string } from "./normalize";
 import type { Decision } from "../shared/decisions";
-import type { SessionSummary, SummaryChange, SummaryFile, SummaryFolder, SummaryPrompt, SummaryRead, SummaryRecord, SummaryScratchpad } from "../shared/types";
+import type { SessionSummary, SummaryChange, SummaryCommand, SummaryCommandGroup, SummaryFile, SummaryFolder, SummaryPrompt, SummaryRead, SummaryRecord, SummaryRun, SummaryScratchpad } from "../shared/types";
 
 /** Tools whose calls change the file their input names. Read is collected separately. */
 export const changeTools = ["edit", "write", "multiedit", "notebookedit"] as const;
+/** Tools whose calls run a shell command, and the search tools the Commands run view lists beside them. */
+export const commandTools = ["bash", "powershell"] as const;
+export const searchTools = ["grep", "glob", "websearch"] as const;
 
 const fileLimit = 500;
 const changeLimit = 100;
 const folderLimit = 50;
 const promptLimit = 500;
+const commandLimit = 500;
+const runLimit = 100;
+const groupLimit = 30;
+const textLimit = 1000;
+const lineLimit = 200;
+/** The group for commands whose program cannot be read, and for the programs past `groupLimit`. */
+export const otherProgram = "Other";
 
 /** A folder the recording started in, moved to, or added with `/add-dir`, in recording order. */
 export interface SummaryRoot { path: string; added: boolean; record: SummaryRecord }
@@ -27,6 +37,41 @@ export interface SummaryOutcome { sequence: number; error: boolean; stopped: boo
  * `resultDecision()` reads its result.
  */
 export interface SummaryCall { tool: string; path: string; cwd: string; error: boolean; decision: Decision | null; record: SummaryRecord }
+
+/**
+ * One Bash, PowerShell, Grep, Glob, or WebSearch call. `text` is the command, pattern, or query as recorded, `detail`
+ * the path and glob a search was scoped to, `background` whether a command was started in the background, and
+ * `pending` whether the recording holds no result for it yet. `error` and `decision` read its result as a
+ * `SummaryCall`'s do.
+ */
+export interface SummaryRunCall { tool: string; text: string; detail: string; background: boolean; error: boolean; decision: Decision | null; pending: boolean; record: SummaryRecord }
+
+const collapse = (value: string) => value.replace(/\s+/g, " ").trim();
+const cap = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+
+/**
+ * The program a shell command starts with, the lead before it, the head the row shows, and the command's line count.
+ * The lead is the `cd` steps, environment settings, blank lines, and comment lines before the program, collapsed to one
+ * line; the head is the first line from the program on, and `lines` counts the non-empty lines from there. The program
+ * is the first word's file name without its directory, quotes, a PowerShell call operator, or a Windows executable
+ * extension, so `/usr/bin/git`, `& "C:\Tools\git.exe"`, and `git` group together. A wrapper such as `sudo`, `npx`, or
+ * `time` is the program, since it is what ran first. `program` is "" when no word can be read.
+ */
+export function commandParts(command: string): { program: string; lead: string; head: string; lines: number } {
+  let rest = command;
+  const skip = (pattern: RegExp) => {
+    const match = pattern.exec(rest);
+    if (!match) return false;
+    rest = rest.slice(match[0].length);
+    return true;
+  };
+  while (skip(/^\s+/) || skip(/^#[^\n]*/) || skip(/^cd(?:\s+(?:"[^"\n]*"|'[^'\n]*'|[^\s;&|]+))?\s*(?:&&|;|\n)/) || skip(/^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s;&|]*)(?=\s)/)) {}
+  const word = /^(?:[&.]\s+)?(?:"([^"\n]*)"|'([^'\n]*)'|([^\s"']+))/.exec(rest);
+  const token = (word?.[1] ?? word?.[2] ?? word?.[3] ?? "").replace(/[;&|)]+$/, "");
+  const program = (token.split(/[\\/]/).at(-1) || "").replace(/\.(?:exe|cmd|bat)$/i, "");
+  const lines = rest.split("\n").map(line => line.trim()).filter(Boolean);
+  return { program, lead: cap(collapse(command.slice(0, command.length - rest.length)), lineLimit), head: cap(collapse(lines[0] ?? ""), lineLimit), lines: lines.length };
+}
 
 // Recorded paths come from whichever machine made the recording, not the one serving it, so the style follows the
 // path itself: a drive letter, a UNC prefix, or a backslash means Windows.
@@ -130,6 +175,71 @@ function byPath(left: string, right: string): number {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }) || (left < right ? -1 : left > right ? 1 : 0);
 }
 
+type Tally = { count: number; errors: number; stopped: number };
+const tally = (entry: Tally, run: Pick<SummaryRun, "error" | "decision">) => {
+  entry.count++;
+  if (run.error) entry.errors++;
+  if (run.decision) entry.stopped++;
+};
+
+/**
+ * Deduplicates a recording's shell commands and searches and groups the commands by the program they start with and the
+ * searches by tool. A command is the same command whenever its recorded text is, whichever shell ran it; a search is
+ * the same when its tool, text, and scope are. Each command keeps its latest runs, so the last run is always listed,
+ * and the groups of programs run most sit first, with the catch-all group last.
+ */
+export function buildCommands(runs: SummaryRunCall[]): Pick<SessionSummary, "commands" | "searches" | "commandCount" | "commandRuns" | "searchCount" | "searchRuns" | "limited"> {
+  type Entry = { command: SummaryCommand; program: string; first: number; last: number };
+  const commands = new Map<string, Entry>();
+  const searches = new Map<string, Entry>();
+  let limited = false;
+  const totals = { commands: 0, searches: 0 };
+  runs.forEach((call, order) => {
+    const search = (searchTools as readonly string[]).includes(call.tool.toLowerCase());
+    const text = stripAnsi(call.text).replace(/\r\n?/g, "\n").trim();
+    if (!text) return;
+    const key = search ? `${call.tool.toLowerCase()}\n${call.detail}\n${text}` : text;
+    const entries = search ? searches : commands;
+    let entry = entries.get(key);
+    if (!entry) {
+      const { program, lead, head, lines } = search ? { program: call.tool, lead: "", head: cap(collapse(text), lineLimit), lines: 1 } : commandParts(text);
+      entries.set(key, entry = { command: { text: cap(text, textLimit), head, lead, lines, detail: call.detail, count: 0, errors: 0, stopped: 0, runs: [] }, program, first: order, last: order });
+    }
+    totals[search ? "searches" : "commands"]++;
+    tally(entry.command, call);
+    entry.last = order;
+    if (entry.command.runs.length >= runLimit) { entry.command.runs.shift(); limited = true; }
+    entry.command.runs.push({ ...call.record, tool: call.tool, error: call.error, decision: call.decision, background: call.background, pending: call.pending });
+  });
+
+  // The groups of the programs run most sit first, ties in the order the programs were first run; the catch-all group
+  // is last. It is kept apart from the named groups rather than under a reserved name, so a program that happens to be
+  // called "other" keeps a group of its own. Within a group the command run latest sits first.
+  const group = (entries: Map<string, Entry>) => {
+    type Group = { group: SummaryCommandGroup; first: number };
+    const groups = new Map<string, Group>();
+    let other: Group | null = null;
+    const list = [...entries.values()].sort((left, right) => right.last - left.last);
+    if (list.length > commandLimit) limited = true;
+    for (const entry of list.slice(0, commandLimit)) {
+      const key = entry.program.toLowerCase();
+      let found = groups.get(key);
+      if (!found && key && groups.size < groupLimit) groups.set(key, found = { group: { name: entry.program, count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first });
+      if (!found) {
+        if (key) limited = true;
+        found = other ??= { group: { name: otherProgram, count: 0, errors: 0, stopped: 0, commands: [] }, first: entry.first };
+      }
+      found.group.count += entry.command.count; found.group.errors += entry.command.errors; found.group.stopped += entry.command.stopped;
+      found.first = Math.min(found.first, entry.first);
+      found.group.commands.push(entry.command);
+    }
+    const sorted = [...groups.values()].sort((left, right) => right.group.count - left.group.count || left.first - right.first);
+    if (other) sorted.push(other);
+    return sorted.map(entry => entry.group);
+  };
+  return { commands: group(commands), searches: group(searches), commandCount: commands.size, commandRuns: totals.commands, searchCount: searches.size, searchRuns: totals.searches, limited };
+}
+
 /**
  * The prompts among a recording's user messages, in order, each counting the outcomes recorded after it and before the
  * next prompt. Outcomes ahead of the first prompt count under none.
@@ -158,11 +268,12 @@ export function buildPrompts(messages: SummaryMessage[], outcomes: SummaryOutcom
 }
 
 /**
- * Groups a recording's changed and read files under the folders it worked in, and lists its prompts. Each file joins the
- * deepest folder that contains it; files outside every folder are listed under their scratchpad directory when they have
- * one, otherwise on their own. A file that was ever changed is not listed as read.
+ * Groups a recording's changed and read files under the folders it worked in, lists its prompts, and groups its commands
+ * and searches by program and tool as `buildCommands()` does. Each file joins the deepest folder that contains it; files
+ * outside every folder are listed under their scratchpad directory when they have one, otherwise on their own. A file
+ * that was ever changed is not listed as read.
  */
-export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[], messages: SummaryMessage[] = [], outcomes: SummaryOutcome[] = []): SessionSummary {
+export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[], messages: SummaryMessage[] = [], outcomes: SummaryOutcome[] = [], runs: SummaryRunCall[] = []): SessionSummary {
   const typed = buildPrompts(messages, outcomes);
   let limited = typed.limited;
   const folders = new Map<string, SummaryFolder>();
@@ -241,7 +352,8 @@ export function buildSummary(roots: SummaryRoot[], calls: SummaryCall[], message
     return { ...file.record, path: file.path, display, folder: home?.folder.path ?? root ?? "", reads: file.reads };
   }).sort((left, right) => rank(left) - rank(right) || byPath(left.display, right.display));
 
-  return { folders: list, scratchpads: [...scratchpads.values()], other, read: reads, prompts: typed.prompts, changedFiles: changed.size, readFiles: read.size, promptCount: typed.count, limited };
+  const built = buildCommands(runs);
+  return { folders: list, scratchpads: [...scratchpads.values()], other, read: reads, prompts: typed.prompts, ...built, changedFiles: changed.size, readFiles: read.size, promptCount: typed.count, limited: limited || built.limited };
 }
 
 /** Every record a summary points at, for looking up their positions under the replay filters. */
@@ -255,6 +367,7 @@ export function summaryRecordIds(summary: SessionSummary): string[] {
   for (const file of files) for (const change of file.changes) ids.add(change.id);
   for (const file of summary.read) ids.add(file.id);
   for (const prompt of summary.prompts) ids.add(prompt.id);
+  for (const group of [...summary.commands, ...summary.searches]) for (const command of group.commands) for (const run of command.runs) ids.add(run.id);
   return [...ids];
 }
 
@@ -262,6 +375,7 @@ export function summaryRecordIds(summary: SessionSummary): string[] {
 export function placeSummary(summary: SessionSummary, positions: Map<string, number>): SessionSummary {
   const at = <T extends SummaryRecord>(record: T): T => ({ ...record, position: positions.get(record.id) ?? null });
   const file = (entry: SummaryFile): SummaryFile => ({ ...entry, changes: entry.changes.map(at) });
+  const group = (entry: SummaryCommandGroup): SummaryCommandGroup => ({ ...entry, commands: entry.commands.map(command => ({ ...command, runs: command.runs.map(at) })) });
   return {
     ...summary,
     folders: summary.folders.map(folder => ({ ...folder, working: folder.working && at(folder.working), added: folder.added && at(folder.added), files: folder.files.map(file) })),
@@ -269,5 +383,7 @@ export function placeSummary(summary: SessionSummary, positions: Map<string, num
     other: summary.other.map(file),
     read: summary.read.map(at),
     prompts: summary.prompts.map(at),
+    commands: summary.commands.map(group),
+    searches: summary.searches.map(group),
   };
 }

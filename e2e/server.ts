@@ -375,6 +375,45 @@ await writeFile(join(folder, "overview-prompts.jsonl"), [
   promptsText("Ship it", "user", 24 * 60 * 60_000),
   promptsText("Shipped.", "assistant", 24 * 60 * 60_000),
 ].map(record => JSON.stringify(record)).join("\n") + "\n");
+// The overview's Commands run view: one command run twice with different outcomes, the same command from Bash and
+// PowerShell, a program named by its path, a denied command, a background command, one without a result, and the
+// Grep, Glob, and WebSearch calls that sit under Searches, with enough prose between them that the later runs sit on
+// the second page.
+const commandStart = Date.parse("2026-01-05T15:00:00Z");
+let commandSequence = 0;
+const commandRecord = (record: Record<string, unknown>) => {
+  const sequence = commandSequence++;
+  return { uuid: `commands-${sequence}`, cwd: "/synthetic/overview-app", timestamp: new Date(commandStart + sequence * 60_000).toISOString(), ...record };
+};
+const commandText = (text: string, type = "user") => commandRecord({ type, message: { role: type, content: text, model: "claude-sonnet-4-5" } });
+const commandCall = (id: string, name: string, input: Record<string, unknown>) => commandRecord({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name, input }], model: "claude-sonnet-4-5" } });
+const commandResult = (id: string, content: string, is_error = false, extra: Record<string, unknown> = {}) => commandRecord({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error }] }, ...extra });
+await writeFile(join(folder, "overview-commands.jsonl"), [
+  commandText("Overview commands verification"),
+  commandCall("commands-test-1", "Bash", { command: "cd /synthetic/overview-app && bun test", description: "Run the tests" }),
+  commandResult("commands-test-1", "<tool_use_error>Exit code 1\n1 fail</tool_use_error>", true),
+  commandCall("commands-grep-1", "Grep", { pattern: "backoffCeiling", path: "src", glob: "*.ts" }),
+  commandResult("commands-grep-1", "src/queue.ts:12: backoffCeiling"),
+  commandCall("commands-status-1", "Bash", { command: "git status --short" }),
+  commandResult("commands-status-1", " M src/queue.ts"),
+  commandCall("commands-rm-1", "Bash", { command: "rm -rf node_modules" }),
+  commandResult("commands-rm-1", "\nThe user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).", true, { toolDenialKind: "user-rejected" }),
+  commandCall("commands-glob-1", "Glob", { pattern: "**/*.test.ts" }),
+  commandResult("commands-glob-1", "tests/queue.test.ts"),
+  ...Array.from({ length: 62 }, (_, index) => commandText(prose(`Command filler ${index + 1}`), index % 2 ? "user" : "assistant")),
+  commandCall("commands-test-2", "Bash", { command: "cd /synthetic/overview-app && bun test", description: "Run the tests again" }),
+  commandResult("commands-test-2", "2 pass\n0 fail"),
+  commandCall("commands-status-2", "PowerShell", { command: "git status --short" }),
+  commandResult("commands-status-2", ""),
+  commandCall("commands-log-1", "Bash", { command: "/usr/bin/git log --oneline -3" }),
+  commandResult("commands-log-1", "abc1234 Fix the retry budget"),
+  commandCall("commands-search-1", "WebSearch", { query: "bun test timeout flag" }),
+  commandResult("commands-search-1", "Use --timeout."),
+  commandCall("commands-dev-1", "Bash", { command: "bun run dev --port 12005", run_in_background: true }),
+  commandResult("commands-dev-1", "Command running in background with ID: 1"),
+  commandCall("commands-cargo-1", "Bash", { command: "cargo test --locked" }),
+  commandText("The tests pass now.", "assistant"),
+].map(record => JSON.stringify(record)).join("\n") + "\n");
 // Tools the user, a hook, or an interruption stopped, which Claude Code records as `is_error` results with its own
 // messages, the interruption marker it writes as a user record after the interrupted result, plus one genuine failure:
 // the Errors tab labels each, and only the failure counts as an error. The

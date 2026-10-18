@@ -66,13 +66,26 @@ test("serves a recording's file summary with positions under the replay filters"
   const { handler, id } = await setup([
     { type: "user", cwd: "/work/example", message: { content: "Hello" } },
     { type: "assistant", cwd: "/work/example", message: { role: "assistant", content: [{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "src/a.ts", old_string: "a", new_string: "b" } }] } },
+    { type: "assistant", cwd: "/work/example", message: { role: "assistant", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "cd /work/example && bun test", description: "Run the tests" } }] } },
+    { type: "user", cwd: "/work/example", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "bash-1", content: "<tool_use_error>Exit code 1</tool_use_error>", is_error: true }] } },
+    { type: "assistant", cwd: "/work/example", message: { role: "assistant", content: [{ type: "tool_use", id: "grep-1", name: "Grep", input: { pattern: "ready", path: "src", glob: "*.ts" } }] } },
+    { type: "assistant", cwd: "/work/example", message: { role: "assistant", content: [{ type: "tool_use", id: "bash-2", name: "Bash", input: { command: "bun run dev", run_in_background: true } }] } },
   ]);
   const summary = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=all`))).json();
   expect(summary).toMatchObject({ folders: [{ path: "/work/example", added: null, files: [{ path: "/work/example/src/a.ts", display: "src/a.ts", changes: [{ tool: "Edit", error: false, position: 1 }] }] }], changedFiles: 1 });
-  expect(summary).toMatchObject({ prompts: [{ kind: "prompt", text: "Hello", position: 0, errors: 0, stopped: 0 }], promptCount: 1 });
+  // The prompt counts the failed Bash call recorded after it.
+  expect(summary).toMatchObject({ prompts: [{ kind: "prompt", text: "Hello", position: 0, errors: 1, stopped: 0 }], promptCount: 1 });
+  // Shell commands group by program with each run's outcome, and the recording holding no result for a call says so.
+  expect(summary).toMatchObject({ commandCount: 2, commandRuns: 2, searchCount: 1, searchRuns: 1 });
+  expect(summary.commands).toEqual([{ name: "bun", count: 2, errors: 1, stopped: 0, commands: [
+    { text: "bun run dev", head: "bun run dev", lead: "", lines: 1, detail: "", count: 1, errors: 0, stopped: 0, runs: [{ id: expect.any(String), position: 5, timestamp: "", tool: "Bash", error: false, decision: null, background: true, pending: true }] },
+    { text: "cd /work/example && bun test", head: "bun test", lead: "cd /work/example &&", lines: 1, detail: "", count: 1, errors: 1, stopped: 0, runs: [{ id: expect.any(String), position: 2, timestamp: "", tool: "Bash", error: true, decision: null, background: false, pending: false }] },
+  ] }]);
+  expect(summary.searches).toMatchObject([{ name: "Grep", count: 1, commands: [{ text: "ready", detail: "src · *.ts", runs: [{ position: 4, pending: true }] }] }]);
   const prompts = await (await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/summary?kind=prompts`))).json();
   expect(prompts.folders[0].files[0].changes[0].position).toBeNull();
   expect(prompts.prompts[0].position).toBe(0);
+  expect(prompts.commands[0].commands[0].runs[0].position).toBeNull();
   expect((await handler(new Request(`http://127.0.0.1:12001/api/sessions/${"0".repeat(24)}/summary`))).status).toBe(404);
 });
 
