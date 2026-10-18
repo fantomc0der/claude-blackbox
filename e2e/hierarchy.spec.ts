@@ -14,7 +14,8 @@ test("recordings lead the library on short screens in both themes", async ({ pag
       const first = page.locator(".session-row").first();
       await expect(first).toBeVisible();
       const bounds = await first.boundingBox();
-      expect(bounds!.y).toBeLessThan(width === 320 ? 400 : short ? 330 : height === 900 ? 420 : 350);
+      // Phones stack the two-line list header, the caption and then the Usage bar, above the first row.
+      expect(bounds!.y).toBeLessThan(width === 320 ? 400 : short ? 330 : height === 900 ? 420 : 365);
       expect(await page.locator(".recordings-scroll").evaluate(element => element.clientHeight)).toBeGreaterThan(200);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await expect(page.getByText("Every prompt, every breakthrough")).toHaveCount(0);

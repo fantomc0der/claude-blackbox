@@ -223,6 +223,11 @@ test("the expanded breakdown scrolls with the recordings and leaves the list its
       await expect(summary).toHaveAttribute("aria-expanded", "true");
       await expect(summary).toHaveAttribute("aria-controls", "usage-breakdown");
       await expect(page.locator(".recordings-scroll > #usage-breakdown")).toBeVisible();
+      // The bar is the list header's last line, so the breakdown opens directly beneath its toggle.
+      const caption = (await page.locator(".list-caption").boundingBox())!;
+      const bar = (await summary.boundingBox())!;
+      expect(bar.y).toBeGreaterThanOrEqual(caption.y + caption.height - 1);
+      expect((await breakdown.boundingBox())!.y - (bar.y + bar.height)).toBeLessThanOrEqual(20);
       // The breakdown is the list's first item, so opening it returns the list to the top.
       expect(await list.evaluate(element => element.scrollTop)).toBe(0);
       const opened = await list.evaluate(element => ({ height: element.clientHeight, content: element.scrollHeight }));
