@@ -108,6 +108,11 @@ export class Recorder {
   readonly progressListeners = new Set<(progress: IndexProgress) => void>();
   indexing: IndexProgress = { phase: "idle", checked: 0, total: 0 };
   indexedAt = "";
+  /**
+   * How many changes `emit()` has announced. Change notices and the responses to mutations carry it, so a client can tell
+   * that a refresh it began after either already covers a notice, whichever of the two connections delivers first.
+   */
+  changes = 0;
   /** The directories the last scan could not read and the recordings it could not index, which the catalog reports. */
   scanWarnings = 0;
   private scanning: Promise<string[]> | null = null;
@@ -568,6 +573,7 @@ export class Recorder {
 
   /** Tells live clients that the recordings in `ids` changed, or with none that the library as a whole did. */
   emit(ids: string[] = []): void {
+    this.changes++;
     for (const listener of this.listeners) listener(ids);
   }
 }

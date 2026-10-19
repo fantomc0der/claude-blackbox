@@ -2,13 +2,14 @@ import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./harness";
 import type { IndexProgress } from "../src/shared/types";
+import { DEMO_HERO_TITLE } from "../tests/fixtures";
 
 async function mockProgress(page: Page) {
   await page.addInitScript(() => {
     Object.defineProperty(window, "EventSource", { value: class extends EventTarget {
       onopen: ((event: Event) => void) | null = null;
       listener = (event: Event) => this.dispatchEvent(new MessageEvent("indexing", { data: (event as CustomEvent).detail }));
-      changeListener = () => this.dispatchEvent(new MessageEvent("change", { data: JSON.stringify({ version: 1, ids: [] }) }));
+      changeListener = (event: Event) => this.dispatchEvent(new MessageEvent("change", { data: JSON.stringify({ version: 1, ids: [], change: (event as CustomEvent).detail }) }));
       constructor() {
         super();
         window.addEventListener("fixture-indexing", this.listener);
@@ -24,8 +25,9 @@ async function progress(page: Page, value: IndexProgress) {
   await page.evaluate(state => window.dispatchEvent(new CustomEvent("fixture-indexing", { detail: JSON.stringify(state) })), value);
 }
 
-async function change(page: Page) {
-  await page.evaluate(() => window.dispatchEvent(new Event("fixture-change")));
+// A change notice, with the number of the last change the server had announced when it sent it.
+async function change(page: Page, number: number) {
+  await page.evaluate(value => window.dispatchEvent(new CustomEvent("fixture-change", { detail: value })), number);
 }
 
 test("an index upgrade shows only its share, then hands over to the file scan", async ({ page }) => {
@@ -77,15 +79,46 @@ test("change notices refresh the library at once, then rest three times as long 
     await route.continue();
   });
   const settled = page.waitForResponse("**/api/catalog");
-  await change(page);
+  await change(page, 1);
   await settled;
   expect(catalogs).toHaveLength(1);
   // That refresh took at least 500 ms, so the next notice waits at least 1.5 s after it settled.
-  await change(page);
+  await change(page, 2);
   await page.waitForTimeout(1000);
   expect(catalogs).toHaveLength(1);
   await expect.poll(() => catalogs.length, { timeout: 5000 }).toBe(2);
   expect(catalogs[1] - catalogs[0]).toBeGreaterThanOrEqual(1500);
+});
+
+test("the notice for the reader's own change refreshes nothing more when it arrives after the change's response", async ({ page }) => {
+  await mockProgress(page);
+  await page.goto("/?q=effortless");
+  await page.getByRole("button", { name: new RegExp(DEMO_HERO_TITLE) }).click();
+  const bookmark = page.getByRole("button", { name: "Bookmark this recording", exact: true });
+  await expect(page.locator(".usage-panel")).toHaveAttribute("aria-busy", "false");
+  const restore = await bookmark.getAttribute("aria-pressed") === "true";
+  const catalogs: string[] = [];
+  page.on("request", request => { if (request.url().endsWith("/api/catalog")) catalogs.push(request.url()); });
+  try {
+    // The server sends the notice before it answers, but over another connection, so the notice can arrive second.
+    const saved = page.waitForResponse(response => response.url().includes("/bookmark") && response.request().method() === "PUT");
+    const refreshed = page.waitForResponse("**/api/catalog");
+    await bookmark.click();
+    const own = Number((await saved).headers()["x-blackbox-change"]);
+    expect(own).toBeGreaterThan(0);
+    await refreshed;
+    expect(catalogs).toHaveLength(1);
+    await change(page, own);
+    await page.waitForTimeout(1000);
+    expect(catalogs).toHaveLength(1);
+    // A change announced after it still refreshes the library.
+    await change(page, own + 1);
+    await expect.poll(() => catalogs.length, { timeout: 5000 }).toBe(2);
+  } finally {
+    await page.evaluate(async ({ id, bookmarked }) => {
+      await fetch(`/api/sessions/${id}/bookmark`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookmarked }) });
+    }, { id: new URL(page.url()).searchParams.get("session")!, bookmarked: restore });
+  }
 });
 
 test("sidebar shows meaningful indexing progress without refreshing usage or shifting its frame", async ({ page }) => {

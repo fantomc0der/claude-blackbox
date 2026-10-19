@@ -27,7 +27,7 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
   const webDir = resolve(options.webDir || join(import.meta.dir, "../../dist"));
   let revision = 0;
 
-  return async request => {
+  const respond = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (!localHostname(url.hostname)) return json({ error: "Only loopback hosts are allowed." }, 403);
     const origin = request.headers.get("origin");
@@ -62,11 +62,12 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
             const encoder = new TextEncoder();
             let closed = false;
             let pendingChange: string[] | null = null;
+            let pendingNumber = 0;
             let pendingProgress: IndexProgress | null = null;
             flush = () => {
               if (closed || (controller.desiredSize ?? 1) <= 0) return;
               if (pendingChange) {
-                controller.enqueue(encoder.encode(`event: change\nid: ${++revision}\ndata: ${JSON.stringify({ version: 1, ids: pendingChange })}\n\n`));
+                controller.enqueue(encoder.encode(`event: change\nid: ${++revision}\ndata: ${JSON.stringify({ version: 1, ids: pendingChange, change: pendingNumber })}\n\n`));
                 pendingChange = null;
               }
               if (pendingProgress && (controller.desiredSize ?? 1) > 0) {
@@ -76,6 +77,7 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
             };
             const send = (ids: string[]) => {
               pendingChange = pendingChange === null ? ids : [];
+              pendingNumber = recorder.changes;
               flush();
             };
             const progress = (state: IndexProgress) => {
@@ -158,5 +160,14 @@ export function createHandler(options: HttpOptions): (request: Request) => Promi
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "Unable to read the recording." }, 400);
     }
+  };
+
+  // A mutation's response names the last change announced before it was answered, its own among them, so the client
+  // knows that its refresh after the response covers that change's notice even when the notice arrives later. A
+  // rejected request changed nothing, so its response names nothing.
+  return async request => {
+    const response = await respond(request);
+    if (response.ok && request.method !== "GET" && request.method !== "HEAD") response.headers.set("X-Blackbox-Change", String(recorder.changes));
+    return response;
   };
 }

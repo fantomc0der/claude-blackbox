@@ -23,7 +23,9 @@ test("blocks DNS rebinding, foreign origins and unsafe mutations", async () => {
   const { handler, id } = await setup();
   expect((await handler(new Request("http://evil.example/api/catalog"))).status).toBe(403);
   expect((await handler(new Request("http://127.0.0.1:12001/api/catalog", { headers: { origin: "https://evil.example" } }))).status).toBe(403);
-  expect((await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/bookmark`, { method: "PUT", body: '{"bookmarked":true}' }))).status).toBe(403);
+  const rejected = await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/bookmark`, { method: "PUT", body: '{"bookmarked":true}' }));
+  expect(rejected.status).toBe(403);
+  expect(rejected.headers.get("X-Blackbox-Change")).toBeNull();
 });
 
 test("serves paginated records, local bookmarks and faithful export", async () => {
@@ -114,10 +116,30 @@ test("SSE sends a fresh invalidation on reconnect and releases listeners", async
   expect(recorder.progressListeners.size).toBe(0);
 });
 
+test("a mutation's response names the change its own notice carries, whichever arrives first", async () => {
+  const { handler, recorder, id } = await setup();
+  const response = await handler(new Request("http://127.0.0.1:12001/api/live"));
+  const reader = response.body!.getReader();
+  const payload = async () => JSON.parse(new TextDecoder().decode((await reader.read()).value).split("data: ")[1]);
+  try {
+    expect(await payload()).toEqual({ version: 1, ids: [], change: recorder.changes });
+    await reader.read();
+    const saved = await handler(new Request(`http://127.0.0.1:12001/api/sessions/${id}/bookmark`, {
+      method: "PUT", headers: { origin: "http://127.0.0.1:12001", "content-type": "application/json" }, body: '{"bookmarked":true}',
+    }));
+    const own = Number(saved.headers.get("X-Blackbox-Change"));
+    expect(own).toBe(recorder.changes);
+    expect(await payload()).toEqual({ version: 1, ids: [id], change: own });
+    // A read changes nothing, so it names no change.
+    expect((await handler(new Request("http://127.0.0.1:12001/api/catalog"))).headers.get("X-Blackbox-Change")).toBeNull();
+  } finally { await reader.cancel(); }
+});
+
 test("SSE keeps the latest progress and invalidation for a slow reader", async () => {
   const { handler, recorder } = await setup();
   const response = await handler(new Request("http://127.0.0.1:12001/api/live"));
   const reader = response.body!.getReader();
+  const connected = recorder.changes;
   for (let checked = 0; checked <= 100; checked++) {
     for (const listener of recorder.progressListeners) listener({ phase: checked === 100 ? "idle" : "indexing", checked, total: 100 });
     recorder.emit([`changed-${checked}`]);
@@ -127,9 +149,10 @@ test("SSE keeps the latest progress and invalidation for a slow reader", async (
   expect(messages.join("")).toContain('"phase":"idle","checked":100,"total":100');
   const changes = messages.filter(message => message.includes("event: change"));
   expect(changes).toHaveLength(2);
+  // The broadened notice carries the number of the last change it stands for.
   expect(changes.map(message => JSON.parse(message.split("data: ")[1]))).toEqual([
-    { version: 1, ids: [] },
-    { version: 1, ids: [] },
+    { version: 1, ids: [], change: connected },
+    { version: 1, ids: [], change: connected + 101 },
   ]);
   await reader.cancel();
 });
@@ -143,12 +166,13 @@ test("SSE preserves single updates and broadens overlapping invalidations withou
     await readPayload();
     await readPayload();
     recorder.emit(["single"]);
-    expect(await readPayload()).toEqual({ version: 1, ids: ["single"] });
+    expect(await readPayload()).toEqual({ version: 1, ids: ["single"], change: recorder.changes });
     for (const updates of [[["first"], ["second"], ["third"]], [[], ["later"]], [["earlier"], []]]) {
       recorder.emit(["buffered"]);
+      const buffered = recorder.changes;
       for (const ids of updates) recorder.emit(ids);
-      expect(await readPayload()).toEqual({ version: 1, ids: ["buffered"] });
-      expect(await readPayload()).toEqual({ version: 1, ids: [] });
+      expect(await readPayload()).toEqual({ version: 1, ids: ["buffered"], change: buffered });
+      expect(await readPayload()).toEqual({ version: 1, ids: [], change: recorder.changes });
     }
   } finally { await reader.cancel(); }
 });

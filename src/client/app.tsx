@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
 import type { Catalog, IndexProgress, Session, SessionPage, WorkspaceGroup } from "../shared/types";
-import { isAbort, request } from "./lib/api";
+import { announcedChange, forgetAnnouncedChanges, isAbort, request } from "./lib/api";
 import { dismissable, rememberFocus } from "./lib/dismissable";
 import { withLocalDays } from "./lib/format";
 import { createLocation } from "./lib/location";
@@ -59,11 +59,12 @@ export function App() {
   const defaultTitle = document.title;
   let searchInput!: HTMLInputElement, helpButton!: HTMLButtonElement;
   let refreshPage = () => Promise.resolve();
-  // When the library last began to refresh and when the server last sent a change notice.
-  let refreshedAt = 0, noticedAt = 0;
-  // Settles once the catalog and the library page have both been read again.
+  // The number of the latest change the server sent a notice for, and of the latest one a refresh already covers.
+  let noticed = 0, covered = -1;
+  // Settles once the catalog and the library page have both been read again. The refresh begins after every change
+  // this page has heard of, by notice or by a mutation's response, so it covers them all.
   const changed = () => {
-    refreshedAt = performance.now();
+    covered = Math.max(noticed, announcedChange());
     setRevision(value => value + 1);
     return Promise.all([catalogQueue.refresh(), refreshPage()]).then(() => {});
   };
@@ -112,9 +113,9 @@ export function App() {
   // A change notice from the server re-reads the library, which on a large index costs the server seconds of the thread
   // that also runs the scan, and a long scan sends a notice about every second. Notices therefore rest three times as
   // long as their last refresh took, so the scan and a recording opened meanwhile keep most of the server's time.
-  // The reader's own changes still refresh at once, and a refresh begun after the latest notice already covers it, as
-  // it does the notice the server sends for the reader's own change.
-  const liveQueue = createRefreshQueue(async () => { if (noticedAt > refreshedAt) await changed(); }, 3);
+  // The reader's own changes still refresh at once, and a notice a refresh already covers is skipped, as the notice for
+  // the reader's own change is, whether it arrives before the mutation's response or after.
+  const liveQueue = createRefreshQueue(async () => { if (noticed > covered) await changed(); }, 3);
   createEffect(() => listQuery(), query => {
     const queue = createRefreshQueue(async signal => {
       setPending(true); setError("");
@@ -149,9 +150,13 @@ export function App() {
     const mediaChanged = () => setMobile(media.matches);
     media.addEventListener("change", mediaChanged);
     const source = new EventSource("/api/live");
-    source.onopen = () => setConnected(true);
+    // A new connection may reach a restarted server, whose count starts again, and its first notice refreshes the view.
+    source.onopen = () => { setConnected(true); noticed = 0; covered = -1; forgetAnnouncedChanges(); };
     source.onerror = () => { setConnected(false); setIndexing(null); };
-    source.addEventListener("change", () => { noticedAt = performance.now(); void liveQueue.refresh(); });
+    source.addEventListener("change", event => {
+      noticed = Math.max(noticed, Number(JSON.parse((event as MessageEvent).data).change) || 0);
+      void liveQueue.refresh();
+    });
     source.addEventListener("indexing", event => setIndexing(JSON.parse((event as MessageEvent).data)));
     const keyboard = (event: KeyboardEvent) => {
       if (document.querySelector("dialog[open]")) return;
