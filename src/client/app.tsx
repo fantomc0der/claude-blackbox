@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
 import type { Catalog, IndexProgress, Session, SessionPage, WorkspaceGroup } from "../shared/types";
-import { isAbort, request } from "./lib/api";
+import { announcedChange, forgetAnnouncedChanges, isAbort, request } from "./lib/api";
 import { dismissable, rememberFocus } from "./lib/dismissable";
 import { withLocalDays } from "./lib/format";
 import { createLocation } from "./lib/location";
@@ -58,8 +58,16 @@ export function App() {
   const [headingFocus, setHeadingFocus] = createSignal<{ id: string; from: Element | null } | null>(null);
   const defaultTitle = document.title;
   let searchInput!: HTMLInputElement, helpButton!: HTMLButtonElement;
-  let refreshPage = () => {};
-  const changed = () => { setRevision(value => value + 1); refreshPage(); };
+  let refreshPage = () => Promise.resolve();
+  // The number of the latest change the server sent a notice for, and of the latest one a refresh already covers.
+  let noticed = 0, covered = -1;
+  // Settles once the catalog and the library page have both been read again. The refresh begins after every change
+  // this page has heard of, by notice or by a mutation's response, so it covers them all.
+  const changed = () => {
+    covered = Math.max(noticed, announcedChange());
+    setRevision(value => value + 1);
+    return Promise.all([catalogQueue.refresh(), refreshPage()]).then(() => {});
+  };
   const closeReplay = () => {
     const id = params().get("session");
     setHeadingFocus(null);
@@ -101,7 +109,13 @@ export function App() {
       if (!signal.aborted) setCatalog(data);
     } catch (error) { if (!signal.aborted && !isAbort(error)) setError(error instanceof Error ? error.message : "Could not refresh the archive"); }
   });
-  createEffect(() => revision(), () => { void catalogQueue.refresh(); });
+  void catalogQueue.refresh();
+  // A change notice from the server re-reads the library, which on a large index costs the server seconds of the thread
+  // that also runs the scan, and a long scan sends a notice about every second. Notices therefore rest three times as
+  // long as their last refresh took, so the scan and a recording opened meanwhile keep most of the server's time.
+  // The reader's own changes still refresh at once, and a notice a refresh already covers is skipped, as the notice for
+  // the reader's own change is, whether it arrives before the mutation's response or after.
+  const liveQueue = createRefreshQueue(async () => { if (noticed > covered) await changed(); }, 3);
   createEffect(() => listQuery(), query => {
     const queue = createRefreshQueue(async signal => {
       setPending(true); setError("");
@@ -118,8 +132,8 @@ export function App() {
         if (!signal.aborted && !isAbort(error)) setError(error instanceof Error ? error.message : "Could not refresh recordings");
       } finally { if (!signal.aborted) setPending(false); }
     });
-    refreshPage = () => { void queue.refresh(); };
-    refreshPage();
+    refreshPage = () => queue.refresh();
+    void refreshPage();
     return () => queue.dispose();
   });
   createEffect(() => ({ id: params().get("session"), revision: revision() }), value => {
@@ -136,9 +150,13 @@ export function App() {
     const mediaChanged = () => setMobile(media.matches);
     media.addEventListener("change", mediaChanged);
     const source = new EventSource("/api/live");
-    source.onopen = () => setConnected(true);
+    // A new connection may reach a restarted server, whose count starts again, and its first notice refreshes the view.
+    source.onopen = () => { setConnected(true); noticed = 0; covered = -1; forgetAnnouncedChanges(); };
     source.onerror = () => { setConnected(false); setIndexing(null); };
-    source.addEventListener("change", changed);
+    source.addEventListener("change", event => {
+      noticed = Math.max(noticed, Number(JSON.parse((event as MessageEvent).data).change) || 0);
+      void liveQueue.refresh();
+    });
     source.addEventListener("indexing", event => setIndexing(JSON.parse((event as MessageEvent).data)));
     const keyboard = (event: KeyboardEvent) => {
       if (document.querySelector("dialog[open]")) return;
@@ -162,7 +180,7 @@ export function App() {
       if (event.key === "?" && !editing) setHelp(value => !value);
     };
     window.addEventListener("keydown", keyboard);
-    return () => { source.close(); catalogQueue.dispose(); window.removeEventListener("keydown", keyboard); media.removeEventListener("change", mediaChanged); };
+    return () => { source.close(); liveQueue.dispose(); catalogQueue.dispose(); window.removeEventListener("keydown", keyboard); media.removeEventListener("change", mediaChanged); };
   });
   const refresh = async () => {
     if (refreshing()) return;
@@ -256,7 +274,7 @@ export function App() {
     <a class="skip-link" href="#main-content">Skip to recordings</a>
     <Show when={navOpen()}><button class="nav-scrim" aria-label="Close navigation" onClick={() => setNavOpen(false)} /></Show>
     <Sidebar catalog={catalog()} indexing={indexing()} refreshing={refreshing()} params={params()} navigate={navigate} group={() => setGroupOpen(true)} refresh={() => void refresh()} close={() => setNavOpen(false)} hidden={mobile() && !navOpen()} />
-    <main class="main-shell" id="main-content"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu icon-button" aria-label="Open workspace navigation" onClick={() => setNavOpen(true)}><Icon name="menu" /></button><Icon name="box" size={16} /><span>Flight recorder</span><span class="breadcrumb-divider">/</span><strong>{currentWorkspace()?.name || (params().get("bookmarked") ? "Bookmarked" : "All workspaces")}</strong></div><div class="topbar-actions"><Show when={catalog()?.demo}><span class="demo-label">DEMO MODE</span></Show><Show when={catalog() && !catalog()!.indexedAt}><span class="indexing-state" role="status"><span class="live-dot" />Indexing recordings…</span></Show><span class={['connection-state', { disconnected: !connected() }]}><span class="live-dot" />{connected() ? "Connected locally" : "Reconnecting…"}</span><button class="icon-button" ref={helpButton} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(value => !value)}><Icon name="keyboard" size={18} /></button></div></header>
+    <main class="main-shell" id="main-content"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu icon-button" aria-label="Open workspace navigation" onClick={() => setNavOpen(true)}><Icon name="menu" /></button><Icon name="box" size={16} /><span>Flight recorder</span><span class="breadcrumb-divider">/</span><strong>{currentWorkspace()?.name || (params().get("bookmarked") ? "Bookmarked" : "All workspaces")}</strong></div><div class="topbar-actions"><Show when={catalog()?.demo}><span class="demo-label">DEMO MODE</span></Show><Show when={catalog() && !catalog()!.indexedAt}><span class="indexing-state" role="status"><span class="live-dot" />{indexing()?.phase === "upgrading" ? "Upgrading index…" : "Indexing recordings…"}</span></Show><span class={['connection-state', { disconnected: !connected() }]}><span class="live-dot" />{connected() ? "Connected locally" : "Reconnecting…"}</span><button class="icon-button" ref={helpButton} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onClick={() => setHelp(value => !value)}><Icon name="keyboard" size={18} /></button></div></header>
       <Show when={error()}><div class="error-banner" role="alert"><Icon name="alert" size={16} />{error()}<button class="text-button" onClick={changed}>Retry</button></div></Show>
       <Show when={catalog()?.warnings}><div class="warning-banner"><Icon name="alert" size={14} />{catalog()!.warnings} unreadable records or sources were skipped. Other recordings are available.</div></Show>
       <div class={['content-shell', { 'library-collapsed': libraryCollapsed() }]} style={{ '--library-width': libraryWidth() === undefined ? undefined : `${libraryWidth()}px` }}><Library catalog={catalog()} page={page()} usageCurrent={usageScope(pageQuery()) === usageScope(listQuery())} pending={pending()} params={params()} navigate={navigate} query={query()} setQuery={setQuery} searchRef={element => searchInput = element} focusReplay={id => setHeadingFocus(id ? { id, from: document.activeElement } : null)} />

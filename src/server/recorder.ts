@@ -108,6 +108,11 @@ export class Recorder {
   readonly progressListeners = new Set<(progress: IndexProgress) => void>();
   indexing: IndexProgress = { phase: "idle", checked: 0, total: 0 };
   indexedAt = "";
+  /**
+   * How many changes `emit()` has announced. Change notices and the responses to mutations carry it, so a client can tell
+   * that a refresh it began after either already covers a notice, whichever of the two connections delivers first.
+   */
+  changes = 0;
   /** The directories the last scan could not read and the recordings it could not index, which the catalog reports. */
   scanWarnings = 0;
   private scanning: Promise<string[]> | null = null;
@@ -324,16 +329,26 @@ export class Recorder {
    * Runs one upgrade step's `fill` for every recording not already marked for re-reading, whose next read derives the
    * same values afresh, each recording in its own transaction through `events_session`. The scan runs after the server
    * has bound its port, so the step yields to the event loop after every 20 ms of work to keep the server answering;
-   * yielding after every recording would add over a millisecond each on Windows. False when a shutdown stopped it; its
-   * writes are idempotent, so the next scan repeats the step from the start.
+   * yielding after every recording would add over a millisecond each on Windows. `steps` counts this step and the
+   * per-recording steps after it, none of which fills more recordings than this one, so the progress it reports never
+   * runs backwards. False when a shutdown stopped it; its writes are idempotent, so the next scan repeats the step from
+   * the start.
    */
-  private async upgradeEach(fill: (session: { id: string; named: number }) => void): Promise<boolean> {
+  private async upgradeEach(fill: (session: { id: string; named: number }) => void, steps: number): Promise<boolean> {
     const step = this.db.transaction(fill);
+    const sessions = this.db.query<{ id: string; named: number }, []>("SELECT id, named FROM sessions WHERE mtime!=0").all();
+    this.reportProgress({ phase: "upgrading", checked: this.indexing.checked, total: this.indexing.checked + steps * sessions.length });
     let slice = performance.now();
-    for (const session of this.db.query<{ id: string; named: number }, []>("SELECT id, named FROM sessions WHERE mtime!=0").all()) {
+    let progressAt = slice;
+    for (const session of sessions) {
       if (this.stopped) return false;
       step(session);
-      if (performance.now() - slice >= 20) { await Bun.sleep(0); slice = performance.now(); }
+      this.indexing = { ...this.indexing, checked: this.indexing.checked + 1 };
+      if (performance.now() - slice >= 20) {
+        if (performance.now() - progressAt >= 250) { this.reportProgress(this.indexing); progressAt = performance.now(); }
+        await Bun.sleep(0);
+        slice = performance.now();
+      }
     }
     return true;
   }
@@ -343,13 +358,15 @@ export class Recorder {
     // its port, and before the recordings are compared with what was indexed; `./migrations` lists them in order and
     // states which steps belong there and which in the constructor. A whole-index step and its version advance are one
     // transaction. A per-recording step advances the version only after its last recording, and a shutdown that stops
-    // it leaves the version where it was, so the next scan repeats the step.
+    // it leaves the version where it was, so the next scan repeats the step. Live clients see the upgrade as its own
+    // phase, so a long one reads as progress rather than as a library that stopped changing.
     const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version;
-    for (const migration of migrations) {
-      if (version >= migration.version) continue;
+    const pending = migrations.filter(migration => version < migration.version);
+    if (pending.length) this.reportProgress({ phase: "upgrading", checked: 0, total: 0 });
+    for (const [index, migration] of pending.entries()) {
       const advance = () => this.db.exec(`PRAGMA user_version=${migration.version}`);
       if ("each" in migration) {
-        if (!await this.upgradeEach(migration.each(this.db))) return [];
+        if (!await this.upgradeEach(migration.each(this.db), pending.slice(index).filter(step => "each" in step).length)) return [];
         advance();
       } else this.db.transaction(() => { migration.apply(this.db); advance(); })();
     }
@@ -556,6 +573,7 @@ export class Recorder {
 
   /** Tells live clients that the recordings in `ids` changed, or with none that the library as a whole did. */
   emit(ids: string[] = []): void {
+    this.changes++;
     for (const listener of this.listeners) listener(ids);
   }
 }

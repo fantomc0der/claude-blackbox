@@ -22,20 +22,24 @@ function percentage(checked: number, total: number): string {
 
 export function IndexStatus(props: { catalog: Catalog | null; progress: IndexProgress | null; refreshing: boolean; refresh: () => void }) {
   const failed = () => props.progress?.phase === "error";
-  const working = () => props.refreshing || props.progress?.phase === "discovering" || props.progress?.phase === "indexing";
+  const working = () => props.refreshing || props.progress?.phase === "upgrading" || props.progress?.phase === "discovering" || props.progress?.phase === "indexing";
   const visible = createProlonged(working);
+  // An upgrade counts recordings once per version step that reads them, so only its share is shown, never its counts.
+  const upgrading = () => visible() && props.progress?.phase === "upgrading";
   const label = () => {
     if (!props.progress) return props.catalog ? "Index unavailable" : "Connecting to index";
     if (failed()) return "Scan failed";
+    if (upgrading()) return "Upgrading index";
     if (visible()) return props.progress.phase === "discovering" ? "Finding recordings" : "Checking files";
     return "Recordings indexed";
   };
-  const determinate = () => visible() && props.progress?.phase === "indexing" && props.progress.total > 0;
+  const determinate = () => visible() && (props.progress?.phase === "indexing" || props.progress?.phase === "upgrading") && props.progress.total > 0;
   const fraction = () => `${tokenCount(props.progress!.checked)} / ${tokenCount(props.progress!.total)}`;
   // The full value, which the tooltip and the progress text always carry even while the line shows a percentage.
   const detail = () => {
     if (!props.progress) return props.catalog ? "Reconnecting…" : "—";
     if (failed()) return "Index incomplete";
+    if (upgrading()) return determinate() ? percentage(props.progress.checked, props.progress.total) : "Starting";
     if (visible()) return props.progress.phase === "discovering" ? "Total not yet known" : fraction();
     return props.catalog ? tokenCount(props.catalog.sessions) : "—";
   };
@@ -44,8 +48,8 @@ export function IndexStatus(props: { catalog: Catalog | null; progress: IndexPro
   // A hidden copy of the label and fraction is measured against the row so the fraction never shows wrapped first.
   const [format, setFormat] = createSignal(storedFormat());
   const [fractionFits, setFractionFits] = createSignal(true);
-  const switchable = () => determinate() && fractionFits();
-  const percentShown = () => determinate() && (format() === "percent" || !fractionFits());
+  const switchable = () => determinate() && !upgrading() && fractionFits();
+  const percentShown = () => determinate() && (upgrading() || format() === "percent" || !fractionFits());
   const count = () => percentShown() ? percentage(props.progress!.checked, props.progress!.total) : detail();
   const toggle = () => {
     const next: CountFormat = percentShown() ? "count" : "percent";
@@ -74,11 +78,12 @@ export function IndexStatus(props: { catalog: Catalog | null; progress: IndexPro
   const progressbar = () => visible() && !failed();
   return <div class={['index-status', { 'index-failed': failed(), 'index-idle': idle() }]}>
     <div class="index-progress" ref={line}
-      title={`${label()}: ${detail()}${determinate() ? ` (${percentage(props.progress!.checked, props.progress!.total)})` : ""}. Progress counts recording files, not individual messages. Unreadable sources are reported separately.`}>
+      title={upgrading() ? `${label()}: ${detail()}. This version reads recordings differently, so the index is upgraded once. Indexed recordings stay available meanwhile.`
+        : `${label()}: ${detail()}${determinate() ? ` (${percentage(props.progress!.checked, props.progress!.total)})` : ""}. Progress counts recording files, not individual messages. Unreadable sources are reported separately.`}>
       <span class="index-label" role={progressbar() ? "progressbar" : undefined} aria-label={progressbar() ? "Recording index" : undefined}
         aria-describedby="recording-index-help"
         aria-valuemin={determinate() ? 0 : undefined} aria-valuemax={determinate() ? props.progress!.total : undefined}
-        aria-valuenow={determinate() ? props.progress!.checked : undefined} aria-valuetext={progressbar() ? `${label()}: ${detail()} recording files` : undefined}>{label()}</span>
+        aria-valuenow={determinate() ? props.progress!.checked : undefined} aria-valuetext={progressbar() ? `${label()}: ${detail()}${upgrading() ? "" : " recording files"}` : undefined}>{label()}</span>
       <span class="index-count">
         <Show when={switchable()} fallback={<span class="index-count-value">{count()}</span>}>
           <button type="button" class="index-count-value index-count-toggle" title={percentShown() ? "Show as count" : "Show as percentage"}
