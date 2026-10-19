@@ -1,6 +1,6 @@
 # Sorting and filtering review
 
-This is the requested critique and review process record; user-facing behavior is documented in README.
+This is the requested critique and review process record; user-facing behavior is documented in the README and the guides it links.
 
 Reviewed September 23, 2026. Target: `src/client`, in Operate mode. Independent design assessment and detector assessment, followed by implementation and browser verification.
 

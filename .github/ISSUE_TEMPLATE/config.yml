@@ -5,4 +5,4 @@ contact_links:
     about: Problems with Claude Code, its recordings, or its CLI belong in the Claude Code tracker. This project only reads the recordings.
   - name: Setup and usage questions
     url: https://github.com/fantomc0der/claude-blackbox#readme
-    about: The README covers starting the server, the desktop app, state directories, search syntax, filters, and usage estimates.
+    about: The README and the guides it links cover starting the server, the desktop app, state directories, search syntax, filters, and usage estimates.
