@@ -67,7 +67,7 @@ The current product combines full-record search, reversible workspace grouping, 
 
 ## Evidence on Hand
 
-- `README.md`: current installation, capabilities, privacy boundaries, and operating instructions.
+- `README.md`: current installation, capabilities, and privacy boundaries, with the user and operating guides it links in `docs/`.
 - `docs/architecture.md`: implementation boundaries, ingestion, live updates, and responsive workspace behavior.
 - `src/client/` and `src/server/`: the implemented application, rather than a speculative feature list.
 - `scripts/demo.ts` and `tests/fixtures.ts`: explicitly synthetic demonstration recordings. They are not customer evidence.
