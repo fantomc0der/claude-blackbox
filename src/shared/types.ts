@@ -181,8 +181,13 @@ export interface WorkspaceGroup {
   paths: string[];
 }
 
+/**
+ * The state of the recorder's scan. `upgrading` runs the index's version steps before the recordings are walked, and
+ * counts recordings once per step that reads them, so only its share of `total` means anything to a reader; the other
+ * working phases count recording files.
+ */
 export interface IndexProgress {
-  phase: "discovering" | "indexing" | "idle" | "error";
+  phase: "upgrading" | "discovering" | "indexing" | "idle" | "error";
   checked: number;
   total: number;
 }

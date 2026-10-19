@@ -16,16 +16,19 @@ import { decidedResults, explicitTitle, normalize, object, requestMessageType } 
  * holds. A step that reads the `events` table, every event or the stored records of every recording, belongs in this
  * list instead, so a large index upgrades behind a server that is already answering instead of delaying the window.
  *
- * Two shapes of step exist here. A whole-index step `apply`s itself to the index at once, and `reconcile()` runs it and
- * the version advance in one transaction, so an interrupted upgrade leaves either the old version with its rows or the
- * new one with its: it marks the recordings whose stored rows an earlier build derived differently for re-reading
- * (`UPDATE sessions SET mtime=0, identity=''`, which the scan that follows acts on), or every recording when it stands
- * for a run of steps whose predicates were collapsed, or rewrites values the stored records already hold. A
- * per-recording step prepares its statements and returns the fill `Recorder.upgradeEach()` runs for `each` recording
- * not already marked for re-reading, in its own transaction, yielding to the event loop between
- * recordings so the bound server keeps answering; `reconcile()` advances the version only after the last recording,
- * and not at all when a shutdown stopped the step, so the fill's writes must be idempotent for the next scan to repeat
- * the step from the start.
+ * The same rule picks a step's shape here, because the server answers requests on the thread that runs the step, and
+ * one statement holds that thread until it returns. A whole-index step `apply`s itself to the index at once, and
+ * `reconcile()` runs it and the version advance in one transaction, so an interrupted upgrade leaves either the old
+ * version with its rows or the new one with its; it reads no `events` row, as the version 15 step that marks every
+ * recording for re-reading (`UPDATE sessions SET mtime=0, identity=''`, which the scan that follows acts on) reads
+ * none. A step that reads the events table is a per-recording step: it prepares its statements and returns the fill
+ * `Recorder.upgradeEach()` runs for `each` recording not already marked for re-reading, in its own transaction,
+ * yielding to the event loop between recordings so the bound server keeps answering and reporting the upgrade's
+ * progress; `reconcile()` advances the version only after the last recording, and not at all when a shutdown stopped
+ * the step, so the fill's writes must be idempotent for the next scan to repeat the step from the start. A fill
+ * rewrites values the stored records already hold, or marks the recordings whose stored rows an earlier build derived
+ * differently for re-reading. Versions 18 and 19 were once whole-index steps whose one statement read every event,
+ * which kept the page from loading for most of a minute after an upgrade of an index of a few gigabytes.
  */
 
 /** The version a fully upgraded index reports in `PRAGMA user_version`; the constructor refuses to open a newer one. */
@@ -34,7 +37,10 @@ export const indexVersion = 19;
 /** The row a per-recording step fills: a recording's id and `sessions.named`, the rank of its explicit title. */
 export interface UpgradeSession { readonly id: string; readonly named: number }
 
-/** A step that marks or rewrites rows across the whole index at once, in one transaction with its version advance. */
+/**
+ * A step that marks or rewrites rows across the whole index at once, in one transaction with its version advance. It
+ * reads no `events` row, so it costs the same at any index size.
+ */
 export interface WholeIndexStep { readonly version: number; readonly apply: (db: Database) => void }
 
 /** A step that fills one recording at a time; `each` returns the fill `upgradeEach()` runs for every recording. */
@@ -176,22 +182,27 @@ export const migrations: readonly Migration[] = [
   // Version 18 reads Claude Code's interruption marker, the `user` record it writes itself when a turn is interrupted,
   // as a stand-in like an assistant record it writes in place of a model turn, where earlier builds read it as a prompt
   // and counted it as a message. Only the recordings holding such a record are re-read; finding them reads every
-  // event. A user record's searchable text holds its text blocks, so the marker is matched there, on
-  // the records an earlier build read as messages; a prompt that quotes the marker is re-read too and stays a prompt.
+  // event, so each recording is searched apart. A user record's searchable text holds its text blocks, so the marker is
+  // matched there, on the records an earlier build read as messages; a prompt that quotes the marker is re-read too and
+  // stays a prompt.
   {
     version: 18,
-    apply: db => {
-      db.exec(`UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events
-        WHERE role='user' AND category='message' AND instr(text,'[Request interrupted by user')>0)`);
+    each: db => {
+      const interrupted = db.query<{ found: number }, [string]>(`SELECT EXISTS (SELECT 1 FROM events WHERE session_id=?
+        AND role='user' AND category='message' AND instr(text,'[Request interrupted by user')>0) AS found`);
+      const reset = db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
+      return ({ id }) => { if (interrupted.get(id)!.found) reset.run(id); };
     },
   },
   // Version 19 leaves out of an `api-request-blob` copy's searchable text the text an earlier user or attachment
   // record holds, such as the prompt a copy repeats. Only the recordings holding a copy with searchable text are
-  // re-read; finding them reads every event.
+  // re-read; finding them reads every event, so each recording is searched apart.
   {
     version: 19,
-    apply: db => {
-      db.query("UPDATE sessions SET mtime=0, identity='' WHERE id IN (SELECT DISTINCT session_id FROM events WHERE type=? AND text!='')").run(requestMessageType);
+    each: db => {
+      const copied = db.query<{ found: number }, [string, string]>("SELECT EXISTS (SELECT 1 FROM events WHERE session_id=? AND type=? AND text!='') AS found");
+      const reset = db.query("UPDATE sessions SET mtime=0, identity='' WHERE id=?");
+      return ({ id }) => { if (copied.get(id, requestMessageType)!.found) reset.run(id); };
     },
   },
 ];
