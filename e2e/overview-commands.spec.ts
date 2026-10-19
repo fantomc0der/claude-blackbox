@@ -284,6 +284,8 @@ test("the rail marks every row that opens the selected event and reveals a selec
   await language.locator("summary").click();
   await expect(language).not.toHaveAttribute("open", "");
   await expect(language).toHaveClass(/has-selected/);
+  expect(await language.locator("summary > span:first-of-type").evaluate(label => getComputedStyle(label, "::after").content)).toBe('""');
+  expect(await source.locator("summary > span:first-of-type").evaluate(label => getComputedStyle(label, "::after").content)).toBe("none");
   // Choosing a row in the rail moves the marks without moving the rail: the category closed by hand stays closed.
   await other.getByRole("button", { name: /^cd "\/synthetic\/skills"/ }).click();
   await expect(page.locator(".replay-event-selected")).toContainText('cd "/synthetic/skills"');

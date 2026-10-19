@@ -29,8 +29,8 @@
   .overview-file-open:hover .overview-file-name { color: var(--accent); }
   .overview-file.selected { background: var(--accent-dim); border-radius: 4px; box-shadow: inset 2px 0 0 var(--accent); }
   .overview-file.selected .overview-file-name { color: var(--accent); }
-  .overview-reads.has-selected:not([open]) > summary { box-shadow: inset 2px 0 0 var(--accent); }
   .overview-reads.has-selected:not([open]) > summary > span:first-of-type { color: var(--accent); }
+  .overview-reads.has-selected:not([open]) > summary > span:first-of-type::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 7px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
   .overview-file-toggle { grid-column: 2; margin-top: 4px; }
   .overview-file-toggle svg { transition: transform .15s; }
   .overview-file-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }

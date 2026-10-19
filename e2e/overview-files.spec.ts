@@ -65,6 +65,13 @@ test("the overview lists changed files by folder and opens each change in the tr
   await page.reload();
   await expect(view).toHaveValue("files");
   await expect(files.getByRole("heading", { level: 3 }).first()).toHaveText("overview-app");
+  // A closed disclosure that holds the selected row marks its name with an accent dot.
+  const read = files.locator("details.overview-reads");
+  await read.locator("summary").click();
+  await files.getByRole("button", { name: /^README\.md in overview-app, 1 read\./ }).click();
+  await read.locator("summary").click();
+  await expect(read).toHaveClass(/has-selected/);
+  expect(await read.locator("summary > span:first-of-type").evaluate(label => getComputedStyle(label, "::after").content)).toBe('""');
 }, wide);
 
 test("a change the active view hides opens in All events", async ({ page }) => {
