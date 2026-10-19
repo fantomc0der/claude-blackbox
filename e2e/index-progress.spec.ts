@@ -8,12 +8,14 @@ async function mockProgress(page: Page) {
     Object.defineProperty(window, "EventSource", { value: class extends EventTarget {
       onopen: ((event: Event) => void) | null = null;
       listener = (event: Event) => this.dispatchEvent(new MessageEvent("indexing", { data: (event as CustomEvent).detail }));
+      changeListener = () => this.dispatchEvent(new MessageEvent("change", { data: JSON.stringify({ version: 1, ids: [] }) }));
       constructor() {
         super();
         window.addEventListener("fixture-indexing", this.listener);
+        window.addEventListener("fixture-change", this.changeListener);
         setTimeout(() => this.onopen?.(new Event("open")), 0);
       }
-      close() { window.removeEventListener("fixture-indexing", this.listener); }
+      close() { window.removeEventListener("fixture-indexing", this.listener); window.removeEventListener("fixture-change", this.changeListener); }
     } });
   });
 }
@@ -21,6 +23,70 @@ async function mockProgress(page: Page) {
 async function progress(page: Page, value: IndexProgress) {
   await page.evaluate(state => window.dispatchEvent(new CustomEvent("fixture-indexing", { detail: JSON.stringify(state) })), value);
 }
+
+async function change(page: Page) {
+  await page.evaluate(() => window.dispatchEvent(new Event("fixture-change")));
+}
+
+test("an index upgrade shows only its share, then hands over to the file scan", async ({ page }) => {
+  await mockProgress(page);
+  // The top bar names the first scan until it has finished once, which the catalog reports.
+  await page.route("**/api/catalog", async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), indexedAt: "" } });
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const status = page.locator(".index-status");
+  await progress(page, { phase: "idle", checked: 77, total: 77 });
+  await expect(status).toContainText("Recordings indexed");
+  const height = (await status.boundingBox())!.height;
+  await progress(page, { phase: "upgrading", checked: 0, total: 0 });
+  await expect(status).toContainText("Upgrading index");
+  await expect(status).toContainText("Starting");
+  await expect(page.locator(".indexing-state")).toHaveText("Upgrading index…");
+  await expect(status.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  // An upgrade counts recordings once per version step, so the line shows the share and never offers the fraction.
+  await progress(page, { phase: "upgrading", checked: 1234, total: 5000 });
+  await expect(status.locator(".index-count-value")).toHaveText("24%");
+  await expect(status.locator(".index-count-toggle")).toHaveCount(0);
+  await expect(status.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Upgrading index: 24%");
+  await expect(status.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1234");
+  await expect(status.locator(".index-progress")).toHaveAttribute("title", /^Upgrading index: 24%\. .*Indexed recordings stay available meanwhile\.$/);
+  await expect(status.getByLabel("Rescan recordings")).toBeDisabled();
+  expect((await status.boundingBox())!.height).toBe(height);
+  const audit = await new AxeBuilder({ page }).include(".sidebar-footer").withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  expect(audit.violations).toEqual([]);
+  await progress(page, { phase: "discovering", checked: 0, total: 0 });
+  await expect(status).toContainText("Finding recordings");
+  await expect(page.locator(".indexing-state")).toHaveText("Indexing recordings…");
+  await progress(page, { phase: "indexing", checked: 12, total: 77 });
+  await expect(status.locator(".index-count-value")).toHaveText("12 / 77");
+  expect((await status.boundingBox())!.height).toBe(height);
+});
+
+test("change notices refresh the library at once, then rest three times as long as a slow refresh took", async ({ page }) => {
+  await mockProgress(page);
+  await page.goto("/");
+  await expect(page.locator(".usage-panel")).toHaveAttribute("aria-busy", "false");
+  // A large index takes the server seconds to read the catalog; here it takes at least half of one.
+  const catalogs: number[] = [];
+  await page.route("**/api/catalog", async route => {
+    catalogs.push(Date.now());
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await route.continue();
+  });
+  const settled = page.waitForResponse("**/api/catalog");
+  await change(page);
+  await settled;
+  expect(catalogs).toHaveLength(1);
+  // That refresh took at least 500 ms, so the next notice waits at least 1.5 s after it settled.
+  await change(page);
+  await page.waitForTimeout(1000);
+  expect(catalogs).toHaveLength(1);
+  await expect.poll(() => catalogs.length, { timeout: 5000 }).toBe(2);
+  expect(catalogs[1] - catalogs[0]).toBeGreaterThanOrEqual(1500);
+});
 
 test("sidebar shows meaningful indexing progress without refreshing usage or shifting its frame", async ({ page }) => {
   await mockProgress(page);
