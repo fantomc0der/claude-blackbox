@@ -122,7 +122,7 @@ export function OverviewFiles(props: { summary: SessionSummary | null; failed: b
       </Show>
       <Show when={summary().read.length}>
         <details class={['overview-reads', { 'has-selected': summary().read.some(file => props.selected.has(file.id)) }]}>
-          <summary><Icon name="chevron" size={13} />Read, not changed · {summary().readFiles.toLocaleString()}</summary>
+          <summary><Icon name="chevron" size={13} /><span>Read, not changed · {summary().readFiles.toLocaleString()}</span></summary>
           <ul class="overview-file-list"><For each={summary().read} keyed={file => file.path}>{ReadRow}</For></ul>
         </details>
       </Show>
