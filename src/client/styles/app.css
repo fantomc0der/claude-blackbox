@@ -304,7 +304,7 @@
   .timeline-end small { color: #7f8b82; font-size: var(--text-meta); }
   .end-dot { border-radius: 50%; width: 6px; height: 6px; background: #768c5b; box-shadow: 0 0 0 5px #c7ee7908; margin: 5px 0; }
   .load-events { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--accent); width: 100%; padding: 14px; margin: 15px 0; border: 1px solid #36422c; border-radius: 7px; background: #c7ee7905; font-size: var(--text-control); }
-  .replay-footer > span:first-child { display: flex; align-items: center; gap: 5px; }
+  .replay-footer .replay-readonly { display: flex; align-items: center; gap: 5px; }
   .replay-footer .text-button { font-size: var(--text-control); }
   .new-events { position: absolute; bottom: 57px; left: 50%; transform: translateX(-50%); padding: 10px 15px; border-radius: 20px; background: var(--accent); color: #1b2514; font-size: var(--text-control); font-weight: 550; box-shadow: 0 4px 24px #0008; display: flex; gap: 8px; white-space: nowrap; }
 }
@@ -387,7 +387,7 @@
     .topbar-actions { gap: 9px; }
     .session-model { grid-column: 2 / -1; grid-row: 2; padding-top: 0; margin-top: 6px; }
     .recordings-scroll { grid-template-columns: 35px minmax(0, 1fr) fit-content(42%) 15px; }
-    .replay-footer > span:first-child { display: none; }
+    .replay-footer .replay-readonly { display: none; }
     .library-split { --library-default-width: 265px; }
     .library-split .filter-tab { padding-inline: 5px; font-size: var(--text-control); }
     .replay-tabs { gap: 17px; }
@@ -399,7 +399,7 @@
     .replay-panel-heading h2 { font-size: 23px; }
     .replay-timeline { padding: 25px 30px; }
     .replay-layout-controls { display: none; }
-    .replay-footer > span:first-child { display: flex; }
+    .replay-footer .replay-readonly { display: flex; }
   }
   @media (max-width: 680px) {
     .app-shell { display: flex; }
@@ -451,7 +451,7 @@
     .replay-tabs { gap: 0 12px; }
     .replay-tab-all { margin-left: auto; }
     .replay-footer { padding: 0 15px; min-height: 43px; }
-    .replay-footer > span:first-child { display: none; }
+    .replay-footer .replay-readonly { display: none; }
     .workspace-dialog { padding: 22px; max-height: calc(100dvh - 30px); }
     .workspace-dialog h2 { font-size: 22px; }
     .workspace-dialog .eyebrow { font-size: var(--text-meta); letter-spacing: 1px; }

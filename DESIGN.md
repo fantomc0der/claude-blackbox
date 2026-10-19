@@ -154,7 +154,7 @@ When a replay's filtered set spans more than one 60-record page, a 61px strip si
 
 Time is linear inside active stretches. Up to six of the longest idle stretches collapse into fixed-width breaks drawn as a double slash with the duration above it (`95m`, `15h`), so a session resumed the next day stays readable; every stretch keeps at least three bins so short bursts stay clickable. The recording's end time is always labelled; stretch start times appear where they fit, with the date at the first label and at day changes.
 
-The strip is one slider tab stop. Click or drag (committing on release) to start a page at a bin's first record; arrows step between bins, Page Up/Down by page, Home/End to the ends. Near the end the page clamps to a full last page and scrolls the chosen record into view. Previous and Next sit in the footer between Beginning and Jump to latest, and `[` / `]` page from anywhere in the replay except while typing or with a menu, dialog, or drawer open.
+The strip is one slider tab stop. Click or drag (committing on release) to start a page at a bin's first record; arrows step between bins, Page Up/Down by page, Home/End to the ends. Near the end the page clamps to a full last page and scrolls the chosen record into view. The pager leads the replay footer from the transcript's left gutter, with Previous and Next between Beginning and Jump to latest and the current record range set in text color so the position reads first; the read-only badge trails on the right and hides at the 1050px and phone breakpoints, where the footer is narrowest. `[` / `]` page from anywhere in the replay except while typing or with a menu, dialog, or drawer open.
 
 ## Typography
 
