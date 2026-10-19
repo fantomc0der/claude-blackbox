@@ -130,7 +130,7 @@
 .replay-context-button { display: inline-flex; align-items: center; gap: 5px; margin: 0 14px 12px; color: var(--accent); background: transparent; border: 0; padding: 3px 0; font: inherit; font-size: var(--text-meta); cursor: pointer; }
 .replay-context-button:hover { text-decoration: underline; }
 .replay-event-selected { outline: 1px solid color-mix(in srgb, var(--accent) 65%, var(--line)); outline-offset: -1px; }
-.replay-pager { display: flex; align-items: center; gap: 12px; }
+.replay-pager { display: flex; align-items: center; gap: 12px; margin-left: -5px; }
 .replay-recorded-model { color: var(--muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
 .replay-jump-short { display: none; }
 @media (max-width: 680px) { .replay-jump-full { display: none; } .replay-jump-short { display: inline; } }
